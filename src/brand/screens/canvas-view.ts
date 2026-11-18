@@ -1,0 +1,586 @@
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from 'react'
+
+/* -----------------------------------------------------------------------------
+   A pan-and-zoom viewport, without the thing being viewed.
+
+   Lifted out of the board's stage so the condition canvas can be a canvas
+   without writing a second one. The two surfaces show different things — an
+   ordered chain of rules, and one rule's predicate as a graph — but the
+   viewport is the same object in both: a world moved by one transform, a dot
+   grid that follows it, a wheel that zooms about the cursor, a drag that pans,
+   and a Fit that measures.
+
+   The rules this file exists to preserve, all of them learned on the board:
+
+   **The view is a ref, never state.** It used to be state, so a pan wrote it on
+   every pointermove and a wheel on every tick. Each write re-rendered the host,
+   which re-rendered every card, and the cards carry Motion `layout` — so Motion
+   measured and re-projected the whole chain twice a frame to move a background.
+   Nothing branches on the view: its only readers are one transform, three
+   custom properties and a percentage. So it lives here and is written straight
+   to the DOM, one batched write per animation frame.
+
+   **The host still seeds the transform during render** from `viewRef.current`,
+   which keeps this self-healing — a re-render for any other reason repaints the
+   current view rather than reverting to a stale one.
+
+   **Glide, do not jump.** A jump from 77% to 100% gives no sense of which way
+   the canvas went. Cubic ease-out and no spring: a spring overshoots, and an
+   overshoot on a whole canvas reads as a wobble rather than as life.
+
+   What is NOT in here is the part that differs: what the world contains, how
+   wide it is, and what counts as background. Those come in through `opts`.
+   -------------------------------------------------------------------------- */
+
+export interface View {
+  x: number
+  y: number
+  z: number
+}
+
+/* The locked view, as arithmetic — the whole of what `lockX` does, with no DOM
+   in it, so the rule can be tested on its own. `clampView` reads the four sizes
+   off the stage and the world and hands them here.
+
+   · Centred at THIS zoom, even when the world is wider than the stage. An
+     overflow shared equally by both edges reads as "too big"; one pinned to the
+     left edge reads as "scrolled", which a column that cannot scroll sideways
+     never is.
+   · The top of the world may rise until its bottom meets the stage's bottom, and
+     never fall below the stage's top.
+   · A chain shorter than the stage stands in its middle (owner, 20 Oct 2026: "can
+     we start with the centre instead of the top"): an empty or short policy opens
+     centred, and as rules are added it rises, until it is taller than the stage
+     and is read from the top again. It was pinned to the top before. */
+export function lockedView(
+  v: View,
+  size: { stageW: number; stageH: number; worldW: number; worldH: number },
+  zRange: { min: number; max: number },
+): View {
+  const z = Math.min(zRange.max, Math.max(zRange.min, v.z))
+  const x = (size.stageW - size.worldW * z) / 2
+  const room = size.stageH - size.worldH * z
+  if (room > 0) return { x, y: room / 2, z }
+  return { x, y: Math.min(0, Math.max(room, v.y)), z }
+}
+
+/* The y that shows one band of the world — its top and bottom in unscaled
+   world pixels — inside the stage, above a floor the stage keeps for its own
+   controls, moving the chain as little as it can. Null when the band is in
+   view already, so a caller moves nothing at all.
+
+   Below the floor, the band rises until its bottom sits on the floor; but
+   never so far that its own top leaves the stage, because a band taller than
+   the room is read from its top. Above the stage's top, it comes down until
+   its top is in. The caller's clamp (`lockedView`) still has the last word:
+   no y here scrolls the chain past either of its ends.
+
+   `keep` is the world top of a control somebody has just pressed, above the
+   band — the board's Which policy row, whose list pushes the band down. It
+   outranks the band: the lift stops where that top reaches `FOCUS_EDGE`
+   under the stage's top (or where it already is, when it sits higher), and a
+   control that is above the stage comes back down to the edge. Without it a
+   turn of the list glided the row, and the focus on it, out of the stage
+   (28 Sep 2026); where the band and the control cannot both be shown, the
+   band waits for the next reveal that has no `keep`. */
+export function revealY(v: View, band: { top: number; bottom: number }, stageH: number, floor: number, keep?: number): number | null {
+  const room = stageH - floor
+  const top = v.y + band.top * v.z
+  const bottom = v.y + band.bottom * v.z
+  let y: number | null
+  if (top >= 0 && bottom <= room) y = null
+  else if (top < 0) y = -band.top * v.z
+  else y = Math.max(room - band.bottom * v.z, -band.top * v.z)
+  if (keep === undefined) return y
+  const edge = FOCUS_EDGE - keep * v.z
+  if (v.y + keep * v.z < 0) return edge
+  if (y === null) return null
+  const kept = Math.max(y, Math.min(v.y, edge))
+  return kept === v.y ? null : kept
+}
+
+/* How far inside the stage's edges a focused control is kept — by the focus
+   rule in `useCanvasView`, and by a reveal that keeps a pressed control. */
+export const FOCUS_EDGE = 24
+
+/* --- The view's motion, without React or the DOM ------------------------------
+
+   A jump (`apply`) is painted on the next frame; a glide eases there over a
+   few hundred milliseconds and paints every frame; a resize of the world
+   re-clamps the view. The ORDER of those three is where the bugs were, so it
+   lives here, where a fake clock can drive it:
+
+   · A jump stops a glide in flight — a wheel or a drag outranks an animation.
+   · A world resize during a glide is left to the glide. It was measured
+     against the world as it is (a host glides after the commit that resized
+     it) and it clamps again where it lands. Re-clamping through `apply`
+     cancelled it after its first frame, and the growth is often the glide's
+     own cause: opening Which policy's list in test mode grows the chain in
+     the very frame the board glides to show the Decision gate under it, which
+     then never moved (28 Sep 2026).
+   · Under reduced motion, or at 0 ms, a glide is a jump painted at once.
+
+   The hook hands in how to clamp, how to paint and the frame clock. */
+export interface Frames {
+  request: (cb: (t: number) => void) => number
+  cancel: (id: number) => void
+  now: () => number
+}
+
+const BROWSER_FRAMES: Frames = {
+  request: (cb) => requestAnimationFrame(cb),
+  cancel: (id) => cancelAnimationFrame(id),
+  now: () => performance.now(),
+}
+
+export interface ViewMover {
+  /** The view, current to the last jump or glide frame; the host reads it, never writes it. */
+  view: { current: View }
+  paint: () => void
+  apply: (next: (v: View) => View) => void
+  glide: (to: Partial<View>, ms?: number) => void
+  /** The world's content box changed size. */
+  worldResized: () => void
+  gliding: () => boolean
+  dispose: () => void
+}
+
+export function createViewMover(
+  start: View,
+  d: { clamp: (v: View) => View; paint: (v: View) => void; reduced: () => boolean; frames?: Frames },
+): ViewMover {
+  const f = d.frames ?? BROWSER_FRAMES
+  const view = { current: start }
+  let frame = 0
+  /* A glide in flight is the one whose frame is booked here; 0 when none is. */
+  let glideFrame = 0
+  const paint = () => {
+    frame = 0
+    d.paint(view.current)
+  }
+  const stop = () => {
+    f.cancel(glideFrame)
+    glideFrame = 0
+  }
+  const apply = (next: (v: View) => View) => {
+    stop()
+    view.current = d.clamp(next(view.current))
+    if (!frame) frame = f.request(paint)
+  }
+  const glide = (to: Partial<View>, ms = 240) => {
+    stop()
+    const from = { ...view.current }
+    const target = d.clamp({ ...from, ...to })
+    if (d.reduced() || ms === 0) {
+      view.current = target
+      paint()
+      return
+    }
+    const t0 = f.now()
+    const tick = (t: number) => {
+      const p = Math.min(1, (t - t0) / ms)
+      const e = 1 - Math.pow(1 - p, 3)
+      view.current = {
+        x: from.x + (target.x - from.x) * e,
+        y: from.y + (target.y - from.y) * e,
+        z: from.z + (target.z - from.z) * e,
+      }
+      if (p < 1) glideFrame = f.request(tick)
+      else {
+        /* The world may have changed size while the view moved: land inside
+           it as it is now. */
+        glideFrame = 0
+        view.current = d.clamp(view.current)
+      }
+      paint()
+    }
+    glideFrame = f.request(tick)
+  }
+  return {
+    view,
+    paint,
+    apply,
+    glide,
+    worldResized: () => {
+      if (!glideFrame) apply((v) => v)
+    },
+    gliding: () => glideFrame !== 0,
+    dispose: () => {
+      f.cancel(frame)
+      frame = 0
+      stop()
+    },
+  }
+}
+
+/* Read once, at module load. Every glide checks it, and a canvas that animates
+   when somebody has asked it not to is worse than one that never animated. */
+const REDUCED =
+  typeof window !== 'undefined' && window.matchMedia
+    ? window.matchMedia('(prefers-reduced-motion: reduce)')
+    : ({ matches: false } as MediaQueryList)
+
+export interface CanvasViewOpts {
+  /* The world's unscaled content box.
+
+     Measured by the host rather than here, because "how big is the thing"
+     is the one question this file cannot answer generically. The board reads
+     `world.offsetWidth`, which is honest only because its chain is ordinary
+     flow layout — a bounding rect would return the width AT the current zoom
+     and Fit would converge on whatever it already was. */
+  bounds: () => { w: number; h: number }
+  /* `reserve` stood here: a callback returning what the host's own FLOATING
+     panels took out of the stage, so Fit could centre the world in what was
+     left. Its one caller was the board, whose inspector floated over a
+     full-bleed stage; the inspector is a column beside the stage now, so
+     `clientWidth` already excludes it and reserving it again would be a
+     double-count. `reserveOnOpen`, which did the same job for a panel that had
+     not mounted yet, went with it. */
+  /* A chain fits its WIDTH and is panned down: fitted to the height of a
+     laptop screen, eight rules are eight unreadable cards. A graph is short and
+     wide and wants both axes. */
+  axis?: 'width' | 'both'
+  /** Which elements the background drag may start on. */
+  isPannableTarget: (t: HTMLElement) => boolean
+  /** A press that did not become a drag, on the background. */
+  onBackgroundClick?: () => void
+  zMin?: number
+  zMax?: number
+  /* The prefix for the three custom properties the dot grid follows. The board
+     was already shipping `--bb-x/y/z` in its stylesheet, so this is how it
+     keeps them rather than renaming a working background. */
+  cssPrefix?: string
+  /* Write those three properties on the stage's PARENT as well, so a ground
+     drawn on the region around the stage — the board's, behind its floating
+     panel — follows the pan and zoom in step with the stage's own. */
+  varsOnParent?: boolean
+  /** Padding kept around the world when fitting. */
+  pad?: number
+  /* Vertical only, and horizontally centred.
+
+     A chain is a single column read top to bottom, so a sideways pan has
+     nothing to find — it only lets the column drift off the middle, where it
+     then has to be dragged back. With this set, `x` is never really stored:
+     every view that is applied or glided to is re-centred on the stage's width
+     at its own zoom, and `y` is held inside the world so the chain cannot be
+     scrolled out of sight past either end. Wheel and drag move only `y`; zoom
+     anchors only vertically. A graph, which is wide, leaves it off. */
+  lockX?: boolean
+  /* Switched off, not overridden (Check access v3, 20 Oct 2026: the builder's Board drawn inside another camera, the run's
+     RunStage). The hooks are still called in the same order, but nothing listens and nothing is painted: no wheel (its
+     non-passive preventDefault would stop the host's own scroll over the cards), no pointer pan, no focus-in glide, no
+     mount fit, no resize re-clamp, and no transform or custom property written on the world or the stage. `apply`,
+     `glide`, `fit` and `zoomBy` become no-ops. Read once, at mount: a canvas does not change camera mid-life. The
+     condition canvas never passes it. */
+  still?: boolean
+  /* Ctrl+wheel and a trackpad pinch zoom about the cursor; false keeps the zoom where it is (the board's first build,
+     23 Oct 2026, which has no zoom buttons and no Fit to come back with). The wheel is still taken, so the page does
+     not zoom instead, and a plain wheel still pans. Read live, so a version switch takes effect at once. Absent, on. */
+  zoomGesture?: boolean
+}
+
+export function useCanvasView(
+  stage: RefObject<HTMLDivElement | null>,
+  world: RefObject<HTMLDivElement | null>,
+  opts: CanvasViewOpts,
+) {
+  const { axis = 'width', zMin = 0.5, zMax = 1.4, cssPrefix = 'cv', pad = 40 } = opts
+
+  /* Everything the frame loop reads goes through a ref.
+
+     The callbacks below are memoised on `paint` alone so that a host which
+     re-renders — and the board re-renders on rules, selection and drag slots —
+     does not re-register the wheel listener or re-create the pan handlers. The
+     options change on every render because hosts pass inline closures, so they
+     are read through here rather than captured. */
+  const o = useRef(opts)
+  o.current = opts
+
+  const zoomLabel = useRef<HTMLSpanElement | null>(null)
+  const [panning, setPanning] = useState(false)
+  const pan = useRef<{ px: number; py: number; x: number; y: number } | null>(null)
+
+  const clampView = useCallback(
+    (v: View): View => {
+      const z = Math.min(o.current.zMax ?? zMax, Math.max(o.current.zMin ?? zMin, v.z))
+      const s = stage.current
+      if (!o.current.lockX || !s) return { ...v, z }
+      const { w: ww, h: wh } = o.current.bounds()
+      return lockedView(
+        v,
+        { stageW: s.clientWidth, stageH: s.clientHeight, worldW: ww, worldH: wh },
+        { min: o.current.zMin ?? zMin, max: o.current.zMax ?? zMax },
+      )
+    },
+    [stage, zMax, zMin],
+  )
+
+  const draw = useCallback(
+    (v: View) => {
+      const w = world.current
+      const s = stage.current
+      if (!w || !s || o.current.still) return
+      /* translate3d, not translate: it keeps the world on its own compositor
+         layer, so a pan is a layer move rather than a repaint of every node. */
+      w.style.transform = `translate3d(${v.x}px, ${v.y}px, 0) scale(${v.z})`
+      const p = o.current.cssPrefix ?? cssPrefix
+      for (const el of o.current.varsOnParent && s.parentElement ? [s, s.parentElement] : [s]) {
+        el.style.setProperty(`--${p}-x`, `${v.x}px`)
+        el.style.setProperty(`--${p}-y`, `${v.y}px`)
+        el.style.setProperty(`--${p}-z`, `${v.z}`)
+      }
+      if (zoomLabel.current) zoomLabel.current.textContent = `${Math.round(v.z * 100)}%`
+    },
+    [cssPrefix, stage, world],
+  )
+
+  /* The motion (`createViewMover`), made once. It reaches the clamp and the
+     paint through refs, so it is never re-made, and `apply` and `glide` keep
+     one identity for the life of the canvas — the wheel listener and the pan
+     handlers memoised on them are registered once. */
+  const clampRef = useRef(clampView)
+  clampRef.current = clampView
+  const drawRef = useRef(draw)
+  drawRef.current = draw
+  const [mover] = useState(() =>
+    createViewMover({ x: 80, y: 24, z: 1 }, { clamp: (v) => clampRef.current(v), paint: (v) => drawRef.current(v), reduced: () => REDUCED.matches }),
+  )
+  const { view: viewRef, paint, apply, glide } = mover
+
+  useEffect(() => () => mover.dispose(), [mover])
+
+  /* --- Fit ----------------------------------------------------------------- */
+  const fitTo = useCallback(
+    (ms: number) => {
+      const s = stage.current
+      if (!s) return
+      const { w: ww, h: wh } = o.current.bounds()
+      if (!ww) return
+      const sw = s.clientWidth
+      const sh = s.clientHeight
+      const p = o.current.pad ?? pad
+      const byW = (sw - p) / ww
+      const z = Math.min(
+        1,
+        Math.max(
+          o.current.zMin ?? zMin,
+          (o.current.axis ?? axis) === 'both' && wh ? Math.min(byW, (sh - p) / wh) : byW,
+        ),
+      )
+      glide(
+        {
+          x: Math.max(0, (sw - ww * z) / 2),
+          /* A chain is read from the top and panned down, so fitting its width
+             pins y at 0. A graph fitted on both axes is centred. */
+          y: (o.current.axis ?? axis) === 'both' && wh ? Math.max(0, (sh - wh * z) / 2) : 0,
+          z,
+        },
+        ms,
+      )
+    },
+    [axis, glide, pad, stage, zMin],
+  )
+
+  const fit = useCallback(() => fitTo(280), [fitTo])
+
+  useLayoutEffect(() => {
+    if (o.current.still) return
+    // Once, on mount, and instantly — an opening animation on the first paint
+    // is a canvas that arrives late rather than one that arrives.
+    const id = requestAnimationFrame(() => fitTo(0))
+    return () => cancelAnimationFrame(id)
+    // Mount only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /* --- When the stage itself changes size -------------------------------------
+
+     Half the delta, on both axes, straight into the pan.
+
+     The view is stored in stage-local coordinates, so a stage that narrows from
+     the right leaves the world exactly where it was — and what you were looking
+     at slides towards the edge and off it. That never happened while the stage
+     was `inset: 0` over a panel that floated; it happens on every panel open,
+     every close and every frame of a grip drag now that the panel is a track
+     beside it.
+
+     Re-FITTING would be the wrong answer: opening a panel is not a request to
+     re-zoom, and a canvas that reframes itself when you click a card is a canvas
+     you cannot hold your place in. Keeping the visible centre fixed is what
+     every tool with a collapsible inspector does, and it is one subtraction.
+
+     Written through `apply` rather than `glide` — this must land in the same
+     frame as the resize, or the world visibly lags the edge being dragged. */
+  const size = useRef<{ w: number; h: number } | null>(null)
+  useLayoutEffect(() => {
+    const s = stage.current
+    if (!s || typeof ResizeObserver === 'undefined' || o.current.still) return
+    size.current = { w: s.clientWidth, h: s.clientHeight }
+    const ro = new ResizeObserver(() => {
+      const prev = size.current
+      const now = { w: s.clientWidth, h: s.clientHeight }
+      size.current = now
+      if (!prev || (prev.w === now.w && prev.h === now.h)) return
+      /* Locked, the centring is `clampView`'s job and the reading position is
+         the reader's — so only the re-clamp happens, and y stays where they
+         left it. */
+      apply((v) =>
+        o.current.lockX ? v : { ...v, x: v.x + (now.w - prev.w) / 2, y: v.y + (now.h - prev.h) / 2 },
+      )
+    })
+    ro.observe(s)
+    /* The WORLD changes height too — a rule added, every card expanded — and a
+       view clamped against the old height can leave the chain scrolled past its
+       own end into empty canvas. Re-clamping on the world's resize is what keeps
+       `y` honest without the host having to remember to ask. Except under a
+       glide, which is left to land (`createViewMover`, above). */
+    const w = world.current
+    const wro = o.current.lockX && w ? new ResizeObserver(() => mover.worldResized()) : null
+    if (w && wro) wro.observe(w)
+    return () => {
+      ro.disconnect()
+      wro?.disconnect()
+    }
+  }, [apply, mover, stage, world])
+
+  /* --- Keeping focus inside the stage ---------------------------------------
+
+     The stage is `overflow: clip` so the browser cannot scroll a focused node
+     into view — which is what it used to do on the board, taking every floating
+     toolbar out of the viewport with no way back. That leaves the job here,
+     where it is done to the VIEW rather than to a scroll offset, so Fit and the
+     zoom readout still describe what is on screen afterwards.
+
+     Only the axis actually out of range moves, and only far enough to clear the
+     edge: a keyboard walk should feel like the canvas keeping up, not like it
+     re-centring on every Tab. */
+  useEffect(() => {
+    const s = stage.current
+    if (!s || o.current.still) return
+    const onFocusIn = (e: FocusEvent) => {
+      const el = e.target as HTMLElement | null
+      if (!el || !s.contains(el)) return
+      const r = el.getBoundingClientRect()
+      const box = s.getBoundingClientRect()
+      const edge = FOCUS_EDGE
+      let dx = 0
+      let dy = 0
+      if (r.top < box.top + edge) dy = box.top + edge - r.top
+      else if (r.bottom > box.bottom - edge) dy = box.bottom - edge - r.bottom
+      if (r.left < box.left + edge) dx = box.left + edge - r.left
+      else if (r.right > box.right - edge) dx = box.right - edge - r.right
+      if (!dx && !dy) return
+      const v = viewRef.current
+      glide({ x: v.x + dx, y: v.y + dy }, 180)
+    }
+    s.addEventListener('focusin', onFocusIn)
+    return () => s.removeEventListener('focusin', onFocusIn)
+  }, [glide, stage, viewRef])
+
+  /* --- Pan ----------------------------------------------------------------- */
+  const onPointerDown = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0 || o.current.still) return
+      if (!o.current.isPannableTarget(e.target as HTMLElement)) return
+      const v = viewRef.current
+      pan.current = { px: e.clientX, py: e.clientY, x: v.x, y: v.y }
+      setPanning(true)
+      ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    },
+    [viewRef],
+  )
+
+  const onPointerMove = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      const p = pan.current
+      if (!p) return
+      apply((v) => ({ ...v, x: p.x + (e.clientX - p.px), y: p.y + (e.clientY - p.py) }))
+    },
+    [apply],
+  )
+
+  const onPointerUp = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    const p = pan.current
+    if (!p) return
+    pan.current = null
+    setPanning(false)
+    try {
+      ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId)
+    } catch {
+      /* already released */
+    }
+    /* A click on the background, not a drag. Measured as "did not move". */
+    const moved = Math.hypot(e.clientX - p.px, e.clientY - p.py) > 3
+    if (!moved) o.current.onBackgroundClick?.()
+  }, [])
+
+  /* --- Zoom, about the cursor. Non-passive so the page does not scroll. ---- */
+  useEffect(() => {
+    const s = stage.current
+    if (!s || o.current.still) return
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      if (e.ctrlKey || e.metaKey) {
+        if (o.current.zoomGesture === false) return
+        const r = s.getBoundingClientRect()
+        const px = e.clientX - r.left
+        const py = e.clientY - r.top
+        apply((v) => {
+          /* Exponential, and clamped per event.
+
+             It was `1 - deltaY * 0.0018` applied straight. A trackpad pinch
+             emits deltas in the hundreds, so one event could ask for a factor
+             near zero or a negative scale, and the canvas snapped. `exp` keeps
+             zooming in and out symmetrical — the same gesture reversed lands
+             back where it started — and the clamp caps any single event at
+             ±12%, which is the difference between a ramp and a jump. */
+          const k = Math.min(1.12, Math.max(0.89, Math.exp(-e.deltaY * 0.0018)))
+          const z = Math.min(o.current.zMax ?? zMax, Math.max(o.current.zMin ?? zMin, v.z * k))
+          const kk = z / v.z
+          return { x: px - (px - v.x) * kk, y: py - (py - v.y) * kk, z }
+        })
+      } else {
+        /* Shift turns a vertical wheel into a horizontal pan, which is what
+           every canvas does and what a mouse with one wheel needs. */
+        const locked = !!o.current.lockX
+        const dx = locked ? 0 : e.shiftKey ? e.deltaY : e.deltaX
+        const dy = locked ? e.deltaY : e.shiftKey ? 0 : e.deltaY
+        apply((v) => ({ ...v, x: v.x - dx, y: v.y - dy }))
+      }
+    }
+    s.addEventListener('wheel', onWheel, { passive: false })
+    return () => s.removeEventListener('wheel', onWheel)
+  }, [apply, stage, zMax, zMin])
+
+  const zoomBy = useCallback(
+    (k: number) => {
+      const s = stage.current
+      if (!s) return
+      const px = s.clientWidth / 2
+      const py = s.clientHeight / 2
+      const v = viewRef.current
+      const z = Math.min(o.current.zMax ?? zMax, Math.max(o.current.zMin ?? zMin, v.z * k))
+      const kk = z / v.z
+      glide({ x: px - (px - v.x) * kk, y: py - (py - v.y) * kk, z }, 200)
+    },
+    [glide, stage, viewRef, zMax, zMin],
+  )
+
+  /* Back to the zoom the canvas opened at — the width fit, capped at 100% —
+     about the stage's vertical middle, so what you were reading stays where it
+     was and only the size changes. Not a re-fit: a re-fit also scrolls back to
+     the top, and "reset zoom" is not a request to lose your place. */
+  const resetZoom = useCallback(() => {
+    const s = stage.current
+    if (!s) return
+    const { w: ww } = o.current.bounds()
+    if (!ww) return
+    const p = o.current.pad ?? pad
+    const z = Math.min(1, Math.max(o.current.zMin ?? zMin, (s.clientWidth - p) / ww))
+    const py = s.clientHeight / 2
+    const v = viewRef.current
+    glide({ y: py - (py - v.y) * (z / v.z), z }, 240)
+  }, [glide, pad, stage, viewRef, zMin])
+
+  return { viewRef, zoomLabel, panning, paint, apply, glide, fit, fitTo, zoomBy, resetZoom, onPointerDown, onPointerMove, onPointerUp }
+}

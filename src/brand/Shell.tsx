@@ -1,0 +1,1327 @@
+import { AnimatePresence, motion, animate, useReducedMotion, Reorder, useDragControls } from 'motion/react'
+import { TEMPLATES_IN_RAIL, TEMPLATES_MANAGED } from './template-phase'
+import { MIGRATION_FIRST } from './migrate/phase'
+import { MoveJobPill } from './migrate/move-job-pill'
+import { clearWalkPublished } from './migrate/walk-published'
+import { RailReminder } from './migrate/rail-reminder'
+import { AnnounceStrip } from './migrate/AnnounceStrip'
+import {
+  CUSTOMIZE_SIDEBAR,
+
+  RAIL_DEFAULT,
+  addRow,
+  currentRail,
+  isDefault,
+  moveSection,
+  orderSections,
+  place,
+  removeRow,
+  reorderSection,
+  resolve,
+  sectionKey,
+  step,
+  useRail,
+  type RailPrefs,
+  type RailSection,
+} from './rail-custom'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react'
+import {
+  Activity,
+  Archive,
+  AppWindow,
+  ArrowLeft,
+  BookOpen,
+  ChevronRight,
+  ClipboardCheck,
+  CreditCard,
+  FileText,
+  GripVertical,
+  IdCard,
+  KeyRound,
+  LayoutGrid,
+  type LucideIcon,
+  MonitorSmartphone,
+  Moon,
+  Palette,
+  PanelLeft,
+  Plus,
+  Settings,
+  ShieldCheck,
+  SlidersHorizontal,
+  Sun,
+  UserRound,
+  Users,
+  Volume2,
+  VolumeX,
+  X,
+  Zap,
+} from 'lucide-react'
+
+// `EditionBar` is not imported while the bar is hidden — see the note at its
+// call site below. The component and its stylesheet are untouched.
+import { ProfileMenu } from './ProfileMenu'
+import { PersonaBar } from './PersonaBar'
+import { BrandSwitch } from './BrandSwitch'
+import { SHOWCASE } from './showcase'
+import { TESTER } from './tester'
+import { GlobalSearch } from './GlobalSearch'
+import { GLOBAL_SEARCH, type SearchSources } from './global-search'
+import { ACCESS_CHECKS } from './screens/sign-in-tests/names'
+import { Tip } from './kit'
+import { TONE_ICON } from './toast-tone'
+import { screenOffered } from './edition-screens'
+import { useBrand, useToast, type BrandScreen } from './store'
+import { pressToastAction } from './toast-action'
+import { useTheme } from './theme-mode'
+import { playCue, playToastCue, useSoundSetting } from './sound'
+
+/* -----------------------------------------------------------------------------
+   AdminShell — the live console's chrome, measured off
+   test.miniorange.in/moas/admin/customer/showmaptokentouser.
+
+   What the console does, and what this reproduces:
+
+   · The topbar is fixed, 52px, white, full width — it runs *over* the rail
+     rather than beside it, and the logo lives in it. The rail starts below.
+   · The rail is 235px of #1e2c38. Items are 14px/300 white on 40px rows and
+     wrap rather than truncate, which is why the current page's item is taller
+     than its neighbours.
+   · The active row is rgba(0,0,0,.4) with a 4.8px #eb5424 left edge and no
+     radius. Sub-items are 13px/300, and the active one is #eb5424 text only.
+   · Section headings are plain 14px/300 #cbcbcb sentence case — not the small
+     uppercase label pattern used elsewhere in the product.
+   · Only one accordion is open at a time: opening one closes the last.
+
+   Icons are Lucide at 20px, which is the size and stroke weight the console's
+   own set is drawn at.
+   -------------------------------------------------------------------------- */
+
+interface NavItem {
+  label: string
+  icon: LucideIcon
+  screen?: BrandScreen
+  badge?: string
+  children?: {
+    label: string
+    screen?: BrandScreen
+    tag?: string
+    /** False for a shortcut into a page that another item already lights. See `UNDER_ITEM`. */
+    lights?: boolean
+  }[]
+}
+
+/* The tree, its order and its sub-menus are the console's. Items without a
+   screen are present so the rail matches what an admin already knows; they open
+   and close, but their pages are outside this revamp. */
+const NAV: { section?: string; items: NavItem[] }[] = [
+  {
+    items: [
+      { label: 'Dashboard', icon: LayoutGrid, screen: { name: 'home' } },
+      { label: 'Getting Started', icon: ClipboardCheck },
+    ],
+  },
+  {
+    section: 'Configure',
+    items: [
+      { label: 'Identity Providers', icon: IdCard },
+      { label: 'Apps', icon: AppWindow, screen: { name: 'applications' } },
+      {
+        label: 'Policies',
+        icon: ShieldCheck,
+        screen: { name: 'policies' },
+        children: [
+          { label: 'All Policies', screen: { name: 'policies' } },
+          /* Sign-in tests is not in the rail (owner, 30 Sep 2026: "move Sign-in
+             tests inside the All Policies tab, as a button"). All Policies'
+             bar opens it, and All Policies lights while it is open — see
+             `UNDER_ITEM`. */
+          /* Two of these are honestly unfinished, and the rail says so rather
+             than letting somebody find out by opening them. A quiet tag, not
+             the brand-filled badge "New" gets: one is an announcement and the
+             other is a caveat, and they must not read alike. */
+          /* On hold with the rest of template management (template-phase.ts): the tenant only picks Xecurify's. */
+          ...(TEMPLATES_MANAGED && TEMPLATES_IN_RAIL ? [{ label: 'Templates', screen: { name: 'templates' } as const, tag: SHOWCASE ? undefined : 'In progress' }] : []),
+          { label: 'Zones', screen: { name: 'zones' } },
+          /* The page calls itself "Device fingerprint"; so does the screen id
+             and every sentence on it. The rail was the only place still saying
+             "Device Restrictions". */
+          { label: 'Device profiles', screen: { name: 'fingerprint' } },
+          /* Directly after the device profiles, because they are the two halves
+             of one question: whether this is the same device, and whether
+             anything about it is suspicious. */
+          { label: 'Risk signal profile', screen: { name: 'risk-signals' } },
+          { label: 'External Hooks', screen: { name: 'hooks' }, tag: SHOWCASE ? undefined : 'In progress' },
+        ],
+      },
+      /* The old console's Policies section, kept until it closes (migrate/OldPolicies.tsx): its three pages, in its
+         words and order. App Login and Adaptive Access move into the new policies; Password Policy stays. */
+      {
+        label: 'Old policy',
+        icon: Archive,
+        screen: { name: 'old-login' },
+        children: [
+          { label: 'App Login Policy', screen: { name: 'old-login' } },
+          { label: 'Password Policy', screen: { name: 'old-password' } },
+          { label: 'Adaptive Access Policy', screen: { name: 'old-adaptive' } },
+          /* The move's own way in, so it stays findable once the banners go (Stripe's Migrations tab). */
+          { label: 'Migration', screen: { name: 'move-policies' } },
+        ],
+      },
+      {
+        label: 'Customization',
+        icon: Palette,
+        children: [
+          { label: 'Login and Registration Branding' },
+          { label: 'Custom Email Provider' },
+          { label: 'Custom SMS Provider' },
+          { label: 'Email and SMS Templates' },
+          { label: 'Add Custom Scopes' },
+        ],
+      },
+      {
+        label: 'Automations',
+        icon: Zap,
+        children: [{ label: 'Inline Hook' }, { label: 'Workflows' }, { label: 'Rules' }, { label: 'Approvals' }],
+      },
+      /* Its own item, where the live console keeps 2-Factor Authentication (owner, 7 Oct 2026: "move it
+         outside Policies as a specific tab and remove the other authentication methods tab"). One link: the
+         console's five 2FA pages are this one page now, and the announcement on it says so. Display tokens
+         is opened from it, so it lights there too (`UNDER_ITEM`). */
+      { label: 'Authentication methods', icon: KeyRound, screen: { name: 'methods' } },
+      {
+        label: 'Devices',
+        icon: MonitorSmartphone,
+        badge: 'New',
+        children: [{ label: 'Trusted Devices' }, { label: 'MFA Agents' }],
+      },
+    ],
+  },
+  {
+    section: 'Manage',
+    items: [
+      {
+        label: 'Users',
+        icon: UserRound,
+        children: [
+          { label: 'User List', screen: { name: 'users' } },
+          { label: 'User Roles', screen: { name: 'user-roles' } },
+          { label: 'User Profile Fields' },
+          { label: 'Manage Shared Identity' },
+          { label: 'Progressive Profiling' },
+          { label: 'Impersonation' },
+        ],
+      },
+      {
+        label: 'Groups',
+        icon: Users,
+        children: [
+          { label: 'Manage Groups', screen: { name: 'groups' } },
+          { label: 'Group Custom Fields' },
+          { label: 'Group Membership Custom Fields' },
+          { label: 'Auto assign groups rules' },
+        ],
+      },
+      { label: 'SIEM Management', icon: Activity },
+      { label: 'Reports', icon: FileText },
+      { label: 'License', icon: CreditCard, children: [{ label: 'View Licenses' }, { label: 'Manage Cards' }] },
+    ],
+  },
+]
+
+/* The console's own arrangement, and the lookups the admin's arrangement (rail-custom.ts) is drawn through. */
+const DEFAULT_LAYOUT: RailSection[] = NAV.map((g) => ({ key: sectionKey(g.section), items: g.items.map((i) => i.label) }))
+/* Migration first (migrate/phase.ts): both policy groups read "Policy" in the rail (owner, 6 Nov 2026); the new one keeps
+   its New pill. The keys stay, so saved rail layouts and tour anchors still find them. */
+const railName = (label: string) => (MIGRATION_FIRST && (label === 'Old policy' || label === 'Policies') ? 'Policy' : label)
+const ITEM: Record<string, NavItem> = Object.fromEntries(NAV.flatMap((g) => g.items.map((i) => [i.label, i])))
+const SECTION_TITLE: Record<string, string | undefined> = Object.fromEntries(NAV.map((g) => [sectionKey(g.section), g.section]))
+
+/* What a row says in its Tip. These were native titles, which a keyboard never
+   reached. */
+/* The showcase build says what a customer would be told (see showcase.ts). */
+const NOT_BUILT = SHOWCASE ? 'Coming soon.' : 'Not built in this prototype.'
+const WIP_TIP = 'The page opens, but it is not finished.'
+
+/* Every screen that lives under Policies.
+
+   `board`, `policy-details` and `hooks` were missing, and three things key off
+   this list: the parent's `is-active` class, its `aria-current`, and the
+   submenu that auto-opens. So on the board the rail showed no location at all
+   — no highlight, nothing announced as the current page — while being the
+   widest thing on the screen. `risk-signals` was missing the same way. */
+const POLICY_SCREENS = [
+  'policies',
+  'builder',
+  'board',
+  'policy-details',
+  'templates',
+  'zones',
+  'fingerprint',
+  'risk-signals',
+  'hooks',
+  'sign-in-tests',
+  'sign-in-activity',
+]
+
+/* The two builders, which want the rail out of the way.
+
+   Landing on a builder used to auto-open the Policies submenu, which expands
+   the rail and takes ~171px off a canvas whose whole job is to show a chain of
+   cards. The submenu is one click away and the builder is a place you come to
+   work, not to navigate. */
+const BUILDER_SCREENS = ['builder', 'board']
+
+/* The screens that shut the rail to its icons on arrival and hand it back on
+   the way out: the builders, and Sign-in tests, which wears the builder's
+   layout (TESTING-V4 §14.1) — "it should feel like we are using the same
+   builder for tests as well". Its own list rather than a third builder in
+   BUILDER_SCREENS: those also keep the Policies submenu shut and name what
+   All Policies lights, and Sign-in tests does neither the same way. */
+const RAIL_SHUT_SCREENS = [...BUILDER_SCREENS, 'sign-in-tests']
+
+/* Full view (owner, 19 Oct 2026): a canvas — either builder, or Access checks — takes the whole window. The rail and
+   the top bar fold away as it opens and come back on the way out; the screen's own bar holds the way back. Off = the
+   rail shuts to its icons, as before. */
+export const CANVAS_FULL_VIEW = true
+
+/* Screens that light a sub-item without being its screen: a page opened from
+   inside another lights the item it was opened from. Both builders and the
+   details page are a policy opened from All Policies, and Sign-in tests is
+   opened from its bar; Display tokens is opened only from Authentication
+   methods, so that is where the rail says you are. */
+const UNDER_ITEM: Record<string, string[]> = {
+  policies: [...BUILDER_SCREENS, 'policy-details', 'sign-in-tests', 'sign-in-activity'],
+  methods: ['display-tokens'],
+  /* An application's own page, and Add application, are opened from the Apps list. */
+  applications: ['application', 'application-new'],
+}
+
+function isActive(current: BrandScreen, item: NavItem): boolean {
+  if (item.label === 'Policies') return POLICY_SCREENS.includes(current.name)
+  /* A group lights when the page open is one of its children, so Users and
+     Groups show where you are the way Policies does. Not through a shortcut
+     marked `lights: false`, as the submenu does not: that page belongs to
+     another row, and a second lit row says you are in two places. */
+  if (item.children?.some((c) => c.lights !== false && c.screen?.name === current.name)) return true
+  return item.screen ? current.name === item.screen.name || !!UNDER_ITEM[item.screen.name]?.includes(current.name) : false
+}
+
+/* Below this the rail stops being a column and becomes an overlay drawer.
+
+   The console had no phone layout at all: `.bshell` is a two-track grid and its
+   last width breakpoint was 1120px, which only takes the rail 235px → 200px. On
+   a 375px screen that left the rail holding 53% of the width and the content
+   column 175px, with the page overflowing 308px. Measured 18 Sep 2026.
+
+   900px, the same number `PolicyBuilderMain` floats its rules panel at — one
+   breakpoint for "there is no room for a second column", not two. */
+const RAIL_OVERLAYS = '(max-width: 900px)'
+
+function useNarrow() {
+  const [narrow, setNarrow] = useState(
+    () => typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(RAIL_OVERLAYS).matches,
+  )
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return
+    const mq = window.matchMedia(RAIL_OVERLAYS)
+    const on = () => setNarrow(mq.matches)
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [])
+  return narrow
+}
+
+export function Shell({ children }: { children: ReactNode }) {
+  const { screen, go, features, showToast, legacy, movedLegacy, moved, migrationStarted } = useBrand()
+  /* The Policy builder is new until the move is through: something old left, or moved and not yet approved. */
+  const migrating = legacy.policies.some((lp) => !movedLegacy[lp.id]) || Object.values(moved).some((m) => !m.approved)
+  const nav = useRef<HTMLElement>(null)
+  const [theme, setTheme] = useTheme()
+  const [sound, setSound] = useSoundSetting()
+  const [collapsed, setCollapsed] = useState(false)
+  const narrow = useNarrow()
+  const full = CANVAS_FULL_VIEW && RAIL_SHUT_SCREENS.includes(screen.name)
+  const reduced = useReducedMotion() ?? false
+  /* Leaving the builder ends the review walk: what was published in it is then only in New policies. */
+  useEffect(() => {
+    if (screen.name !== 'board') clearWalkPublished()
+  }, [screen.name])
+  /* The open: the canvas grows out of the page while the chrome folds away. Only on the way in. */
+  const main = useRef<HTMLElement | null>(null)
+  const wasFull = useRef(full)
+  useEffect(() => {
+    const opening = full && !wasFull.current
+    wasFull.current = full
+    if (!opening || reduced || !main.current) return
+    void animate(
+      main.current,
+      { clipPath: ['inset(3% 3% 3% 3% round 12px)', 'inset(0% 0% 0% 0% round 0px)'], opacity: [0.35, 1] },
+      { duration: 0.42, ease: [0.22, 1, 0.36, 1] },
+    )
+  }, [full, reduced])
+  /* The overlay drawer's own state, kept apart from `collapsed` on purpose.
+     `collapsed` means "the rail is a 64px icon strip" and the builder drives it;
+     reusing it for "the drawer is off-canvas" would make leaving a builder slide
+     the drawer OPEN on a phone. Two meanings, two flags. Closed to start with:
+     an overlay that covers the page is not what you want on arrival. */
+  const [navOpen, setNavOpen] = useState(false)
+  /* The rail row to put focus back on after the rail changes width. A row
+     gains or loses its Tip wrapper when the rail collapses or expands, which
+     remounts the button that had focus and drops focus to the page. */
+  const refocus = useRef<string | null>(null)
+  // One at a time. Opening a menu closes whichever was open before it.
+  const [open, setOpen] = useState<string | null>('Policies')
+  /* True only while the rail is collapsed because the builder asked for the
+     width — not because the admin chose to collapse it. Without the
+     distinction, leaving the builder would expand a rail the admin had
+     deliberately closed. */
+  const autoCollapsed = useRef(false)
+
+  /* Customize sidebar (rail-custom.ts). The rail itself is the editor while `editing`; Done ends it. A rail that was
+     shut to its icons opens for the edit and shuts again after it. */
+  const [prefs, setPrefs] = useRail()
+  const [editing, setEditing] = useState(false)
+  const [said, setSaid] = useState('')
+  const shutBefore = useRef(false)
+  const regrip = useRef<string | null>(null)
+  const customBtn = useRef<HTMLButtonElement>(null)
+
+  function startEditing() {
+    shutBefore.current = !narrow && collapsed
+    if (shutBefore.current) {
+      autoCollapsed.current = false
+      setCollapsed(false)
+    }
+    setSaid('')
+    setEditing(true)
+  }
+  function stopEditing() {
+    setEditing(false)
+    if (shutBefore.current) setCollapsed(true)
+    shutBefore.current = false
+    requestAnimationFrame(() => customBtn.current?.focus())
+  }
+  function resetRail() {
+    const before = prefs
+    setPrefs(RAIL_DEFAULT)
+    setSaid('Sidebar reset')
+    showToast('Sidebar reset', { label: 'Undo', run: () => setPrefs(before) })
+  }
+  /* Arriving in the mode puts focus on the first grip. A change that moves or removes the control in hand names, as a
+     selector, where focus goes next (the grip that moved, the section's Add page). */
+  useEffect(() => {
+    if (editing) nav.current?.querySelector<HTMLElement>('[data-rail-grip]')?.focus()
+  }, [editing])
+  useEffect(() => {
+    const sel = regrip.current
+    regrip.current = null
+    if (sel) nav.current?.querySelector<HTMLElement>(sel)?.focus()
+  }, [prefs])
+  const layout = resolve(DEFAULT_LAYOUT, prefs.layout)
+  /* Every page global search can open: each built rail page — taken out of the sidebar or not — and the pages opened
+     from inside others. */
+  const searchPages = useMemo<SearchSources['pages']>(
+    () => [
+      ...NAV.flatMap((g) =>
+        g.items.flatMap((item) => [
+          ...(item.screen && !item.children ? [{ label: item.label, meta: g.section, screen: item.screen }] : []),
+          ...(item.children ?? [])
+            .filter((c) => c.screen && screenOffered(c.screen, features))
+            .map((c) => ({ label: c.label, meta: item.label, screen: c.screen! })),
+        ]),
+      ),
+      ...[
+        { label: ACCESS_CHECKS, meta: 'Policies', screen: { name: 'sign-in-tests' } as BrandScreen },
+        { label: 'Sign-in activity', meta: 'Policies', screen: { name: 'sign-in-activity' } as BrandScreen },
+      ].filter((p) => screenOffered(p.screen, features)),
+      { label: 'Display tokens', meta: 'Authentication methods', screen: { name: 'display-tokens' } },
+      { label: 'Add application', meta: 'Apps', screen: { name: 'application-new' } },
+    ],
+    [features],
+  )
+  /* Escape ends it, as it closes every other mode in the console; so does a canvas taking the window. */
+  useEffect(() => {
+    if (!editing) return
+    const on = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') stopEditing()
+    }
+    window.addEventListener('keydown', on)
+    return () => window.removeEventListener('keydown', on)
+  })
+  useEffect(() => {
+    if (full) setEditing(false)
+  }, [full])
+
+  useEffect(() => {
+    const label = refocus.current
+    refocus.current = null
+    if (!label) return
+    const row = [...(nav.current?.querySelectorAll<HTMLButtonElement>('[data-rail-item]') ?? [])].find(
+      (b) => b.dataset.railItem === label,
+    )
+    row?.focus()
+  }, [collapsed])
+
+  /* A new screen starts at its top. */
+  useEffect(() => {
+    main.current?.scrollTo({ top: 0 })
+  }, [screen])
+
+  // Landing on a policy screen from anywhere else opens the menu that holds it,
+  // so the rail always shows where you are.
+  useEffect(() => {
+    if (POLICY_SCREENS.includes(screen.name) && !BUILDER_SCREENS.includes(screen.name)) setOpen('Policies')
+    if (screen.name === 'users' || screen.name === 'user-roles') setOpen('Users')
+    if (screen.name === 'groups') setOpen('Groups')
+  }, [screen.name])
+
+  /* A builder is where the rules are actually written — an editing surface
+     that wants every pixel — so it gets the rail's 235px on arrival and hands
+     them back on the way out. Anything the admin does to the rail in between
+     wins, and is not undone when they leave.
+
+     `BUILDER_SCREENS`, not `'builder'`. This named one of the two builders, so
+     the trail ran at a 64px rail and the board at 235px: switching Trail →
+     Board handed 171px of a canvas whose entire job is showing a chain of
+     cards back to a navigation menu, and switching back took it away again.
+     The board is the surface with the stronger claim to the space of the two. */
+  useEffect(() => {
+    /* Nothing to hand over on a phone: the rail is already off the page, and
+       running this here would leave `collapsed` true after the admin leaves a
+       builder, so the rail came back as the 64px strip once the window widened
+       again. */
+    if (narrow) return
+    /* In full view there is no rail to shut: it leaves whole and comes back as the admin left it. */
+    if (CANVAS_FULL_VIEW && RAIL_SHUT_SCREENS.includes(screen.name)) return
+    if (RAIL_SHUT_SCREENS.includes(screen.name)) {
+      setCollapsed((c) => {
+        if (!c) autoCollapsed.current = true
+        return true
+      })
+    } else if (autoCollapsed.current) {
+      autoCollapsed.current = false
+      setCollapsed(false)
+    }
+  }, [screen.name, narrow])
+
+  /* The drawer covers the page, so it closes the moment it has done its job —
+     on arrival at a screen, and when the window grows back into a real column. */
+  useEffect(() => {
+    setNavOpen(false)
+  }, [screen.name])
+  useEffect(() => {
+    if (!narrow) setNavOpen(false)
+  }, [narrow])
+  /* Escape shuts it, the way every other overlay in the console closes. */
+  useEffect(() => {
+    if (!navOpen) return
+    const on = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setNavOpen(false)
+    }
+    window.addEventListener('keydown', on)
+    return () => window.removeEventListener('keydown', on)
+  }, [navOpen])
+
+  function toggleRail() {
+    /* One button, two jobs, because there is only ever one of them on screen:
+       narrow, it opens and shuts the overlay; wide, it sets the rail's width. */
+    if (narrow) {
+      setNavOpen((o) => !o)
+      return
+    }
+    // A deliberate choice, so the builder stops managing it from here.
+    autoCollapsed.current = false
+    setCollapsed((c) => !c)
+  }
+
+  /* What the burger says, in whichever layout is on screen. A drawer opens and
+     closes; a column expands and collapses — the wide wording is the console's
+     own and is left exactly as it was. */
+  const railShut = narrow ? !navOpen : collapsed
+  const railLabel = narrow
+    ? railShut
+      ? 'Open navigation'
+      : 'Close navigation'
+    : railShut
+      ? 'Expand navigation'
+      : 'Collapse navigation'
+
+  function toggle(item: NavItem) {
+    /* A submenu cannot render in 64px, so a parent has to open the rail — and
+       that counts as the admin's choice. A leaf just navigates: clicking an
+       icon in a collapsed rail is not a request to un-collapse it. */
+    if (collapsed && item.children) {
+      autoCollapsed.current = false
+      refocus.current = item.label
+      setCollapsed(false)
+      /* Expanding shows this item's submenu. Toggling here closed a submenu
+         that was already marked open behind the collapsed rail, so the click
+         only widened the rail. */
+      setOpen(item.label)
+      return
+    }
+    if (item.children) {
+      setOpen((cur) => (cur === item.label ? null : item.label))
+      // A parent that is also a page navigates as well as opens.
+      if (item.screen && open !== item.label) go(item.screen)
+      return
+    }
+    if (item.screen) go(item.screen)
+  }
+
+  return (
+    <div className={`bshell ${!narrow && collapsed ? 'is-collapsed' : ''} ${narrow && navOpen ? 'is-navopen' : ''}${full ? ' is-full' : ''}`}>
+      <header className="bshell__top">
+        <Tip text={railLabel}>
+          <button
+            type="button"
+            className="bshell__burger"
+            onClick={toggleRail}
+            aria-label={railLabel}
+            aria-expanded={!railShut}
+          >
+            <PanelLeft size={21} strokeWidth={1.7} />
+          </button>
+        </Tip>
+
+        <a className="bshell__logo" href="#" onClick={(e) => e.preventDefault()} aria-label="Xecurify by miniOrange">
+          <img src="/xecurify-logo.png" alt="Xecurify by miniOrange" />
+        </a>
+
+        <div className="bshell__topright">
+          {/* While policies move in the background (migrate/move-job-pill.tsx); nothing while none do. */}
+          <MoveJobPill />
+          {/* At the right with the other tools (owner, 4 Nov 2026), first in the group. */}
+          {/* The phase 1 tester build (tester.ts) has no search, theme switch, sound switch or Customize sidebar. */}
+          {GLOBAL_SEARCH && !TESTER && <GlobalSearch pages={searchPages} />}
+          {/* The edition switch belongs on the shell, not on a screen: the flag
+              it flips spans the list, the create flow and the builder. */}
+          {/* Two prototype controls, side by side and both labelled as such.
+              The edition switch changes what the product CAN do; the persona
+              switch changes who is looking and what is in their tenant. */}
+          {/* Both hidden in the showcase build (see showcase.ts): the persona is
+              the default tenant, and the look is the rebrand. */}
+          {!SHOWCASE && <PersonaBar />}
+          {!SHOWCASE && <BrandSwitch />}
+          {/* `<EditionBar />` stood here: the Lite / Full switch and the
+              "N things this cannot answer" button beside it.
+
+              Hidden, not deleted. The edition machinery is untouched —
+              `featuresOf`, every `features.*` gate, the whole `edition.ts`
+              catalogue of what each one answers — and the store still holds an
+              edition, so every screen keeps reading the flags rather than the
+              name. What has gone is the control that let somebody flip it, and
+              the count of open questions beside it: both are about how this
+              prototype was built, and neither is a thing the product does.
+
+              `lite` is the default now — see `store.tsx`. Restoring the bar is
+              uncommenting this line. */}
+          {/* Each icon shows its name in a Tip. A native title never reached a
+              keyboard. */}
+          {/* The Mode button, in the showcase build too (owner, 4 Oct 2026: "bring the old Mode button at the
+              top"); the Access checks canvas follows it (canvas-shelf.ts `useStageFollowsTheme`). */}
+          {!TESTER && <Tip text={`Switch to ${theme === 'light' ? 'dark' : 'light'} theme`}>
+            <button
+              type="button"
+              className="bshell__icon"
+              onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
+              aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} theme`}
+            >
+              {theme === 'light' ? <Moon size={20} strokeWidth={1.7} /> : <Sun size={20} strokeWidth={1.7} />}
+            </button>
+          </Tip>}
+          {/* Sound (owner, 10 Oct 2026: short sounds with toasts and at the important steps; sound.ts). On unless
+              turned off here, and remembered. Named by what a press does, as the Mode button is — a changing name
+              with aria-pressed as well would read "Turn sound off, pressed". Turning it on plays the switch's tick,
+              so the admin hears that it works. */}
+          {!TESTER && <Tip text={sound ? 'Turn sound off' : 'Turn sound on'}>
+            <button
+              type="button"
+              className="bshell__icon"
+              onClick={() => {
+                setSound(!sound)
+                if (!sound) playCue('toggle-on')
+              }}
+              aria-label={sound ? 'Turn sound off' : 'Turn sound on'}
+            >
+              {sound ? <Volume2 size={20} strokeWidth={1.7} /> : <VolumeX size={20} strokeWidth={1.7} />}
+            </button>
+          </Tip>}
+          <Tip text={`Documentation. ${NOT_BUILT}`}>
+            <button type="button" className="bshell__icon is-inert" aria-label="Documentation" aria-disabled="true">
+              <BookOpen size={20} strokeWidth={1.7} />
+            </button>
+          </Tip>
+          <Tip text={`Settings. ${NOT_BUILT}`}>
+            <button type="button" className="bshell__icon is-inert" aria-label="Settings" aria-disabled="true">
+              <Settings size={20} strokeWidth={1.7} />
+            </button>
+          </Tip>
+          <ProfileMenu />
+        </div>
+      </header>
+
+      {/* The way out of an overlay that covers the page. A button, not a div:
+          it is a real control, so it is reachable and it says what it does. */}
+      {narrow && navOpen && (
+        <button type="button" className="bshell__scrim" aria-label="Close navigation" onClick={() => setNavOpen(false)} />
+      )}
+
+      <aside className="bshell__rail" inert={full || (narrow && !navOpen) ? true : undefined}>
+        <nav
+          className={`bshell__nav${editing ? ' is-editing' : ''}`}
+          aria-label="Console"
+          ref={nav}
+          /* Notion's second way in: a right-click anywhere on the rail. */
+          onContextMenu={
+            CUSTOMIZE_SIDEBAR && !editing
+              ? (e) => {
+                  e.preventDefault()
+                  startEditing()
+                }
+              : undefined
+          }
+        >
+          {editing ? (
+            <EditRail prefs={prefs} setPrefs={setPrefs} reduced={reduced} say={setSaid} refocus={regrip} />
+          ) : layout.map((sec) => {
+            /* Migration first (migrate/phase.ts): Old policy until Start migration, then Policies in its place. */
+            const items = sec.items
+              .filter((l) => !prefs.removed.includes(l))
+              .filter((l) => !(l === 'Policies' && !migrationStarted) && !(l === 'Old policy' && ((MIGRATION_FIRST && migrationStarted) || TESTER)))
+              .map((l) => ITEM[l])
+            /* A section with every row taken out loses its heading too. */
+            if (!items.length) return null
+            const title = SECTION_TITLE[sec.key]
+            return (
+            <div key={sec.key} className="bshell__group">
+              {title && <p className="bshell__section">{title}</p>}
+
+              {items.map((item) => {
+                const active = isActive(screen, item)
+                const expanded = !collapsed && open === item.label
+                const Ico = item.icon
+                /* Collapsed, the label and the badge are hidden, so the row takes
+                   its name from aria-label and shows it in a Tip. */
+                /* The phase 1 tester build (tester.ts) marks Authentication methods New and not Devices (owner, 18 Nov 2026). */
+                const badge =
+                  item.label === 'Policies' && migrating
+                    ? 'New'
+                    : TESTER && item.label === 'Authentication methods'
+                      ? 'New'
+                      : TESTER && item.label === 'Devices'
+                        ? undefined
+                        : item.badge
+                const name = badge ? `${item.label}, ${badge}` : item.label
+                /* A group with one built page in it is not "not built". */
+                const caveat = item.screen || item.children?.some((c) => c.screen) ? null : NOT_BUILT
+                const collapsedTip = caveat ? `${name}. ${caveat}` : name
+                const tip = collapsed ? collapsedTip : caveat
+                const row = (
+                  <button
+                    type="button"
+                    className={`bshell__item ${active ? 'is-active' : ''} ${caveat ? 'is-inert' : ''}`}
+                    data-rail-item={item.label}
+                    /* What moved (tour/methods-tour.ts) starts on the methods item. */
+                    data-tour={item.screen ? `rail-${item.screen.name}` : undefined}
+                    onClick={() => toggle(item)}
+                    aria-current={active ? 'page' : undefined}
+                    aria-expanded={item.children ? expanded : undefined}
+                    aria-label={collapsed ? name : undefined}
+                  >
+                    <Ico className="bshell__ico" size={20} strokeWidth={1.6} aria-hidden />
+                    <span className="bshell__item-label">{railName(item.label)}</span>
+                    {badge && <span className="bshell__badge">{badge}</span>}
+                    {item.children && (
+                      <ChevronRight
+                        className={`bshell__chev ${expanded ? 'is-open' : ''}`}
+                        size={16}
+                        strokeWidth={1.8}
+                        aria-hidden
+                      />
+                    )}
+                  </button>
+                )
+                return (
+                  <div key={item.label}>
+                    {tip ? <Tip text={tip}>{row}</Tip> : row}
+
+                    <AnimatePresence initial={false}>
+                      {item.children && expanded && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          transition={{ duration: 0.18, ease: [0.2, 0, 0, 1] }}
+                          style={{ overflow: 'hidden' }}
+                        >
+                          <div className="bshell__sub">
+                            {/* Less any page this edition withholds (edition-screens.ts). */}
+                            {item.children.filter((c) => screenOffered(c.screen, features)).map((c) => {
+                              /* Its own screen, or one opened from it — see `UNDER_ITEM`. */
+                              const on =
+                                c.screen &&
+                                c.lights !== false &&
+                                (screen.name === c.screen.name || !!UNDER_ITEM[c.screen.name]?.includes(screen.name))
+                              const tip = c.tag ? WIP_TIP : c.screen ? null : NOT_BUILT
+                              const row = (
+                                <button
+                                  key={c.label}
+                                  type="button"
+                                  className={`bshell__subitem ${on ? 'is-active' : ''} ${c.screen ? '' : 'is-inert'}`}
+                                  onClick={() => c.screen && go(c.screen)}
+                                  aria-current={on ? 'page' : undefined}
+                                >
+                                  {c.label}
+                                  {c.tag && <span className="bshell__wip">{c.tag}</span>}
+                                </button>
+                              )
+                              return tip ? (
+                                <Tip key={c.label} text={tip}>
+                                  {row}
+                                </Tip>
+                              ) : (
+                                row
+                              )
+                            })}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                )
+              })}
+            </div>
+            )
+          })}
+        </nav>
+
+        {!collapsed && <RailReminder />}
+        {CUSTOMIZE_SIDEBAR && !TESTER && (
+          <div className="bshell__foot">
+            <p className="u-sr-only" role="status" aria-live="polite">
+              {said}
+            </p>
+            {editing ? (
+              <div className="bshell__editbar">
+                <button type="button" className="bshell__reset" onClick={resetRail} disabled={isDefault(prefs)}>
+                  Reset
+                </button>
+                <button type="button" className="bshell__done" onClick={stopEditing}>
+                  Done
+                </button>
+              </div>
+            ) : (
+              (() => {
+                const btn = (
+                  <button
+                    type="button"
+                    ref={customBtn}
+                    className="bshell__item bshell__custom"
+                    onClick={startEditing}
+                    aria-label={collapsed ? 'Customize sidebar' : undefined}
+                  >
+                    <SlidersHorizontal className="bshell__ico" size={20} strokeWidth={1.6} aria-hidden />
+                    <span className="bshell__item-label">Customize sidebar</span>
+                  </button>
+                )
+                return collapsed ? <Tip text="Customize sidebar">{btn}</Tip> : btn
+              })()
+            )}
+          </div>
+        )}
+      </aside>
+
+      <main className="bshell__main" ref={main}>
+        <AnnounceStrip />
+        {/* The slot the migration banner (migrate/finale.tsx) is drawn into, above the page like the launch strip. */}
+        <div id="bshell-top" className="bshell__banner" />
+        {children}
+      </main>
+
+      {/* A quick-access rail floated down the right edge here — help and the
+          setup checklist, following the page rather than scrolling with it.
+          Both open destinations the topbar already offers, and the pair sat
+          over the content on every screen to save a scroll to the top. Out for
+          now; the topbar keeps the icons. */}
+
+      {/* The toast and the one leave dialog are mounted beside the shell in
+          BrandApp's Chrome, so the end-user side has them too. */}
+    </div>
+  )
+}
+
+/* --- Customize sidebar: the rail as its own editor (rail-custom.ts) ------------------------------------------------ */
+
+interface EditProps {
+  prefs: RailPrefs
+  setPrefs: (next: RailPrefs) => void
+  reduced: boolean
+  say: (message: string) => void
+  /** Where focus goes after the change: a selector, read by the shell once the rail has redrawn. */
+  refocus: { current: string | null }
+}
+
+const springy = (reduced: boolean) => (reduced ? { duration: 0 } : { type: 'spring' as const, stiffness: 600, damping: 45 })
+const gripAt = (label: string) => `[data-rail-grip="${label}"]`
+const sectionName = (key: string) => SECTION_TITLE[key] ?? 'the top'
+
+/* The sections, the head first and fixed, the named ones in a Reorder of their own. A row dropped outside its section
+   lands in the section under the pointer, at the row it was let go over: Reorder orders one list, so the crossing is
+   this component's. */
+function EditRail(props: EditProps) {
+  const { prefs, setPrefs, say } = props
+  const box = useRef<HTMLDivElement>(null)
+  const layout = resolve(DEFAULT_LAYOUT, prefs.layout)
+  const [head, ...rest] = layout
+
+  function dropRow(label: string, from: string, y: number) {
+    const now = currentRail()
+    const secs = [...(box.current?.querySelectorAll<HTMLElement>('[data-rail-section]') ?? [])]
+    const el = secs.find((s) => {
+      const r = s.getBoundingClientRect()
+      return y >= r.top && y <= r.bottom
+    })
+    const to = el?.dataset.railSection
+    if (!el || !to || to === from) return
+    const rows = [...el.querySelectorAll<HTMLElement>('[data-rail-row]')]
+    const over = rows.find((r) => {
+      const b = r.getBoundingClientRect()
+      return y < b.top + b.height / 2
+    })?.dataset.railRow
+    const target = resolve(DEFAULT_LAYOUT, now.layout).find((s) => s.key === to)!
+    const index = over ? target.items.indexOf(over) : target.items.length
+    props.refocus.current = gripAt(label)
+    setPrefs(place(now, DEFAULT_LAYOUT, label, to, index))
+    say(`${label} moved to ${sectionName(to)}`)
+  }
+
+  return (
+    <div ref={box}>
+      <EditSection {...props} sec={head} movable={false} onDropRow={dropRow} />
+      <Reorder.Group
+        as="div"
+        axis="y"
+        values={rest.map((s) => s.key)}
+        onReorder={(keys: string[]) => setPrefs(orderSections(currentRail(), DEFAULT_LAYOUT, keys))}
+      >
+        {rest.map((sec) => (
+          <EditSection key={sec.key} {...props} sec={sec} movable onDropRow={dropRow} />
+        ))}
+      </Reorder.Group>
+    </div>
+  )
+}
+
+/* A section in the mode: its heading with a grip (the named ones), its rows, and Add page when a row has been taken out
+   of it. A section emptied of rows keeps its heading here, so a page can be put back into it. */
+function EditSection({
+  sec,
+  movable,
+  onDropRow,
+  ...props
+}: EditProps & { sec: RailSection; movable: boolean; onDropRow: (label: string, from: string, y: number) => void }) {
+  const { prefs, setPrefs, reduced, say, refocus } = props
+  const drag = useDragControls()
+  const title = SECTION_TITLE[sec.key]
+  const shown = sec.items.filter((l) => !prefs.removed.includes(l))
+  const gone = sec.items.filter((l) => prefs.removed.includes(l))
+  const body = (
+    <>
+      {title && (
+        <div className="bshell__edithead">
+          {movable && (
+            <button
+              type="button"
+              className="bshell__grip"
+              data-rail-grip={`§${sec.key}`}
+              aria-label={`Move section ${title}`}
+              aria-keyshortcuts="ArrowUp ArrowDown"
+              onPointerDown={(e) => drag.start(e)}
+              onKeyDown={(e) => {
+                if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
+                e.preventDefault()
+                const dir = e.key === 'ArrowUp' ? -1 : 1
+                const next = moveSection(prefs, DEFAULT_LAYOUT, sec.key, dir)
+                if (next === prefs) return
+                refocus.current = gripAt(`§${sec.key}`)
+                setPrefs(next)
+                say(`Section ${title} moved ${dir === -1 ? 'up' : 'down'}`)
+              }}
+            >
+              <GripVertical size={16} strokeWidth={1.8} aria-hidden />
+            </button>
+          )}
+          <p className="bshell__section">{title}</p>
+        </div>
+      )}
+      <Reorder.Group
+        as="div"
+        axis="y"
+        values={shown}
+        onReorder={(labels: string[]) => setPrefs(reorderSection(currentRail(), DEFAULT_LAYOUT, sec.key, labels))}
+        className="bshell__editlist"
+      >
+        {shown.map((label) => (
+          <EditRow
+            key={label}
+            item={ITEM[label]}
+            reduced={reduced}
+            onDrop={(y) => onDropRow(label, sec.key, y)}
+            onMove={(dir) => {
+              const next = step(prefs, DEFAULT_LAYOUT, label, dir)
+              if (next === prefs) return
+              refocus.current = gripAt(label)
+              setPrefs(next)
+              const lands = resolve(DEFAULT_LAYOUT, next.layout).find((s) => s.items.includes(label))!.key
+              say(lands === sec.key ? `${label} moved ${dir === -1 ? 'up' : 'down'}` : `${label} moved to ${sectionName(lands)}`)
+            }}
+            onRemove={() => {
+              const at = shown.indexOf(label)
+              const neighbour = shown[at + 1] ?? shown[at - 1]
+              refocus.current = neighbour ? gripAt(neighbour) : `[data-rail-add="${sec.key}"]`
+              setPrefs(removeRow(prefs, label))
+              say(`${label} removed from the sidebar`)
+            }}
+          />
+        ))}
+      </Reorder.Group>
+      {gone.length > 0 && (
+        <AddPage
+          sectionKey={sec.key}
+          labels={gone}
+          reduced={reduced}
+          onAdd={(label) => {
+            refocus.current = gripAt(label)
+            setPrefs(addRow(prefs, label))
+            say(`${label} added back`)
+          }}
+        />
+      )}
+    </>
+  )
+  return movable ? (
+    <Reorder.Item
+      as="div"
+      value={sec.key}
+      dragListener={false}
+      dragControls={drag}
+      className="bshell__editsec"
+      data-rail-section={sec.key}
+      transition={springy(reduced)}
+    >
+      {body}
+    </Reorder.Item>
+  ) : (
+    <div className="bshell__editsec" data-rail-section={sec.key}>
+      {body}
+    </div>
+  )
+}
+
+/* One rail row in the mode: the grip, the row's icon and name, and its ✕. Not a link here — the rows are being
+   arranged, not used. The grip drags (Motion's Reorder, started from the grip alone so the ✕ can still be pressed) and
+   takes the arrow keys, which is Notion's Move up / Move down without the menu. */
+function EditRow({
+  item,
+  reduced,
+  onMove,
+  onRemove,
+  onDrop,
+}: {
+  item: NavItem
+  reduced: boolean
+  onMove: (dir: -1 | 1) => void
+  onRemove: () => void
+  onDrop: (y: number) => void
+}) {
+  const drag = useDragControls()
+  const Ico = item.icon
+  const remove = `Remove ${item.label} from sidebar`
+  return (
+    <Reorder.Item
+      as="div"
+      value={item.label}
+      dragListener={false}
+      dragControls={drag}
+      className="bshell__edit"
+      data-rail-row={item.label}
+      transition={springy(reduced)}
+      whileDrag={reduced ? undefined : { scale: 1.02 }}
+      onDragEnd={(e) => {
+        if ('clientY' in e) onDrop(e.clientY)
+      }}
+    >
+      <button
+        type="button"
+        className="bshell__grip"
+        data-rail-grip={item.label}
+        aria-label={`Move ${item.label}`}
+        aria-keyshortcuts="ArrowUp ArrowDown"
+        onPointerDown={(e) => drag.start(e)}
+        onKeyDown={(e) => {
+          if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
+          e.preventDefault()
+          onMove(e.key === 'ArrowUp' ? -1 : 1)
+        }}
+      >
+        <GripVertical size={16} strokeWidth={1.8} aria-hidden />
+      </button>
+      <Ico className="bshell__ico" size={20} strokeWidth={1.6} aria-hidden />
+      <span className="bshell__item-label">{railName(item.label)}</span>
+      <Tip text={remove}>
+        <button type="button" className="bshell__eye" aria-label={remove} onClick={onRemove}>
+          <X size={16} strokeWidth={1.8} aria-hidden />
+        </button>
+      </Tip>
+    </Reorder.Item>
+  )
+}
+
+/* "+ Add page" at a section's end: the rows taken out of it, one press each to put one back where it was. A list that
+   opens under the button, inside the rail, rather than a menu floating over the page. Escape shuts the list first and
+   only the next one leaves the mode. */
+function AddPage({
+  sectionKey: key,
+  labels,
+  reduced,
+  onAdd,
+}: {
+  sectionKey: string
+  labels: string[]
+  reduced: boolean
+  onAdd: (label: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div
+      className="bshell__add"
+      onKeyDown={(e) => {
+        if (e.key === 'Escape' && open) {
+          e.stopPropagation()
+          setOpen(false)
+        }
+      }}
+    >
+      <button
+        type="button"
+        className="bshell__addbtn"
+        data-rail-add={key}
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <Plus size={16} strokeWidth={1.8} aria-hidden />
+        Add page
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={reduced ? false : { height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={reduced ? { opacity: 0, transition: { duration: 0 } } : { height: 0, opacity: 0 }}
+            transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
+            style={{ overflow: 'hidden' }}
+          >
+            <ul className="bshell__addlist">
+              {labels.map((label) => {
+                const Ico = ITEM[label].icon
+                return (
+                  <li key={label}>
+                    <button type="button" className="bshell__addrow" onClick={() => onAdd(label)}>
+                      <Ico size={18} strokeWidth={1.6} aria-hidden />
+                      {label}
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+/* The mark for each kind of news (22 Sep 2026) now lives in toast-tone.ts as
+   `TONE_ICON`: the confirm dialogs read the same map (kit.tsx `Confirm`,
+   22 Oct 2026), and two copies would drift the moment a tone was added. */
+const TOAST_ICON = TONE_ICON
+
+/* Its own component, so subscribing to the toast re-renders this node rather
+   than the whole shell around it.
+
+   Two parts. The live region is always in the page and only its text changes,
+   because a region inserted together with its text is often not announced; the
+   text node is keyed by the toast id so the same message twice is read twice.
+   The card is keyed the same way so a repeat animates in again.
+
+   A white card now, not a dark pill (owner, 22 Sep 2026: "colour based on the
+   task performed, with an icon, and a timeline at the end of the card"): the
+   kind of news as a coloured mark, the message, Undo when there is one, a
+   close, and a bar along the foot in the same colour that runs out as the
+   toast's time does.
+
+   And a sound for it (owner, 10 Oct 2026; sound.ts): once per new toast, from
+   its kind of news, and quiet when the press that caused it made its own (a
+   switch's tick, a policy's publish chime). A toast already showing when this
+   mounts was heard where it began. */
+export function Toast() {
+  const toast = useToast()
+  const { dismissToast, holdToast } = useBrand()
+  const heard = useRef(toast?.id)
+  /* The toast the pointer is over or focus is inside: its clock is stopped (store.tsx `holdToast`) and its bar with
+     it, so Undo cannot run out under somebody on their way to it (review, 24 Oct 2026). By id: a card still sliding
+     out never holds or releases the one that replaced it. */
+  const [held, setHeld] = useState<number | null>(null)
+  const hold = (id: number, on: boolean) => {
+    holdToast(id, on)
+    setHeld((h) => (on ? id : h === id ? null : h))
+  }
+  const stillIn = (card: HTMLElement, next?: EventTarget | null) =>
+    card.matches(':hover') || (next instanceof Node ? card.contains(next) : card.contains(document.activeElement))
+  /* The toast whose action last ran: each runs once (toast-action.ts). */
+  const ran = useRef<number | null>(null)
+  useEffect(() => {
+    if (!toast || heard.current === toast.id) return
+    heard.current = toast.id
+    playToastCue(toast.tone)
+  }, [toast])
+  return (
+    <>
+      <div className="u-sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {toast && <span key={toast.id}>{toast.text}</span>}
+      </div>
+      {/* Top right, under the bar (owner, 21 Sep 2026: "a toaster in the top
+          right with an undo option"). One place for every toast, so a removal
+          and a save confirm in the same spot. The message is hidden from
+          assistive tech because the live region above says it; the buttons are
+          real controls and stay in the tree. */}
+      <AnimatePresence>
+        {toast && (
+          <motion.div
+            key={toast.id}
+            className={`bshell__toast is-${toast.tone}${held === toast.id ? ' is-held' : ''}`}
+            style={{ '--toast-ms': `${toast.duration}ms` } as CSSProperties}
+            initial={{ opacity: 0, y: -10, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -6, scale: 0.99 }}
+            transition={{ type: 'spring', stiffness: 500, damping: 38 }}
+            onPointerEnter={() => hold(toast.id, true)}
+            onPointerLeave={(e) => hold(toast.id, e.currentTarget.contains(document.activeElement))}
+            onFocus={() => hold(toast.id, true)}
+            onBlur={(e) => hold(toast.id, stillIn(e.currentTarget, e.relatedTarget))}
+          >
+            <span className="bshell__toastico" aria-hidden>
+              {(() => {
+                const Ico = TOAST_ICON[toast.tone]
+                return <Ico size={18} strokeWidth={2} />
+              })()}
+            </span>
+            <span className="bshell__toasttext" aria-hidden>
+              {toast.text}
+            </span>
+            {toast.action && (
+              <button
+                type="button"
+                className="bshell__toastact"
+                onClick={() =>
+                  /* Once, and the toast goes as it runs. The cue before it, so
+                     a toast the action shows in turn stays quiet under it. */
+                  pressToastAction(toast, ran, dismissToast, () => playCue(toast.action?.label === 'Undo' ? 'undo' : 'info'))
+                }
+              >
+                {toast.action.label}
+              </button>
+            )}
+            <button type="button" className="bshell__toastx" aria-label="Dismiss" onClick={dismissToast}>
+              <X size={14} strokeWidth={2} />
+            </button>
+            <span className="bshell__toastbar" aria-hidden />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
+  )
+}
+
+/** A page head's way back: the page this one is opened from. */
+export interface PageCrumb {
+  /** The page it goes back to, as the rail names it: "Policies". */
+  label: string
+  onClick: () => void
+}
+
+/** Page header used by every screen: the title and its caption, and at most a
+    Documentation link or a page's preview switches. See `PageBar` for where a
+    page's actions go. */
+export function PageHead({
+  title,
+  caption,
+  docs,
+  preview,
+  crumb,
+  headRef,
+}: {
+  title: string
+  caption?: string
+  /** A Documentation link against the right edge. */
+  docs?: boolean
+  /** Switches that compare two versions of this page — its width, Device
+      profiles' create flow — against the right edge. Never a list action;
+      those are on `PageBar`. */
+  preview?: ReactNode
+  /** "← Policies" over the title, for a page opened from another page's bar
+      rather than from the rail (Sign-in tests, from All Policies). */
+  crumb?: PageCrumb
+  /** For a page that puts focus back on its heading. */
+  headRef?: Ref<HTMLElement>
+}) {
+  return (
+    <header className="bpage__head" ref={headRef}>
+      {/* The board bar's back link, on a page head: the same arrow, ink and
+          hover (board.css, `.bbtop__back` and `.bbtop__crumb`). One button
+          rather than the board's arrow-and-word pair, so it is one tab stop. */}
+      {crumb && (
+        <nav className="bpage__crumbs" aria-label="Breadcrumb">
+          <button type="button" className="bpage__crumb" onClick={crumb.onClick}>
+            <span className="bpage__crumb-arrow" aria-hidden>
+              <ArrowLeft size={16} strokeWidth={2} />
+            </span>
+            <span className="bpage__crumb-label">{crumb.label}</span>
+          </button>
+        </nav>
+      )}
+      {/* Title, then caption under it, in one container on one row (owner, 16
+          Sep 2026: "the heading and subheading in one container, in one row").
+          Beside it: at most Documentation, or the page's preview switches.
+
+          No `title` on the caption any more. It was there because the caption
+          used to truncate, and a tooltip repeating a sentence that is now
+          printed in full is a hover box with nothing in it. */}
+      <div className="bpage__headrow">
+        <div className="bpage__title">
+          <h1>{title}</h1>
+          {caption && <p>{caption}</p>}
+        </div>
+        {preview && <div className="bpage__preview">{preview}</div>}
+        {docs && <DocsLink />}
+      </div>
+    </header>
+  )
+}
+
+/* The head's Documentation link, on its own for a page whose head is not a
+   `PageHead` (an application's or a group's, which carry a logo or a face and
+   a rename pencil). Documentation is not built in this prototype, so the link
+   is the top bar's inert one — present, named, and saying so — rather than a
+   link to nowhere. */
+export function DocsLink() {
+  return (
+    <Tip text={`Documentation. ${NOT_BUILT}`}>
+      <button type="button" className="bpage__docs" aria-disabled="true">
+        <BookOpen size={15} strokeWidth={1.8} aria-hidden />
+        Documentation
+      </button>
+    </Tip>
+  )
+}

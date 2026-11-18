@@ -1,0 +1,313 @@
+import type { Condition, ConditionCard, Joiner, Predicate } from './data'
+
+/* -----------------------------------------------------------------------------
+   The predicate — a rule's WHEN, and everything that reads it.
+
+   A rule's WHEN is a **disjunction of cards**. A card holds conditions that are
+   all required; two cards are alternatives. That is disjunctive normal form,
+   and it is the whole model:
+
+       match  ⟺  cards.length === 0  ||  cards.some(k => k.conditions.every(pass))
+
+   Two levels, forever. `(location AND ip) OR (user AND groups)` is two cards
+   and needs no parentheses on screen, because the boxes *are* the parentheses.
+
+   Why not a general tree. The linter in `diagnostics.ts` decides whether a rule
+   can ever run, and every one of its interesting checks — subsumption,
+   contradiction, duplication — is built on "an unbroken run of ANDs". Over an
+   arbitrary tree those checks have to bail out silently on the mixed case,
+   which is precisely the case grouping exists to enable: the linter would go
+   quiet exactly where it is needed. A card IS an unbroken run of ANDs by
+   construction, so `allAnd(rule)` becomes `cards.length === 1` and every check
+   survives verbatim.
+
+   Nothing becomes inexpressible. DNF is a normal form — every finite boolean
+   formula has one. What is lost is *ways of writing* a predicate, never
+   predicates.
+   -------------------------------------------------------------------------- */
+
+/* The joiner at each level, defaulted.
+
+   Read through these two rather than off the field, so "absent" means the
+   model's original semantics everywhere at once instead of at each call site. */
+export const cardJoin = (k: ConditionCard): Joiner => k.join ?? 'and'
+export const topJoin = (p: Predicate): Joiner => p.join ?? 'or'
+
+/* --- One bracket, one operator ------------------------------------------------
+
+   The two joiners above are what the model HOLDS. These two are what a rule
+   READS as, and the difference is the whole point of them.
+
+   A rule is one bracket. Everything in it — each plain condition, and each
+   group somebody made — is a member of that bracket, and one and/or governs
+   all of them: `A · B · C · (group) · D`. A group is a bracket of its own,
+   nested inside, and the operator inside it is its own business. That is two
+   levels of joining, which is exactly what the model carries, but it is not
+   how the model divides them: the model's outer joiner sits between CARDS, and
+   the loose conditions are one card, so `A ∧ B` and the group beside it were
+   two operators the moment a group appeared.
+
+   `outerJoin` reads the one operator a person actually sees, and
+   `setOuterJoin` in `when-ops` writes both levels in lockstep so the two
+   readings cannot come apart. `(A ∧ B) ∧ (group)` and `A ∧ B ∧ (group)` are
+   the same predicate — the flattening is free, and it is free in either
+   direction, so nothing about the model had to change to say this. */
+
+/** The operator governing the whole bracket, as read. */
+export const outerJoin = (p: Predicate): Joiner =>
+  p.cards.length === 1 && !p.cards[0].grouped ? cardJoin(p.cards[0]) : topJoin(p)
+
+/* Which cards are brackets of their own rather than members of the outer one.
+
+   A group is, because somebody said so. And so is a run of two or more
+   conditions whose joiner DISAGREES with the outer operator — because there is
+   no honest way to draw `(A ∧ B ∧ C) ∨ (D ∧ E)` as one flat bracket, and
+   predicates in exactly that shape exist: two ungrouped cards is what the model
+   has always meant by "alternatives", and rules were authored that way before
+   the editor said `grouped` out loud.
+
+   Under the writers below the disagreement never arises on anything authored
+   from here — every add, split and group re-establishes the lockstep — so this
+   arm is what keeps faith with predicates that predate it, not a state the
+   editor produces. */
+export const drawsAsBracket = (p: Predicate, k: ConditionCard): boolean =>
+  k.grouped || (k.conditions.length > 1 && cardJoin(k) !== outerJoin(p))
+
+/* The values a condition may NOT also name, because another condition on the
+   same attribute already names them in the same branch (owner, 22 Sep 2026: "if
+   I picked one zone in any condition I can't pick that in the other condition —
+   this may cause conflict"). Twice in one branch, a value is a contradiction
+   ("in Office" and "not in Office") or a repeat that changes nothing.
+
+   A branch is a group — a card drawn as a bracket — or the rule's loose run.
+   Two different groups are alternatives, and the same zone in each is an
+   ordinary rule: (Office and a laptop) or (Office in business hours). A loose
+   condition holds alongside every group, so a group repeating its value is
+   either absorbed by it or fights it, and that pair counts. */
+export function valuesTakenElsewhere(p: Predicate, conditionId: string): string[] {
+  const branch = new Map<string, string>()
+  for (const k of p.cards) {
+    const b = drawsAsBracket(p, k) ? k.id : 'loose'
+    for (const c of k.conditions) branch.set(c.id, b)
+  }
+  const all = p.cards.flatMap((k) => k.conditions)
+  const me = all.find((c) => c.id === conditionId)
+  if (!me) return []
+  const mine = branch.get(me.id)
+  return all
+    .filter((x) => {
+      if (x.id === me.id || x.typeId !== me.typeId) return false
+      const theirs = branch.get(x.id)
+      return mine === 'loose' || theirs === 'loose' || theirs === mine
+    })
+    .flatMap((x) => x.values)
+}
+
+/** Does this card hold, given a test for one condition? */
+export const cardPasses = (k: ConditionCard, passed: (c: Condition) => boolean) =>
+  cardJoin(k) === 'or' ? k.conditions.some(passed) : k.conditions.every(passed)
+
+/** Does the whole predicate hold? An empty predicate matches everything. */
+export const predicatePasses = (p: Predicate, passed: (c: Condition) => boolean) =>
+  p.cards.length === 0 ? true : topJoin(p) === 'or' ? p.cards.some((k) => cardPasses(k, passed)) : p.cards.every((k) => cardPasses(k, passed))
+
+// --- Three values -------------------------------------------------------------
+
+/* What one condition comes to against one sign-in: it holds, it does not, or
+   the facts given cannot say. Here rather than in the evaluator so the
+   predicate can be read three-valued without importing it.
+
+   The two readers above are two-valued on purpose — they take "passed" and
+   treat everything else as not passed, which is how an undecided condition has
+   always been graded (never a pass). The two below keep the third value, so a
+   caller can tell "this rule does not match" from "this rule might, if we knew
+   the address". Strong Kleene logic, the textbook three-valued AND and OR:
+
+     AND  fail if any part fails, pass if every part passes, else unknown
+     OR   pass if any part passes, fail if every part fails, else unknown
+
+   So a known answer is never hidden by an unknown one it does not depend on —
+   `fail AND unknown` is fail, `pass OR unknown` is pass. */
+export type CondState = 'pass' | 'fail' | 'unknown'
+
+/** Kleene AND. An empty list is `pass`, the identity. */
+export function allOf(states: readonly CondState[]): CondState {
+  if (states.includes('fail')) return 'fail'
+  return states.every((s) => s === 'pass') ? 'pass' : 'unknown'
+}
+
+/** Kleene OR. An empty list is `fail`, the identity. */
+export function anyOf(states: readonly CondState[]): CondState {
+  if (states.includes('pass')) return 'pass'
+  return states.every((s) => s === 'fail') ? 'fail' : 'unknown'
+}
+
+/** Kleene NOT: unknown stays unknown. */
+export const notState = (s: CondState): CondState => (s === 'pass' ? 'fail' : s === 'fail' ? 'pass' : 'unknown')
+
+/** One card, three-valued, over its own joiner. */
+export function cardState(k: ConditionCard, state: (c: Condition) => CondState): CondState {
+  const each = k.conditions.map(state)
+  return cardJoin(k) === 'or' ? anyOf(each) : allOf(each)
+}
+
+/** The whole predicate, three-valued. An empty predicate is `pass`, as it matches everything. */
+export function predicateState(p: Predicate, state: (c: Condition) => CondState): CondState {
+  if (p.cards.length === 0) return 'pass'
+  const each = p.cards.map((k) => cardState(k, state))
+  return topJoin(p) === 'or' ? anyOf(each) : allOf(each)
+}
+
+/* Identity of one condition, order-insensitive across its values.
+
+   The scope segment is what keeps "in zone Office, on the network" and "in
+   zone Office, on the map" from being the same condition. They are two
+   different questions with two different answers, and nine separate readers get
+   that right for free by keying through here: PE101's duplicate-rule blocker,
+   PE102, PE112, `duplicatedAcrossCards`, `mergeBranches` and the trail's
+   `mergeUp` (both of which DROP a condition they consider a twin), the
+   gauntlet's twin matching, `changes.ts`, and the stale-estimate test.
+
+   Per zone since 22 Sep 2026: the segment lists `zone:half` for each named zone
+   that is narrowed, sorted, so the same answers given in another order key the
+   same. Only for zones the condition still names, so a stale entry cannot
+   split two identical conditions.
+
+   Empty rather than `both`: a condition with no scope has to key to the
+   byte-identical string it keyed to before this field existed, or every
+   signature in the seeded estate moves and the stale-estimate check reports the
+   whole tenant as edited. */
+const scopeSegment = (c: Condition) =>
+  c.scopes
+    ? c.values
+        .filter((v) => c.scopes![v])
+        .map((v) => `${v}:${c.scopes![v]}`)
+        .sort()
+        .join(',')
+    : ''
+export const ckey = (c: Condition) => `${c.typeId}|${c.operator}|${[...c.values].sort().join(',')}|${scopeSegment(c)}`
+
+/* The canonical identity of a whole predicate, and the product's single audit
+   primitive. Conditions inside a card sort; cards sort among themselves. So it
+   answers "is this the same rule" without answering "was it typed in the same
+   order", which is the question four different call sites were each getting
+   subtly wrong in their own way.
+
+   It has to distinguish a pure REGROUPING — same leaves, different cards — or
+   the stale-estimate check in diagnostics goes on reporting a number that was
+   calculated for a different rule. Nesting the join characters is what does
+   that: `a∧b ∨ c` and `a ∨ b∧c` share leaves and differ here. */
+export function sig(p: Predicate): string {
+  return p.cards
+    .map((k) => {
+      const inner = k.conditions.map(ckey).sort().join(cardJoin(k) === 'and' ? '∧' : '∨')
+      /* Bracketed whenever a card holds more than one leaf, unconditionally.
+
+         Without the brackets the nesting characters do not actually nest, and
+         the promise three paragraphs up — that this distinguishes a pure
+         REGROUPING — was false in the case most likely to occur. One OR-card
+         holding A and B flattens to `A∨B`; two default cards holding A and B
+         join with the trunk's `∨` and produce `A∨B` as well. Same string, two
+         different rules, because the card's joiner happened to equal the
+         trunk's and nothing marked where one card stopped.
+
+         Bracketing only when the card's joiner DIFFERS from the trunk's fixes
+         the AND pair and leaves that case exactly as broken. A bracket per
+         multi-leaf card costs two characters and makes the nesting real. */
+      return k.conditions.length > 1 ? `(${inner})` : inner
+    })
+    .sort()
+    .join(topJoin(p) === 'or' ? '∨' : '∧')
+}
+
+/** Every condition in the predicate, cards flattened away. */
+export function leaves(p: Predicate): Condition[] {
+  return p.cards.flatMap((k) => k.conditions)
+}
+
+/** How many conditions the predicate holds. Counts leaves, never containers. */
+export const leafCount = (p: Predicate) => leaves(p).length
+
+/* Conservative rather than an identity test. `{ cards: [] }` is the catch-all
+   by design, but a card that somehow lost its conditions matches everything
+   too — and a rule that quietly matches everything is the one shape that makes
+   every rule below it unreachable. The invariant says that card cannot exist;
+   this is what keeps a broken invariant from turning into a silent outage.
+
+   About the WHEN only. A rule with a `who` and no conditions still applies to
+   just those people, so anything asking about a whole RULE reads
+   `ruleMatchesEveryone` in `rule-who.ts`, and identity reads `ruleSig`. */
+export function matchesEverything(p: Predicate): boolean {
+  if (p.cards.length === 0) return true
+  const hollow = (k: ConditionCard) => k.conditions.length === 0
+  /* Joined by OR one always-true card is enough; joined by AND they all have
+     to be, or the others still constrain it. */
+  return topJoin(p) === 'or' ? p.cards.some(hollow) : p.cards.every(hollow)
+}
+
+/* True when the predicate is one unbroken run of ANDs — the shape every
+   interesting linter check is built on. It used to be spelled `cards.length
+   === 1`, which was sound only while a card could not be an OR-run. It can be
+   now, so the check has to say so. */
+export const isSingleAndRun = (p: Predicate) => p.cards.length === 1 && cardJoin(p.cards[0]) === 'and'
+
+/** Cards holding a condition whose ckey appears in more than one card. */
+export function duplicatedAcrossCards(p: Predicate): string[] {
+  if (p.cards.length < 2) return []
+  const seen = new Map<string, number>()
+  for (const k of p.cards) {
+    for (const key of new Set(k.conditions.map(ckey))) seen.set(key, (seen.get(key) ?? 0) + 1)
+  }
+  return [...seen.entries()].filter(([, n]) => n > 1).map(([key]) => key)
+}
+
+// --- Blame and credit --------------------------------------------------------
+
+/* Two questions the old evaluator answered by scanning a flat array, and both
+   answers become wrong the moment there are alternatives.
+
+   "The first thing that failed" is meaningless when three alternatives each
+   failed for a different reason — the useful answer is which alternative came
+   closest. And "All N conditions met" is simply false when one of two cards
+   carried the match; the other card's conditions were not met and saying they
+   were is the kind of quiet wrongness that stops people trusting the trace. */
+
+/** The card that came closest to matching, and its first failing condition. Ties break to the earliest card. */
+export function blame(
+  p: Predicate,
+  passed: (c: Condition) => boolean,
+): { card: ConditionCard; condition: Condition; index: number } | null {
+  let best: { card: ConditionCard; condition: Condition; index: number } | null = null
+  let fewest = Infinity
+
+  for (let index = 0; index < p.cards.length; index++) {
+    const card = p.cards[index]
+    if (cardPasses(card, passed)) continue
+    const failing = card.conditions.filter((c) => !passed(c))
+    if (failing.length === 0 || failing.length >= fewest) continue
+    fewest = failing.length
+    best = { card, condition: failing[0], index }
+  }
+
+  return best
+}
+
+/** The card that carried the match. */
+export function credit(p: Predicate, passed: (c: Condition) => boolean): { card: ConditionCard; index: number } | null {
+  for (let i = 0; i < p.cards.length; i++) {
+    if (cardPasses(p.cards[i], passed)) return { card: p.cards[i], index: i }
+  }
+  return null
+}
+
+/** Card A, card B — cards are lettered because they have no evaluation order. Rules are numbered; the two must not be confusable. */
+export const cardLetter = (i: number) => String.fromCharCode(65 + (i % 26)) + (i >= 26 ? String(Math.floor(i / 26)) : '')
+
+/* Name a card the way the UI does: its label if the author gave it one,
+   otherwise its letter.
+
+   "branch", not "card". The gauntlet deals a deck of CARDS — thirteen hostile
+   sign-ins — and the Check sheet sits directly beside the rule being edited,
+   so one word named two different things on adjacent surfaces. The type stays
+   `ConditionCard`; only what the product says out loud changes. */
+export const cardName = (card: ConditionCard, i: number) => card.label?.trim() || `branch ${cardLetter(i)}`

@@ -1,0 +1,193 @@
+/* -----------------------------------------------------------------------------
+   Settings field.
+
+   A FIELD, not a row: the label on one line, the control filling the line under
+   it at the panel's full width (owner, 18 Sep 2026 — "only the vertical one,
+   label at the top, remove icons, and the selection at the bottom taking the
+   full space"). See the note in setting-field.tsx for why the side-by-side row
+   went, and which two kinds keep it.
+
+   The old row was label / grey help sentence / control-on-the-right, repeated.
+   At forty-two rows that reads as a wall, and the help was doing the damage —
+   longest text on the row, least often wanted. It moved to the label.
+   -------------------------------------------------------------------------- */
+
+/* No rule between rows: the list gap separates them (see .bm8__setlist). */
+.bsf {
+  display: flex; flex-direction: column; gap: var(--space-4);
+  padding: 10px 0;
+}
+
+.bsf__head { display: flex; align-items: center; gap: var(--space-5); }
+
+.bsf__label {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  font-size: var(--fs-md); font-weight: var(--fw-medium); color: var(--text-primary);
+}
+
+.bsf__ctl { display: flex; align-items: center; gap: 8px; }
+
+/* --- Full width --------------------------------------------------------------------
+   Scoped to the field's OWN control (`>` from `.bsf`), so a revealed field
+   nested under it keeps its own shape rather than inheriting this one. An
+   inline field's control lives inside `.bsf__head` and never matches. */
+.bsf > .bsf__ctl { width: 100%; }
+.bsf > .bsf__ctl > * { flex: 1; min-width: 0; }
+.bsf > .bsf__ctl .bsf__dd { display: flex; }
+.bsf > .bsf__ctl .bsf__ddtrigger { width: 100%; min-width: 0; }
+/* Each segment takes an equal share, so the control reads as one field rather
+   than as a cluster of buttons floating in a full-width row. */
+.bsf > .bsf__ctl .bsf__seg { display: flex; width: 100%; }
+.bsf > .bsf__ctl .bsf__seg button { flex: 1; min-width: 0; }
+.bsf > .bsf__ctl .bsf__textwrap { display: flex; width: 100%; }
+.bsf > .bsf__ctl .bsf__text { width: 100%; }
+/* A switch or a door stays beside its label; nothing here stretches. */
+.bsf.is-inline .bsf__ctl { flex: none; }
+
+.bsf__warn {
+  display: flex; align-items: flex-start; gap: 6px; margin: 0;
+  padding: 7px 10px; border-radius: var(--radius-sm);
+  background: var(--fb-notice-bg); border: 1px solid var(--fb-notice-border);
+  font-size: var(--fs-xs); line-height: 1.45; color: var(--fb-notice-fg);
+}
+.bsf__warn svg { flex: none; margin-top: 2px; }
+
+/* --- Segmented ---------------------------------------------------------------------
+   Two or three options, all visible. A popover for a binary choice is a click
+   spent hiding one word. */
+.bsf__seg {
+  display: inline-flex; gap: 2px; padding: 3px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-md);
+}
+.bsf__seg button {
+  padding: 5px 12px; border-radius: var(--radius-sm);
+  background: none; cursor: pointer; white-space: nowrap;
+  font-size: var(--fs-sm); color: var(--text-secondary);
+  transition: background var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard);
+}
+.bsf__seg button:hover { color: var(--text-primary); }
+/* A raised chip on a sunken track. The old note here said a surface step could
+   not work inside a Drawer, because --surface-raised is the panel's own colour
+   there — but the contrast that matters is chip against TRACK, and the track is
+   --surface-sunken, which is a clear step below raised in both themes. So the
+   selected segment can be neutral, and the brand is left for the button that
+   actually commits the panel. */
+.bsf__seg button.is-on {
+  background: var(--surface-raised); color: var(--text-primary); font-weight: var(--fw-medium);
+  box-shadow: inset 0 0 0 1px var(--border-default), var(--el-low);
+}
+.bsf__seg button:focus-visible { outline: none; box-shadow: 0 0 0 4px var(--focus-halo); }
+
+/* --- Dropdown ----------------------------------------------------------------------- */
+
+.bsf__dd { position: relative; display: inline-flex; }
+.bsf__ddtrigger {
+  display: inline-flex; align-items: center; gap: 8px;
+  min-width: 168px; height: var(--ctl-height-md); padding: 0 var(--space-4);
+  background: var(--ctl-bg);
+  border: var(--bw-thin) solid var(--ctl-border); border-radius: var(--ctl-radius);
+  cursor: pointer; font-size: var(--fs-md); color: var(--text-primary);
+  transition: border-color var(--dur-fast) var(--ease-standard);
+}
+.bsf__ddtrigger > span { flex: 1; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bsf__ddtrigger > svg { flex: none; color: var(--text-muted); transition: transform var(--dur-fast) var(--ease-standard); }
+.bsf__ddtrigger:hover { border-color: var(--border-strong); }
+.bsf__ddtrigger.is-open { border-color: var(--accent); box-shadow: 0 0 0 4px var(--focus-halo); }
+.bsf__ddtrigger.is-open > svg { transform: rotate(180deg); }
+.bsf__ddtrigger:focus-visible { outline: none; box-shadow: 0 0 0 4px var(--focus-halo); }
+
+.bsf__ddlist {
+  position: absolute; z-index: 20; top: calc(100% + 5px); right: 0;
+  min-width: 100%; list-style: none; margin: 0; padding: 4px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-default); border-radius: var(--radius-md);
+  box-shadow: var(--el-high);
+}
+.bsf__ddlist button {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 7px 9px; border-radius: var(--radius-sm);
+  background: none; cursor: pointer; text-align: left; white-space: nowrap;
+  font-size: var(--fs-md); color: var(--text-secondary);
+}
+/* The tick holds its space so nothing shifts when the choice moves. */
+/* The tick marks the current value; it does not need a colour to do it, and
+   an orange row inside an open list is the same "state, not action" the
+   segmented control just gave up. */
+.bsf__ddlist button > svg { flex: none; opacity: 0; color: var(--text-primary); }
+.bsf__ddlist button.is-on { color: var(--text-primary); font-weight: var(--fw-medium); }
+.bsf__ddlist button.is-on > svg { opacity: 1; }
+.bsf__ddlist button:hover { background: var(--surface-sunken); color: var(--text-primary); }
+.bsf__ddlist button:focus-visible { outline: none; box-shadow: 0 0 0 4px var(--focus-halo); }
+
+/* --- A number the set does not hold --------------------------------------------------
+   The dropdown keeps its place and the box appears UNDER it, so choosing
+   "Custom" adds a control rather than swapping one out. The unit sits beside
+   the box rather than inside it: a suffix inside a number field leaves the
+   field looking half as wide as the triggers above it. */
+.bsf__num { display: flex; flex-direction: column; gap: var(--space-4); width: 100%; }
+.bsf__customrow { display: flex; align-items: center; gap: var(--space-4); }
+.bsf__customrow .bsf__text { flex: 1; min-width: 0; }
+.bsf__unit { flex: none; font-style: normal; font-size: var(--fs-md); color: var(--text-secondary); }
+
+/* The value it sets is typed under the field rather than named in the list, so
+   it is ruled off from the ones that name themselves. It still ticks. */
+.bsf__ddaction { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--border-subtle); }
+
+/* --- Text ---------------------------------------------------------------------------
+   The counter sits inside the field rather than under it, so a row that is
+   approaching its limit does not change height — a settings column that reflows
+   as you type is a column that moves the thing you were about to click. */
+
+.bsf__textwrap { position: relative; display: inline-flex; align-items: center; }
+
+.bsf .bsf__text {
+  width: 200px; height: var(--ctl-height-md); padding: 0 var(--space-4);
+  background: var(--ctl-bg);
+  border: var(--bw-thin) solid var(--ctl-border); border-radius: var(--ctl-radius);
+  font-size: var(--fs-md); color: var(--text-primary);
+}
+.bsf__text:focus-visible { outline: none; border-color: var(--ctl-border-focus); box-shadow: 0 0 0 4px var(--focus-halo); }
+
+.bsf__textwrap.is-bad .bsf__text { border-color: var(--fb-negative-border); background: var(--fb-negative-bg); }
+.bsf__textwrap.is-bad .bsf__text:focus-visible { box-shadow: 0 0 0 3px var(--fb-negative-bg); }
+
+/* Appears within two characters of the limit, not from the moment the panel
+   opens: a counter reading 3/11 is decoration, one reading 10/11 is a warning.
+   The field reserves room for it so the text never runs underneath. */
+.bsf__count {
+  position: absolute; right: 9px;
+  font-style: normal; font-size: var(--fs-xs); color: var(--text-muted);
+  font-variant-numeric: tabular-nums; pointer-events: none;
+}
+.bsf__textwrap:has(.bsf__count) .bsf__text { padding-right: 42px; }
+.bsf__textwrap.is-bad .bsf__count { color: var(--fb-negative-fg); font-weight: var(--fw-medium); }
+
+/* --- Revealed settings --------------------------------------------------------------
+   What a choice brought with it. Indented under the label of the row that
+   caused them, because their existence is conditional on that row: flush with
+   everything else they read as peers. The indent alone says it — the rule that
+   ran down the left went with the other dividers (15 Sep 2026). */
+.bsf__reveal {
+  margin: var(--space-2) 0 0 var(--space-6);
+}
+.bsf__reveal .bsf { padding: 8px 0; }
+/* One step down in the hierarchy, so a revealed field does not compete with the
+   one that produced it. */
+.bsf__reveal .bsf__label { font-weight: var(--fw-regular); color: var(--text-secondary); }
+
+@media (max-width: 620px) {
+  .bsf__reveal { margin-left: 0; }}
+
+/* Removable rows — the fingerprint profile's attributes can be taken out of the
+   set. Quiet until the row is under the pointer, always in the tab order. */
+.bsf__drop {
+  flex: none; display: grid; place-items: center; width: 26px; height: 26px;
+  border-radius: var(--radius-sm); background: none; cursor: pointer; color: var(--text-muted);
+  opacity: 0; transition: opacity var(--dur-fast) var(--ease-standard);
+}
+.bsf:hover .bsf__drop, .bsf:focus-within .bsf__drop { opacity: 1; }
+.bsf__drop:hover { background: var(--fb-negative-bg); color: var(--fb-negative-fg); }
+.bsf__drop:focus-visible { outline: none; box-shadow: 0 0 0 4px var(--focus-halo); opacity: 1; }
+

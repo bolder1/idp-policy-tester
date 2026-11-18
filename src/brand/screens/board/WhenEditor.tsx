@@ -1,0 +1,955 @@
+import { Fragment, useEffect, useState } from 'react'
+import { Braces, Plus, Split, Trash2, Ungroup } from 'lucide-react'
+
+import { cardJoin, cardLetter, ckey, drawsAsBracket, duplicatedAcrossCards, outerJoin, valuesTakenElsewhere } from '../../predicate'
+import {
+  conditionType,
+  type Condition,
+  type ConditionCard,
+  type Joiner,
+  type Predicate,
+  type Rule,
+  type ZoneScope,
+} from '../../data'
+import { MenuButton } from '../../kit'
+import { SHOWCASE } from '../../showcase'
+import * as ops from '../../when-ops'
+import { hasWho } from '../../rule-who'
+import { useBrand, useNameLookup } from '../../store'
+import { ConditionDraft, ConditionPopover, summarise, valueSource } from '../ConditionPopover'
+import { conditionTone } from './tones'
+
+/* -----------------------------------------------------------------------------
+   WHEN — the conditional, editable.
+
+   A rule is ONE bracket: `A · B · C · (group) · D`. Every plain condition is a
+   member of it, every group is a member of it, and one and/or governs the lot.
+   A group is a bracket of its own nested inside, and the operator in there is
+   its own — which is the only place a second operator exists on this pane.
+
+   That is the whole grammar, and it took four goes to arrive at. The joiner has
+   been a word you could not press, a full-width divider, a pill at the head of
+   every alternative, and a chip on the seam between two cards; the last of
+   those was removed outright, which left `Predicate.join` with no control at
+   all and two runs of conditions stacked with nothing between them. The model
+   was never the problem — two levels of joining is exactly what it carries.
+   What was wrong is that it divided them by CARD, and a person does not think
+   in cards: they think in one list with a bracket in the middle of it.
+
+   So `outerJoin` and `setOuterJoin` read and write the two fields as one
+   operator, the members are laid out flat regardless of which card holds them,
+   and every structural edit re-establishes the lockstep. See `predicate.ts` for
+   why that costs no model change and no migration.
+
+   Adding a condition draws an EMPTY ROW where the condition will land — the
+   same frame and parts as the rows above it — with the attribute dropdown open
+   under it (`ConditionDraft`, owner, 21 Sep 2026). Nothing reaches the rule
+   until an attribute is chosen.
+   -------------------------------------------------------------------------- */
+
+export function WhenEditor({
+  rule,
+  onPatch,
+  onRemoved,
+}: {
+  rule: Rule
+  onPatch: (p: Partial<Rule>) => void
+  /** Said after a condition or group is removed — the host shows it with Undo. */
+  onRemoved?: (what: string) => void
+}) {
+  const store = useBrand()
+  const resolve = useNameLookup()
+  const cards = rule.when.cards
+  /* `'loose'` adds a condition at the top level, `'group'` starts a new group,
+     and an id adds into that card. Three destinations, because there are three
+     things a person can mean by "add". */
+  /* A new group appears as a frame holding the empty row of its first
+     condition. Until a condition is chosen the group exists only here, on
+     screen — never in the rule, which is what keeps a group from ever being
+     saved empty. */
+  /* `nonce` keys the empty row, so every "add" draws it afresh with its
+     dropdown open — an add pressed while an empty row is already there reopens
+     its menu rather than closing it. `join` is the operator
+     chosen above an empty row (or a new group) while the rule holds ONE member:
+     there is nothing yet for it to join, so it waits here and `addTo` applies
+     it with the new member. */
+  const [adding, setAdding] = useState<{ cardId: string | 'loose' | 'group'; nonce: number; join?: Joiner } | null>(null)
+  const [fresh, setFresh] = useState<string | null>(null)
+
+  /* The section header's `+` and the `openAt` prop that carried it are gone
+     (22 Sep 2026); every add starts from a button inside this block. */
+
+  /* `fresh` is a one-shot: the row just added opens its operator dropdown when
+     it mounts. Left set, a later remount of the same condition — Ungroup moves
+     it to another parent, Undo restores it — opened that dropdown again,
+     unasked, and took the focus. */
+  useEffect(() => {
+    if (!fresh) return
+    const t = window.setTimeout(() => setFresh(null), 600)
+    return () => window.clearTimeout(t)
+  }, [fresh])
+
+  /* Every edit goes through `when-ops`, which is the only writer.
+
+     These operations used to live here, inline, and a near-identical set lived
+     in the trail's form — which is how the two drifted into costing data: the
+     trail dropped `when.join` on every edit and deleted groups an author had
+     deliberately made, while this copy did neither. One writer, seventeen tests
+     pinning it, and both surfaces call it.
+
+     It also fixes something this copy still had. `flipTopJoin` wrote
+     `{ ...rule.when, join: ... }`, so returning a joiner to its default
+     MATERIALISED the field rather than removing it — and every dirty check in
+     this app is a `JSON.stringify` comparison, so flipping a joiner there and
+     back left the save bar lit on a rule that meant exactly what it did before.
+     `when-ops` deletes at the default instead, and a test asserts the round
+     trip. */
+  const write = (next: Predicate) => onPatch({ when: next })
+
+  const flipCardJoin = (id: string) => write(ops.flipBranchJoin(rule.when, id))
+
+  /* THE operator. One rule, one bracket, one and/or over everything in it.
+
+     `outerJoin` reads it off whichever field is carrying it — a lone run holds
+     it on the card, a rule with groups holds it on the trunk — and
+     `setOuterJoin` writes both at once so the two can never say different
+     things. Every structural edit below goes back through it, which is what
+     keeps `A ∧ B` from silently acquiring an OR the moment somebody adds a
+     group beside it: the operator that was on screen before the edit is the
+     operator on screen after it.
+
+     `flipTrunkJoin` still has no caller, and neither does `mergeBranches` now.
+     Both stay in `when-ops` with their tests for the reason the first one
+     already did: the FIELDS are live — `topJoin` is read by the evaluator, the
+     prose read-back and the card — and what has gone is a way to author them
+     from here, not a way to hold them. */
+  const outer = outerJoin(rule.when)
+  /* Every edit that changes the SHAPE lands through here, so the lockstep is
+     re-established on each one rather than only where somebody remembered. */
+  const restructure = (next: Predicate) => write(ops.setOuterJoin(next, outer))
+
+  /* Still three destinations, because there are still three things a person can
+     mean by "add": into this group, into the run at the end, or into a group of
+     its own. */
+  /* The destination is an ARGUMENT, not state read back.
+
+     It used to be `if (!adding) return` — the caller opened the list, which set
+     `adding`, and the pick read it back. That couples "where does this row go"
+     to "is a list open", which are two different questions, and it fails
+     silently rather than loudly for any caller that is on screen without having
+     opened anything. Every caller today does open first, so this is a guard
+     rather than a fix — but it is the guard that turns a dropped click into a
+     compile error. */
+  const addTo = (cardId: string | 'loose' | 'group', typeId: string) => {
+    const t = conditionType(typeId)
+    const c = ops.freshCondition(typeId, t.operators[0])
+    /* The operator the new member joins by: the rule's own once it has two
+       members, else the one chosen above the empty row while it waited. */
+    const joinBy = members.length >= 2 ? outer : (adding?.join ?? outer)
+    const land = (next: Predicate) => write(ops.setOuterJoin(next, joinBy))
+
+    if (cardId === 'group') {
+      /* A group starts empty of everything that came before it. Adding one used
+         to leave the existing conditions where they were and draw a frame round
+         them too, so making a NEW group visually swallowed the old ones. */
+      const next = ops.addCondition(rule.when, 'new', c)
+      land(ops.setGrouped(next, next.cards[next.cards.length - 1].id, true))
+    } else if (cardId === 'loose') {
+      /* Join the last card when it is loose, and start a new run when it is a
+         group — so a condition added from the button below a group lands after
+         it rather than jumping to the top. Either way it is a member of the
+         same bracket: two loose runs on the same predicate carry the same
+         joiner, which is what makes them read as one flat list with a group
+         sitting in the middle of it. */
+      /* `drawsAsBracket`, not `grouped`: an older rule can hold a card that is
+         not flagged as a group and still draws as one (its own operator differs
+         from the rule's). The empty row sat OUTSIDE that bracket, under the
+         rule's operator, so the condition must land outside it too — joining
+         it silently turned a required condition into one alternative inside
+         somebody else's group. */
+      const last = cards[cards.length - 1]
+      land(last && !drawsAsBracket(rule.when, last) ? ops.addCondition(rule.when, last.id, c) : ops.addCondition(rule.when, 'new', c))
+    } else {
+      restructure(ops.addCondition(rule.when, cardId, c))
+    }
+
+    setAdding(null)
+    setFresh(c.id)
+  }
+
+  /** What the opened list picks with: wherever it was opened for. */
+  const add = (typeId: string) => addTo(adding?.cardId ?? 'loose', typeId)
+
+  /* Both removals say what went, so the host can offer it back (owner, 21 Sep
+     2026: a toast with Undo on every removal). */
+  const removeCondition = (conditionId: string) => {
+    const gone = cards.flatMap((k) => k.conditions).find((c) => c.id === conditionId)
+    write(ops.removeCondition(rule.when, conditionId))
+    onRemoved?.(gone ? `${conditionType(gone.typeId).label} condition removed` : 'Condition removed')
+  }
+  const patchCondition = (conditionId: string, next: Partial<Condition>) => write(ops.patchCondition(rule.when, conditionId, next))
+  /* "Move into a group of its own" now makes a GROUP.
+
+     `splitOut` copies `grouped` from the card it came out of, which was right
+     when a bare second card drew as a second alternative — and is wrong now
+     that a bare card's conditions are members of the one bracket. Splitting a
+     loose condition used to move it to the end of the list and change nothing
+     else, so the button did visibly nothing. */
+  /* `splitOut` — move one condition into a bracket of its own — stood here.
+     Its only trigger was a hover-revealed Split on each row, withdrawn until
+     there is a better home for the gesture; see the note in `ConditionRow`. */
+  /* The inverse of "Add group", and it replaces "Merge up".
+
+     "Merge up" folded a group into whatever card happened to precede it, which
+     was a group on some rules and the loose run on others — one button with two
+     outcomes, neither of them named by its label. Dissolving the bracket is the
+     thing people actually want back, it is the exact undo of the button that
+     made it, and it means one thing wherever it is pressed. The conditions stay
+     where they are in reading order and join the bracket around them. */
+  const ungroup = (id: string) => restructure(ops.setGrouped(rule.when, id, false))
+  const removeGroup = (id: string) => {
+    const at = cards.findIndex((k) => k.id === id)
+    const k = cards[at]
+    restructure(ops.removeBranch(rule.when, id))
+    onRemoved?.(`${k?.label?.trim() || `Group ${cardLetter(Math.max(at, 0))}`} removed`)
+  }
+  /* Not `addBranch`. That wrote an empty group into the rule immediately, and
+     an empty group matches every sign-in — the pane then had to apologise for
+     it in a sentence while the linter flagged it. The group is pending instead,
+     and the first condition chosen for it is what creates it. */
+  const addGroup = () => setAdding({ cardId: 'group', nonce: Date.now() })
+  const pendingGroup =
+    adding?.cardId === 'group' ? (
+      <PendingGroup key={adding.nonce} letter={cardLetter(cards.length)} onPick={add} onCancel={() => setAdding(null)} />
+    ) : null
+
+  const dupes = duplicatedAcrossCards(rule.when)
+
+  /* A value another condition on the same attribute already names in the
+     same branch is not offered again — see `valuesTakenElsewhere`. */
+  const takenFor = (c: Condition): string[] => valuesTakenElsewhere(rule.when, c.id)
+  const openCatalogue = (cardId: string | 'new') => () => setAdding({ cardId, nonce: Date.now() })
+
+  /* Drawn the way the model is read, not the way it is stored.
+
+     The bracket's members are laid out in one flat list: a plain condition is a
+     member, and a whole group is ONE member however much is inside it. Which
+     card a plain condition happens to live in does not survive into the
+     drawing, because it is not a fact about the rule — `A ∧ B ∧ (group) ∧ C`
+     stores C in a second card only because a group sits between them.
+
+     Every condition in a card is drawn. People and groups are not conditions:
+     they are the rule's `who`, edited in the Who section above, and never
+     appear in this list. */
+
+  type Member =
+    | { kind: 'cond'; key: string; c: Condition; card: ConditionCard }
+    | { kind: 'group'; key: string; card: ConditionCard; index: number }
+
+  const members: Member[] = []
+  cards.forEach((k, i) => {
+    if (drawsAsBracket(rule.when, k)) members.push({ kind: 'group', key: k.id, card: k, index: i })
+    else k.conditions.forEach((c) => members.push({ kind: 'cond', key: c.id, c, card: k }))
+  })
+
+  /* Counted in members, not conditions. A group somebody just made holds
+     nothing yet and is still the thing on the screen, so the empty state must
+     not take the pane back off them. */
+  const empty = members.length === 0
+  /* The empty row, or a new group, is a member about to exist: it takes the
+     bracket's place under the empty state rather than sitting inside it. */
+  const drafting = adding?.cardId === 'loose' || adding?.cardId === 'group'
+  /* The operator above a member about to exist. With two or more members it
+     IS the rule's operator, like every other gap, and writes through. With one,
+     setting the rule's operator is a no-op — there is nothing to join yet — so
+     the choice is held with the pending member until it lands. */
+  const pendingJoinRow =
+    members.length >= 2 ? (
+      <JoinRow join={outer} scope="rule" onSet={(j) => write(ops.setOuterJoin(rule.when, j))} />
+    ) : (
+      <JoinRow join={adding?.join ?? outer} scope="rule" onSet={(j) => setAdding((a) => (a ? { ...a, join: j } : a))} />
+    )
+
+
+  return (
+    <div>
+      <div className="bb__if is-editable">
+        {empty && !drafting ? (
+          /* A proper empty state, and it fires on NO CONDITIONS rather than on
+             no cards.
+
+             `cards.length === 0` was the old test, and it is not the state you
+             land in: removing the last condition leaves the card behind, so
+             the pane rendered an empty grey box with two dashed buttons
+             floating in it and no sentence at all. A rule with nothing to check
+             is a rule that catches everything reaching it, which is the fact
+             worth saying — and it is the reason somebody is on this pane. */
+          <div className="bb__ifblank">
+            <span className="bb__ifblank__mark" aria-hidden>
+              <Split size={18} strokeWidth={1.8} />
+            </span>
+            <h4>No conditions yet</h4>
+            {/* Who is ANDed with the If, so with a who set it is not every
+                sign-in that matches — only those people's. */}
+            <p>
+              {hasWho(rule.who)
+                ? 'Any sign-in by the people in Who matches. Add a condition to narrow that.'
+                : 'Every sign-in that reaches this rule matches it. Add a condition to narrow that.'}
+            </p>
+            {/* Either button replaces this whole state with the bracket and the
+                member being added in it — the empty condition row, or a new
+                group holding one — so the first condition is drawn exactly
+                where, and exactly as, every later one will be. */}
+            <div className="bb__ifblank__acts">
+              <button type="button" className="bb__ifadd" onClick={openCatalogue('loose')}>
+                <Plus size={11} strokeWidth={2.4} aria-hidden />
+                Add condition
+              </button>
+              <button type="button" className="bb__ifaddgroup" onClick={addGroup}>
+                <Plus size={11} strokeWidth={2.4} aria-hidden />
+                {/* "Conditional group" (owner, 22 Sep 2026), so it is not read as
+                    the user groups Who adds just above. */}
+                Add conditional group
+              </button>
+            </div>
+          </div>
+        ) : (
+          /* ONE bracket, drawn as one.
+
+             This used to be a list of cards, each drawn as its own block, with
+             a dashed accent rule on every seam. That is the model's shape, not
+             the rule's: a person writing `IP network, then two more conditions,
+             then a group, then one more` means one bracket with four members in
+             it, and the fourth is a bracket of its own. Drawn as cards it came
+             out as three separate blocks with no operator between them, and the
+             group read as an ALTERNATIVE to the conditions above it rather than
+             as another thing that has to hold alongside them.
+
+             So the frame is the bracket, everything in it is a member, and the
+             one operator governing them sits in the joiner column at the first
+             gap with a rail running down the rest — the same drawing the run
+             inside a group gets, one level in. */
+          <div className="bb__ifbracket" role="group" aria-label={`All of this rule's conditions, joined by ${outer.toUpperCase()}`}>
+            {members.map((m, i) => (
+              <Fragment key={m.key}>
+                {/* The bracket's operator, in every gap between its members.
+                    One control with several handles — see `JoinRow`. */}
+                {i > 0 && <JoinRow join={outer} scope="rule" onSet={(j) => write(ops.setOuterJoin(rule.when, j))} />}
+                {m.kind === 'cond' ? (
+                <ConditionRow
+                  c={m.c}
+                  fresh={fresh === m.c.id}
+                  /* `duplicatedAcrossCards` returns ckeys, not ids. Asking it
+                     about `c.id` compared two string spaces that never meet, so
+                     the ·2 badge and its tooltip were unreachable. */
+                  dupe={dupes.includes(ckey(m.c))}
+                  taken={takenFor(m.c)}
+                  store={store}
+                  resolve={resolve}
+                  onChange={(nextC) => patchCondition(m.c.id, nextC)}
+                  onRetype={(typeId) => write(ops.retypeCondition(rule.when, m.c.id, typeId, conditionType(typeId).operators[0]))}
+                  /* Through `when-ops` like every other edit, because "both"
+                     has to DELETE the field rather than store the word — a
+                     patch merges and cannot express that, and a scope
+                     materialised at its default lights the save bar on a rule
+                     that means exactly what it did. */
+                  onScope={(zoneId, s) => write(ops.setScope(rule.when, m.c.id, zoneId, s))}
+                  onKey={(k) => write(ops.setKey(rule.when, m.c.id, k))}
+                  onTz={(tz) => write(ops.setTz(rule.when, m.c.id, tz))}
+                  onRemove={() => removeCondition(m.c.id)}
+                  /* Gated on the same predicate the writer uses. The two used to
+                     disagree — the button was drawn on every row while the
+                     writer bailed whenever the row was the only one — so the
+                     first row of every group had a control that did nothing. */
+                />
+              ) : (
+                <GroupMember
+                  k={m.card}
+                  letter={cardLetter(m.index)}
+                  rows={m.card.conditions}
+                  fresh={fresh}
+                  dupes={dupes}
+                  takenFor={takenFor}
+                  store={store}
+                  resolve={resolve}
+                  onAdd={openCatalogue(m.card.id)}
+                  picking={adding?.cardId === m.card.id ? adding.nonce : null}
+                  onPick={add}
+                  onCancelPick={() => setAdding(null)}
+                  onUngroup={() => ungroup(m.card.id)}
+                  onRemove={() => removeGroup(m.card.id)}
+                  /* Set, not flip. The menu names both values, so it hands back
+                     the one that was chosen — and choosing the value already in
+                     force has to be a no-op rather than a swap. */
+                  onSetJoin={(j) => j !== cardJoin(m.card) && flipCardJoin(m.card.id)}
+                  patchCondition={patchCondition}
+                  removeCondition={removeCondition}
+                  retype={(id, typeId) => write(ops.retypeCondition(rule.when, id, typeId, conditionType(typeId).operators[0]))}
+                  setScope={(id, zoneId, s) => write(ops.setScope(rule.when, id, zoneId, s))}
+                  setKey={(id, k) => write(ops.setKey(rule.when, id, k))}
+                  setTz={(id, tz) => write(ops.setTz(rule.when, id, tz))}
+                />
+              )}
+              </Fragment>
+            ))}
+
+            {/* The bracket's own foot, INSIDE the frame.
+
+                It sat outside, under everything, which put the control that
+                adds a member to this bracket in the one place that does not
+                look like part of it — and it read as a footer for the pane
+                rather than for the thing above it. */}
+            {/* The list opens IN the foot, in place of the buttons that
+                opened it — so the thing you are choosing appears where the
+                thing you chose is about to land, and the bracket does not
+                change height twice. */}
+            {pendingGroup ? (
+              <>
+                {/* A pending group is a pending MEMBER, so it takes the
+                    bracket's operator in the gap above it like any other. */}
+                {!empty && pendingJoinRow}
+                {pendingGroup}
+              </>
+            ) : adding?.cardId === 'loose' ? (
+              <>
+                {/* The empty row is a member too, joined like the rest. */}
+                {!empty && pendingJoinRow}
+                <ConditionDraft key={adding.nonce} label="New condition" onPick={add} onCancel={() => setAdding(null)} />
+              </>
+            ) : (
+              /* One control, two things it can add.
+
+                 Two buttons side by side gave equal billing to the thing people
+                 do constantly and the thing they do rarely, and spent a whole
+                 row on it in a 400px panel. A group is a variation on adding a
+                 condition — it is still "put something here" — so it belongs
+                 behind the same affordance rather than beside it. */
+              <div className="bb__iffoot">
+                <MenuButton
+                  label="Add"
+                  icon={Plus}
+                  size="sm"
+                  align="start"
+                  /* No captions. Two items whose labels are the whole
+                     explanation — a second line under each doubled the height
+                     of the menu to restate them. */
+                  items={[
+                    { id: 'cond', label: 'Add condition', icon: Plus },
+                    { id: 'group', label: 'Add conditional group', icon: Braces },
+                  ]}
+                  onSelect={(id) => (id === 'group' ? addGroup() : openCatalogue('loose')())}
+                />
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* --- A group that does not exist yet ---------------------------------------------
+
+   What "Add condition group" draws: the frame a group will have, its name, and
+   the empty row of its first condition with the attribute dropdown open under
+   it — the same row "Add condition" draws. Choosing an attribute is what writes
+   the group into the rule, with that condition already inside. Discarding it
+   simply stops drawing it — nothing was ever written, so there is nothing to
+   undo.
+
+   A group is never empty in the rule, because an empty group matches every
+   sign-in and no sentence makes that safe to leave lying around. */
+function PendingGroup({
+  letter,
+  onPick,
+  onCancel,
+}: {
+  letter: string
+  onPick: (typeId: string) => void
+  onCancel: () => void
+}) {
+  const name = `Group ${letter}`
+  return (
+    <div className="bb__ifgroup is-pending" role="group" aria-label={`${name}, not yet created: choose its first condition`}>
+      <div className="bb__ifgrouphead">
+        <span className="bb__ifgroupname">
+          <Braces size={12} strokeWidth={2.2} aria-hidden />
+          {name}
+        </span>
+        <span className="bb__ifgroupacts">
+          <button type="button" className="bb__ifutil is-danger" aria-label={`Discard ${name}`} title="Discard this group" onClick={onCancel}>
+            <Trash2 size={13} strokeWidth={2} aria-hidden />
+          </button>
+        </span>
+      </div>
+      <ConditionDraft label={`First condition in ${name}`} onPick={onPick} onCancel={onCancel} />
+    </div>
+  )
+}
+
+/* --- A group: a bracket inside the bracket -------------------------------------
+
+   One member of the outer bracket, however many conditions are inside it — so
+   it takes one slot in the outer joiner column, exactly as a plain condition
+   does, and then opens a frame of its own with its own operator in it.
+
+   That is the whole grammar of this pane: the outer operator says how the
+   members join, the frame says where a member stops, and the operator inside a
+   frame is that group's own business. Naming it (`Group A`) is what makes the
+   second one distinguishable from the first at a glance, and it is the name the
+   linter and the change log already use for it. */
+function GroupMember({
+  k,
+  letter,
+  rows,
+  fresh,
+  dupes,
+  takenFor,
+  store,
+  resolve,
+  onAdd,
+  picking,
+  onPick,
+  onCancelPick,
+  onUngroup,
+  onRemove,
+  onSetJoin,
+  patchCondition,
+  removeCondition,
+  retype,
+  setScope,
+  setKey,
+  setTz,
+}: {
+  k: ConditionCard
+  letter: string
+  rows: Condition[]
+  fresh: string | null
+  dupes: string[]
+  /** What another condition in this branch already names — see `takenFor`. */
+  takenFor: (c: Condition) => string[]
+  store: ReturnType<typeof useBrand>
+  resolve: ReturnType<typeof useNameLookup>
+  onAdd: () => void
+  /** The empty row's key when this group is the one being added to, else null. */
+  picking: number | null
+  onPick: (typeId: string) => void
+  onCancelPick: () => void
+  onUngroup: () => void
+  onRemove: () => void
+  onSetJoin: (j: Joiner) => void
+  patchCondition: (id: string, next: Partial<Condition>) => void
+  removeCondition: (id: string) => void
+  retype: (id: string, typeId: string) => void
+  setScope: (id: string, zoneId: string, s: 'both' | ZoneScope) => void
+  setKey: (id: string, k: string) => void
+  setTz: (id: string, tz: string) => void
+}) {
+  const join = cardJoin(k)
+  const name = k.label?.trim() || `Group ${letter}`
+
+  return (
+      <div
+        className="bb__ifgroup"
+        role="group"
+        aria-label={`${name}: ${rows.length} condition${rows.length === 1 ? '' : 's'}, joined by ${join.toUpperCase()}. One member of the rule's conditions.`}
+      >
+        <div className="bb__ifgrouphead">
+          <span className="bb__ifgroupname">
+            <Braces size={12} strokeWidth={2.2} aria-hidden />
+            {name}
+          </span>
+          {/* Said once, in words, for the run that is about to be read — and
+              only when there is more than one thing in it to join. The pill in
+              the column below is the control; this is the caption. */}
+          {rows.length > 1 && (
+            <span className="bb__ifgroupjoin">{join === 'and' ? 'all must match' : 'any one matches'}</span>
+          )}
+        </div>
+
+        {rows.map((c, j) => (
+          <Fragment key={c.id}>
+            {/* The group's OWN operator, in the group's own gaps. It is the one
+                place a second operator exists on this pane, and drawing it the
+                same way as the outer one — same chip, same gap — is what says
+                they are the same kind of decision at two depths. */}
+            {j > 0 && <JoinRow join={join} scope="group" onSet={onSetJoin} />}
+          <ConditionRow
+            c={c}
+            fresh={fresh === c.id}
+            dupe={dupes.includes(ckey(c))}
+            taken={takenFor(c)}
+            store={store}
+            resolve={resolve}
+            onChange={(nextC) => patchCondition(c.id, nextC)}
+            onRetype={(typeId) => retype(c.id, typeId)}
+            onScope={(zoneId, s) => setScope(c.id, zoneId, s)}
+            onKey={(k) => setKey(c.id, k)}
+            onTz={(tz) => setTz(c.id, tz)}
+            onRemove={() => removeCondition(c.id)}
+          />
+          </Fragment>
+        ))}
+
+        {/* An empty group shows the slot its first condition goes in — the
+            same box a new group opens with — rather than a sentence explaining
+            that it is empty. The builder no longer creates empty groups, so
+            this only ever meets one left over in older data, and pressing the
+            box is the whole fix. */}
+        {rows.length === 0 && picking === null && (
+          <button type="button" className="bb__ifslot" onClick={onAdd}>
+            <Plus size={12} strokeWidth={2.4} aria-hidden />
+            Choose a condition
+          </button>
+        )}
+
+        {/* Inside the frame, above the foot, as the group's next row: a group
+            is a bracket, and what you are adding is going inside it. Joined
+            by the group's own operator like the rows above it. */}
+        {picking !== null && (
+          <>
+            {rows.length > 0 && <JoinRow join={join} scope="group" onSet={onSetJoin} />}
+            <ConditionDraft key={picking} label={`New condition in ${name}`} onPick={onPick} onCancel={onCancelPick} />
+          </>
+        )}
+
+        <div className="bb__ifgroupfoot">
+          {/* Adding on the left, restructuring on the right, and the two no
+              longer look alike.
+
+              "Merge up" wore the same dashed outline as "Add condition" — one
+              adds a row, the other folded this whole group into whatever card
+              preceded it — and they were a centimetre apart in the same
+              clothes. Dashed means exactly one thing on this surface now:
+              something is about to be added. The two controls that RESTRUCTURE
+              are quiet, labelled, and clustered at the other end where a
+              group's own housekeeping belongs. */}
+          {/* Only once the group holds something. Empty, the slot above is the
+              way in, and a second "Add condition" beside it would be two doors
+              to one room. */}
+          {rows.length > 0 && picking === null && (
+            <button type="button" className="bb__ifadd" onClick={onAdd}>
+              <Plus size={12} strokeWidth={2.4} aria-hidden />
+              Add condition
+            </button>
+          )}
+          <span className="bb__ifgroupacts">
+            <button
+              type="button"
+              className="bb__ifutil"
+              aria-label={`Ungroup ${name}`}
+              title="Dissolve this bracket — its conditions join the ones around it"
+              onClick={onUngroup}
+            >
+              <Ungroup size={13} strokeWidth={2} aria-hidden />
+            </button>
+            {/* A trash rather than the word. It was labelled, on the argument
+                that a bare glyph is a poor home for the one control here that
+                cannot be undone by pressing it again — see the note on
+                `.bb__ifutil`. The board has undo, the title says what it takes
+                with it, and two words on this row were most of what made the
+                group's foot look busy. */}
+            <button
+              type="button"
+              className="bb__ifutil is-danger"
+              aria-label={`Remove ${name} and the conditions in it`}
+              title="Remove this group and the conditions in it"
+              onClick={onRemove}
+            >
+              <Trash2 size={13} strokeWidth={2} aria-hidden />
+            </button>
+          </span>
+        </div>
+      </div>
+  )
+}
+
+/* --- The joiner column ---------------------------------------------------------
+
+   One cell, two states: the operator for this bracket, drawn once at the first
+   gap, and a rail on every member after it saying the operator above governs
+   them too.
+
+   Shared by both levels rather than written twice, because the two ARE the same
+   control at different depths — and the moment they were two pieces of code
+   they started drifting apart in copy, size and colour, which is precisely what
+   made a group look like a different kind of thing from the conditions beside
+   it. */
+/* The operator, on its own line in the gap it governs.
+
+   It was a left COLUMN: a pill in the first gap, a rail down the rest, and the
+   conditions indented past it. That column cost 34px of a 400px panel on every
+   row so that one of them could hold a chip, and it read as a margin rather
+   than as part of the sentence.
+
+   Between the rows now, left-aligned, in the gap — which is where the word
+   actually belongs when the conditions above and below it are full-width
+   blocks.
+
+   IN EVERY GAP, and that is a reversal worth stating. The old drawing put it in
+   the first gap only, on the argument that a bracket holds ONE operator and a
+   pill in every gap "presented one setting as four controls that happened to
+   agree". The argument was right about four INDEPENDENT controls. These are one
+   control with several handles: pressing any of them flips all of them
+   together, the label says so before you press, and the alternative — a word in
+   the first gap and nothing in the rest — leaves a four-condition rule with
+   three gaps that do not say how the rows either side of them join. */
+/* The operator between two conditions, as a MENU rather than a toggle.
+
+   It carried a chevron and behaved like a toggle: pressing it flipped straight
+   to the other value. Two things wrong with that, and the chevron is the tell —
+   it promised a list and delivered a swap, so the one way to discover what the
+   alternative was called was to change the rule and read the result.
+
+   With two values a toggle is defensible; with a chevron on it, it is a lie.
+   The menu names both, marks the one in force, and leaves the rule alone until
+   something is chosen. The words are on the rows rather than in a tooltip,
+   which is where "every condition must match" was previously only reachable by
+   hovering. */
+function JoinRow({
+  join,
+  scope,
+  onSet,
+}: {
+  join: Joiner
+  /** What the operator governs, which is the only thing the two levels say differently. */
+  scope: 'rule' | 'group'
+  onSet: (j: Joiner) => void
+}) {
+  const where = scope === 'group' ? 'in this group' : 'in this rule'
+  return (
+    <div className="bb__joinrow">
+      {/* A native select, and deliberately not the kit's `MenuButton` or
+          `Picker`.
+
+          Both of those render a button sized like a form control, and this
+          thing has to be a 46px pill sitting in a 24px gutter between two
+          conditions — at that size a bordered trigger with a chevron and a
+          popup is more chrome than the operator it sets. A native select is the
+          smallest control that still opens a real list, and it brings the
+          keyboard and the screen-reader behaviour for nothing.
+
+          It also cannot cover the panel: the platform draws the list, so it is
+          never a 340px overlay dropping over the conditions below. */}
+      <select
+        className={`bb__joinsel is-${join}`}
+        value={join}
+        aria-label={`How conditions ${where} are joined`}
+        title={
+          join === 'and'
+            ? `Every condition ${where} must match`
+            : `Any one condition ${where} is enough`
+        }
+        onChange={(e) => onSet(e.target.value as Joiner)}
+      >
+        <option value="and">and</option>
+        <option value="or">or</option>
+      </select>
+    </div>
+  )
+}
+
+/* --- The two operators, and where they live -----------------------------------
+
+   `Junction` stood here: the trunk joiner drawn as a full-width divider with a
+   pill sitting on it, between two runs. Then it was a chip on the seam. Then it
+   was nothing at all, which is how a predicate could carry an OR that no
+   control on the pane could show you, let alone change.
+
+   Both operators are pills in the joiner column now, one per bracket, drawn by
+   the same `JoinCell` at both depths: the rule's on the second member of the
+   block, a group's on the second row inside its frame. Same column, same
+   control, one per level — and a rail down every member after it, because a
+   bracket has ONE operator and drawing it in every gap presented one setting as
+   four controls that happened to agree.
+
+   The operator still changes the operator and nothing else. An older version
+   restructured instead — AND split the run at that point, OR merged the
+   previous group in — which gave two operators without a model that could hold
+   them, at the cost of pressing AND between the second and third of four
+   conditions turning `A and B and C and D` into `(A and B) or (C and D)`.
+   Restructuring lives on the controls that say they restructure: "Add group",
+   "Ungroup", and the split on a row. */
+
+/* --- One condition, live ------------------------------------------------------ */
+
+/* One condition, as one row: the joiner, the condition, and a way out of it.
+
+   It was five cells — joiner, attribute, operator, value, actions — and that
+   is three decisions laid out as though they were independent. They are not:
+   the operators come from the attribute and the values come from the operator,
+   so reading a row meant assembling one sentence out of three boxes and
+   changing a condition meant visiting them in order.
+
+   The condition is a pill now, and everything about it is inside what the pill
+   opens. Jira's filter bar is the reference: a filter there is one chip you
+   press, and the operator and the values live in the panel under it. */
+function ConditionRow({
+  c,
+  fresh,
+  dupe,
+  taken,
+  store,
+  resolve,
+  onChange,
+  onRetype,
+  onScope,
+  onKey,
+  onTz,
+  onRemove,
+}: {
+  c: Condition
+  fresh: boolean
+  dupe: boolean
+  /** Values another condition in this branch already names: not offered here. */
+  taken: string[]
+  store: ReturnType<typeof useBrand>
+  resolve: ReturnType<typeof useNameLookup>
+  onChange: (c: Condition) => void
+  onRetype: (typeId: string) => void
+  /** Zone conditions only — the one writer for `scope` runs through here. */
+  onScope: (zoneId: string, s: 'both' | ZoneScope) => void
+  /** Attribute conditions only: which attribute. */
+  onKey: (k: string) => void
+  /** Time conditions only: which timezone the window is read in. */
+  onTz: (tz: string) => void
+  onRemove: () => void
+  /** Absent when the row is the only condition in its run — nothing to split. */
+}) {
+  const t = conditionType(c.typeId)
+  const values = c.values.filter(Boolean)
+  const { options, names, single, footer, onFooter } = valueSource(t, values, store, resolve)
+  /* Every value, not `values[0]`. The stale check only ever looked at the
+     first, so a zone deleted from the library sitting at index 1 rendered as
+     perfectly valid. */
+  /* `values.length`, not `options.length`.
+
+     Guarding on the OPTIONS meant that emptying the library stopped every
+     condition naming it from being marked stale — delete your last zone and
+     every zone condition in the tenant quietly looks fine again, at exactly the
+     moment all of them have broken. The question is whether this condition
+     names something that is not there, and a condition with no values does not
+     name anything. */
+  /* Chosen from a list only: two time windows, two scores or two typed values
+     that happen to match are not the same choice made twice. A value this row
+     already holds stays pickable, so it can be taken off; one another row holds
+     is shown and refused, with the reason on the row. */
+  const listed = t.valueKind !== 'time' && t.valueKind !== 'range' && t.valueKind !== 'text' && t.valueKind !== 'number'
+  /* Only a value chosen FROM a list can name something that is gone. A typed
+     one — "12:00", a score of 70, "FTE" — is on no list, so it always read as
+     missing: every time window and risk threshold drew the red "unset" frame
+     with its values filled in (owner, 22 Sep 2026: "the time of day condition
+     box looks bad"). */
+  const stale = listed && values.length > 0 && values.some((id) => !options.some((o) => o.value === id))
+  /* Each value's mark in the condition's own family colour — the colour its
+     attribute already wears in the field and on the card. */
+  const tone = conditionTone(t.id, t.group)
+  const offered = listed
+    ? options.map((o) =>
+        taken.includes(o.value) && !values.includes(o.value)
+          ? { ...o, tone, disabled: true, note: 'In another condition' }
+          : { ...o, tone },
+      )
+    : options
+  /* Already both here and in another condition — a rule written before this
+     rule existed, or one that became so by moving a condition. Said under the
+     row, naming the value, so it can be taken off one of them. */
+  const clash = listed ? values.filter((v) => taken.includes(v)) : []
+  const clashNames = clash.map((v) => options.find((o) => o.value === v)?.label ?? v)
+
+  const summary =
+    t.valueKind === 'time'
+      ? `${c.values[0] ?? '09:00'} – ${c.values[1] ?? '17:00'}`
+      : t.valueKind === 'range'
+        ? values[0]
+          ? `${values[0]} ${t.id === 'trust-age' ? 'days' : t.id === 'coords' ? 'km' : ''}`.trim()
+          : 'Choose…'
+        : t.valueKind === 'number'
+          ? values[0]
+            ? `${values[0]} ${t.unit ?? ''}`.trim()
+            : 'Choose…'
+          : summarise(names.length ? names : values, 'Choose…')
+
+  return (
+    /* No slide-in: every condition arrives from the empty row, which already
+       drew this frame in this place — animating it in again made the row being
+       filled in vanish and blink back, and the dropdown it opens was measured
+       mid-slide, 4px high. */
+    <div className="bb__cond">
+      <span className="bb__cond__body">
+        <ConditionPopover
+          stacked
+          c={c}
+          summary={summary}
+          options={offered}
+          names={names}
+          single={single}
+          unset={values.length === 0 || stale}
+          autoOpen={fresh}
+          onRetype={onRetype}
+          onOperator={(operator) => onChange({ ...c, operator })}
+          onValues={(v) => onChange({ ...c, values: v })}
+          onScope={onScope}
+          onKey={onKey}
+          onTz={onTz}
+          onRemove={onRemove}
+          footer={footer}
+          onFooter={onFooter}
+        />
+        {/* Conflict and duplicate captions are off in the showcase, with the
+            panel's other findings (owner, 22 Sep 2026). The dropdown still
+            refuses a value another condition holds. */}
+        {SHOWCASE ? null : clash.length > 0 ? (
+          <span className="bb__ifdupe is-clash">
+            {clashNames.join(', ')} {clashNames.length === 1 ? 'is' : 'are'} also in another condition. Keep {clashNames.length === 1 ? 'it' : 'them'} in one.
+          </span>
+        ) : (
+          dupe && (
+            <span className="bb__ifdupe" title="This exact condition is also in another branch">
+              Also in another branch of this rule
+            </span>
+          )
+        )}
+      </span>
+
+      {/* `Move into a group of its own` stood here — a hover-revealed Split on
+          every condition row. Withdrawn for now: grouping is a shape the model
+          supports and the panel has no other way to reach, so a single icon on
+          a row was the whole of its discoverability, and pressing it produced a
+          bracket most people had not asked for. `splitOut` is still here and
+          still correct, so putting the gesture back is a question of where it
+          belongs rather than of rebuilding it — only the trigger is gone. */}
+    </div>
+  )
+}
+
+/* `valueSource` was here, byte-for-byte the same function as the one in
+   ConditionPopover.tsx, and it is now imported from there instead.
+
+   Two copies of "where does a zone list come from" is the drift this file's
+   own header warns about one paragraph up, in the same words, about a
+   different thing. It had already started: the copy here still built a hook
+   list and offered "Manage hooks" after the hook condition was cut, so the two
+   would have disagreed about what a condition can even be. */
+
+/* The catalogue is the trail's dialog, not a popover of its own.
+
+   The board had its own anchored version: the same twenty-six attributes in a
+   320px column that opened under whichever chip you pressed. Two problems, and
+   the second is why it goes rather than gets fixed.
+
+   It was too small for what it holds. Twenty-six attributes across nine
+   components, each with a sentence of hint, in a column narrow enough to sit
+   under a chip — so the categories became a horizontal strip of icons and the
+   list scrolled, which is the arrangement the trail's dialog was built to
+   replace. And it was a second implementation of one thing. Two pickers over
+   one catalogue drift: an attribute added to the model appears in both, but a
+   fix to the search ranking, the keyboard cursor or the empty state lands in
+   whichever one the person was looking at.
+
+   `ConditionPicker` is the one the trail already uses — 800px, categories down
+   the left with counts, search that spans everything and ignores the selected
+   category, arrow keys and Enter from the field. Being a dialog rather than an
+   anchored popover also settles a thing the popover could never do well: it
+   does not have to fit beside the chip you pressed, so it does not move when
+   the chip is near an edge. */

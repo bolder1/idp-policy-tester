@@ -1,0 +1,1048 @@
+/* ============================================================================
+   THE WIDTH SCALE — four numbers, and what each one means.
+
+   This console had SIXTEEN distinct width breakpoints (1439, 1120, 1100, 1080,
+   1000, 900, 899, 880, 860, 820, 720, 620, 600, 560, 540, 520), most of them a
+   one-off typed where a layout happened to look cramped. Two of them were the
+   same intent 1px apart: the page grid dropped its second column at 899 while
+   the shell kept its rail to 900, so at exactly 900px the two disagreed.
+
+   Pick from these. A new number needs a reason the four cannot cover.
+
+     1120  Two columns get tight. The rail narrows 235 → 200; a page with a
+           side column pulls that column in rather than dropping it.
+     900   There is no room for a second column. The rail stops being one and
+           overlays the page (shell.css); a docked panel stops being a grid
+           column and becomes a fixed overlay; two-column pages go to one.
+     720   A page's own furniture stops fitting the row — toolbars wrap, a
+           caption or a label is dropped. The largest cluster in the sheet.
+      600  Phone. What is left has to stack.
+
+   They are written out as literals on purpose. A custom property cannot be
+   read inside a media condition, and `@custom-media` needs a lightningcss
+   drafts flag this build does not set — so tokenising them would mean changing
+   the CSS pipeline for every sheet, which is not worth it for four numbers.
+
+   THE TWO DELIBERATE EXCEPTIONS, so nobody has to re-derive them:
+     1000  board.css, the canvas top bar. Wider furniture than a page's, so it
+           runs out of row before 900 — dropping it to 900 would keep pips on a
+           bar that has already stopped fitting them.
+     1439  builder-v4.css, `--rail-w`. Not a narrow rule at all: it is a WIDE
+           one written inside out, giving the builder's rail its extra width
+           only above 1440. Read it as `min-width: 1440px`.
+
+   COMPONENTS SHOULD PREFER `@container`. A media query asks how wide the
+   WINDOW is, which is the wrong question for anything that sits in a panel, a
+   drawer or a column: kit.css's `bx-cl`, device-fingerprint-v2.css's
+   `bfp2-*` and device-profile-wizard.css's `bdpw-steps` already ask how wide
+   THEY are. The sub-720 one-offs still in this codebase (620 in
+   setting-field.css, 560 in tour.css, 520 in
+   auth-methods.css) are each a component guessing at a window width; they are
+   left alone here because the fix for them is a container query, not a
+   different number.
+   ============================================================================ */
+
+/* --- Toolbar --------------------------------------------------------------- */
+
+.btoolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+}
+/* One order, four screens: what you TYPE on the left, what NARROWS on the
+   right. Policies had search last in the filter group, Applications had it
+   first, device profiles had it on the right and zones had it on the left —
+   four pages one nav click apart, each asking you to find the search box
+   again. `__left` and `__right` are the whole rule; a page with only a search
+   still uses `__left`, so the box does not move when a filter is added. */
+.btoolbar__left { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; }
+.btoolbar__filters { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; }
+.btoolbar__right { margin-left: auto; display: flex; align-items: center; gap: var(--space-5); }
+/* `.btoolbar__select` and its `.is-set` variant stood here, for the native
+   `<select>`s the toolbars used. Both are `Picker`s now; the active-filter mark
+   moved to `.btoolbar__filter` at the foot of this file, where it wraps a
+   control that styles its own trigger. */
+.btoolbar__clear { font-size: var(--fs-md); color: var(--text-link); }
+.btoolbar__clear:hover { text-decoration: underline; }
+
+/* --- Table ---------------------------------------------------------------- */
+
+/* --- The list -----------------------------------------------------------------
+
+   For pages that list OBJECTS rather than records — zones, device profiles, risk
+   signal profiles. A table is the right shape when the reader compares a value
+   down a column; these pages are read one object at a time, name first, so they
+   take the shape Authentication methods already uses (`.bm8__list` in
+   auth-methods.css): one panel edge for the whole list, rows on white, a hairline
+   between them, and no column headings.
+
+   Two differences from that sheet, and both are forced rather than chosen:
+
+   · No `overflow: hidden` on the panel. Zones and Device profiles open their row
+     menu inside the row, and a clipping panel cuts the last row's menu off — the
+     zones table had to override exactly that. The first and last rows round
+     their own corners instead, so a hover tint never squares off the radius.
+
+   · The whole row opens, but the row is not a button: it also holds a Used-by
+     button and a menu, and a button inside a button is invalid HTML. The name
+     button's `::after` stretches its hit area over the row, and the right-hand
+     cluster sits above it — the pattern the attribute picker rows already use in
+     device-fingerprint-v2.css. A row whose menu is open is lifted over the rows
+     below it, or their controls would paint through the menu.
+   ------------------------------------------------------------------------------- */
+.blist {
+  display: flex; flex-direction: column;
+  margin: 0; padding: 0; list-style: none;
+  background: var(--surface-raised);
+  border: var(--bw-thin) solid var(--border-default);
+  border-radius: var(--radius-lg);
+}
+.blist__row {
+  position: relative;
+  display: flex; align-items: center; gap: 16px;
+  min-height: 84px; padding: 20px;
+  border-bottom: var(--bw-thin) solid var(--border-subtle);
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+.blist__row:last-child { border-bottom: 0; }
+.blist__row:first-child { border-radius: calc(var(--radius-lg) - 1px) calc(var(--radius-lg) - 1px) 0 0; }
+.blist__row:last-child { border-radius: 0 0 calc(var(--radius-lg) - 1px) calc(var(--radius-lg) - 1px); }
+.blist__row:only-child { border-radius: calc(var(--radius-lg) - 1px); }
+.blist__row:hover { background: var(--surface-sunken); }
+/* Focus is drawn on the ROW, because the row is what pressing the name opens. */
+.blist__row:has(.blist__open:focus-visible) { box-shadow: inset 0 0 0 2px var(--focus-ring); }
+
+/* The tile, at the Authentication methods size. Two classes, so it wins over a
+   page's own tile rule that loads after this sheet. */
+.blist .blist__tile {
+  flex: none; display: grid; place-items: center;
+  width: 36px; height: 36px; border-radius: var(--radius-md);
+}
+
+.blist__main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.blist__name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.blist__open {
+  min-width: 0; padding: 0; border: 0; background: none; cursor: pointer; text-align: left;
+  font: inherit; font-size: var(--fs-base); font-weight: var(--fw-semibold); color: var(--text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  transition: color var(--dur-fast) var(--ease-standard);
+}
+.blist__open::after { content: ''; position: absolute; inset: 0; border-radius: inherit; }
+.blist__open:focus-visible { outline: none; box-shadow: none; }
+.blist__row:hover .blist__open { color: var(--accent-strong); }
+
+/* The second line: the facts a column used to carry, each with the word its
+   heading used to supply. */
+.blist__meta {
+  display: flex; align-items: center; gap: 6px 14px; flex-wrap: wrap; min-width: 0;
+  font-size: var(--fs-md); color: var(--text-tertiary); line-height: 1.45;
+}
+.blist__fact { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.blist__label { font-size: var(--fs-sm); color: var(--text-tertiary); white-space: nowrap; }
+
+/* The right-hand cluster: counts and the menu, above the name's stretched hit
+   area so each keeps its own press. */
+.blist__side { flex: none; position: relative; z-index: 1; display: flex; align-items: center; gap: 16px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .blist__row, .blist__open { transition: none; }
+}
+.btable-wrap {
+  background: var(--surface-raised);
+  border: var(--bw-thin) solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--el-low);
+  overflow: hidden;
+}
+/* The table scrolls inside its own card rather than compressing columns until
+   policy names wrap to three lines — a name an admin cannot read at a glance
+   defeats the point of the list. */
+.btable__scroll { overflow-x: auto; }
+.btable {
+  width: 100%;
+  /* 720, not 980.
+
+     980 was set so a policy name would never wrap, and it worked — at the cost
+     of putting the Actions column off the right edge on any laptop narrower
+     than about 1300px, because the rail takes 235 and the page inset takes 64.
+     A row menu you have to scroll sideways to reach is a row menu most people
+     never find.
+
+     The name column still gets everything that is left; what changed is that
+     the columns which are the SAME width whatever is in them — a status pill, a
+     kebab — now say so, instead of each taking an equal share of a table that
+     was too wide to begin with. */
+  min-width: 720px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--fs-md);
+}
+/* Fixed-content columns, sized to their content rather than to their share. */
+.btable__col-status { width: 128px; }
+/* "Opened 12 min ago" and "Added Sep 22, 2026" both fit on one line. */
+.btable__col-activity { width: 176px; }
+.btable__activity { color: var(--text-secondary); white-space: nowrap; }
+
+/* Publish in the row: the rocket lifts off on hover or focus, then settles back. */
+.btable__next .bx-btn svg { transition: transform 0.25s ease, color 0.2s ease; }
+.btable__next .bx-btn:hover,
+.btable__next .bx-btn:focus-visible { border-color: var(--blue); background: var(--blue-soft); color: var(--blue-strong); }
+@media (prefers-reduced-motion: no-preference) {
+  .btable__next .bx-btn:hover svg,
+  .btable__next .bx-btn:focus-visible svg { transform: translate(2px, -2px) rotate(-8deg); }
+  .btable__next .bx-btn:active svg { transform: translate(4px, -4px) rotate(-8deg); }
+}
+/* A rejected row says what comes next in words (Policies.tsx): support is on the Reject card above the list. */
+.btable__hint { display: inline-block; max-width: 180px; font-size: var(--fs-sm); line-height: 1.35; color: var(--text-secondary); }
+/* A row arriving from Move policies: it lights and settles, one after another (`--arrive` is its place). */
+@keyframes btable-arrive {
+  0% { background-color: var(--fb-info-bg); }
+  70% { background-color: var(--fb-info-bg); }
+  100% { background-color: transparent; }
+}
+.btable tr.is-arrived > td { animation: btable-arrive 1.8s var(--ease-standard) both; animation-delay: calc(var(--arrive, 0) * 90ms); }
+@media (prefers-reduced-motion: reduce) {
+  .btable tr.is-arrived > td { animation: none; background-color: var(--fb-info-bg); }
+}
+.btable__col-actions { width: 56px; }
+/* Two icon buttons in the column instead of a kebab (Applications.tsx): the column holds a pair, so it is wider,
+   and the pair sits at the same right edge the single kebab did — row ends line up either way. */
+.btable__col-actions--pair { width: 88px; }
+.btable td.btable__actions--pair { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-1); height: var(--row-h, 52px); }
+/* The row menu stays reachable when the table does scroll. It is the only
+   column whose position matters more than its context. */
+.btable thead th.btable__col-actions,
+.btable td.btable__actions {
+  position: sticky;
+  right: 0;
+  background: inherit;
+}
+.btable thead th.btable__col-actions { background: var(--table-head-bg); }
+.btable tbody td.btable__actions { background: var(--surface-raised); }
+.btable tbody tr:hover td.btable__actions { background: var(--table-row-hover); }
+/* Every value from the table recipe in console-theme.css — see the block there
+   for what each one is doing and why. */
+.btable thead th {
+  height: var(--table-header-h);
+  padding: 0 var(--table-cell-x);
+  text-align: left;
+  background: var(--table-head-bg);
+  border-bottom: var(--bw-thin) solid var(--table-head-rule);
+  font-size: var(--table-head-fs);
+  font-weight: var(--table-head-fw);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--table-head-fg);
+  white-space: nowrap;
+}
+
+/* The sort control fills its cell rather than shrink-wrapping the word.
+
+   As an `inline-flex` it was a target the width of the label, so the eight
+   pixels either side of it — inside the same header cell, over the same column —
+   did nothing on click. A header you have to hit exactly is a header nobody
+   discovers is sortable. It stretches to the cell and keeps its own focus ring.
+
+   The direction glyph sits at the END of the flow rather than beside the word,
+   so the arrows on every sortable column line up in a row instead of tracking
+   the length of each label. */
+.btable__sort {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+}
+.btable__actions .btable__sort { flex-direction: row-reverse; }
+/* The un-sorted glyph is a hint, not a state: it appears when the pointer or
+   the keyboard reaches the column and is otherwise out of the way. A column of
+   permanent ⇅ marks reads as four things needing attention. */
+.btable__sort span {
+  flex: none;
+  opacity: 0;
+  color: var(--text-muted);
+  transition: opacity var(--dur-fast) var(--ease-standard);
+}
+.btable thead th:hover .btable__sort span,
+.btable__sort:focus-visible span { opacity: 1; }
+.btable__sort.is-on { color: var(--text-primary); }
+.btable__sort.is-on span { opacity: 1; color: var(--accent); }
+/* The actions column is CENTRED, on every table, and the class says what it
+   holds rather than where it points.
+
+   It was `.btable__right`, right-aligned, and it had drifted: the header word
+   sat hard against the scrollbar while the kebab underneath it sat a few pixels
+   further in, because the button has padding and the text does not. Five of the
+   five uses of `__right` were this one column, so the name was describing an
+   alignment nobody had chosen on purpose. Centred, header and control share an
+   axis, and the same rule is now true of the two grid tables below. */
+.btable th.btable__actions,
+.btable td.btable__actions { text-align: center; }
+/* Counts and dates line up on the digit, not on the word. */
+
+.btable tbody td {
+  height: var(--table-row-h);
+  padding: var(--space-4) var(--table-cell-x);
+  border-bottom: var(--bw-thin) solid var(--table-rule);
+  vertical-align: middle;
+}
+.btable tbody tr:last-child td { border-bottom: none; }
+.btable tbody tr { transition: background var(--dur-fast) var(--ease-standard); }
+.btable tbody tr:hover { background: var(--table-row-hover); }
+/* The system policy is the FLOOR under the list, not a highlight in it.
+
+   It was washed in `--brand-subtle-bg` — the only warm thing in a table of
+   neutrals, which made the one row nobody can edit the loudest, in the colour
+   this console otherwise reserves for the button that publishes. The row also
+   held that fill on hover, so it was the one row in the table that did not
+   answer the pointer: permanently lit, and inert.
+
+   Nothing is added back. Three things already say what it is, and none of them
+   is a colour: the badge reads "System", the row is PINNED to the top whatever
+   the sort is doing (see `rows` in Policies.tsx). It used to carry a heavier
+   rule underneath as well, the separation a totals row gets; the owner took
+   that off on 23 Sep 2026 — "no need for this harsh border, the pill alone is
+   enough to distinguish it" — so the row is drawn like every other row and the
+   System badge does the telling. */
+
+.btable__primary { display: flex; align-items: center; gap: var(--space-4); min-width: 230px; }
+.btable__link {
+  font-weight: var(--fw-medium);
+  color: var(--text-primary);
+  text-align: left;
+  white-space: nowrap;
+}
+.btable__link:hover { color: var(--accent-strong); text-decoration: underline; text-underline-offset: 2px; }
+.btable__marks { display: inline-flex; align-items: center; gap: var(--space-3); }
+.btable__allapps { font-size: var(--fs-sm); color: var(--text-secondary); }
+/* A logo and a name side by side. The Applications screen uses it for its own
+   first column, and the policy list's cell uses it for the one-application case. */
+.btable__app { display: inline-flex; align-items: center; gap: var(--space-3); min-width: 0; }
+.btable__app > .applogo { flex: none; }
+
+/* The policy list's cell, as the trigger for its application panel.
+
+   The pencil that used to appear on row hover is gone with the behaviour it
+   announced. Pressing the cell no longer edits, it opens the list, and Edit is
+   inside that. What marks the cell as live is a grey ground on hover and while
+   the panel is open. It is greyscale because the panel is a place to look, not
+   a selection, and this console keeps its one colour for the button that
+   publishes.
+
+   Padded and pulled back by the same amount, so the ground has room around the
+   marks without the marks moving off the column's left edge. */
+button.btable__app--peek {
+  padding: 3px var(--space-3);
+  margin: -3px calc(-1 * var(--space-3));
+  border: 0; background: none; cursor: pointer;
+  font: inherit; color: inherit; text-align: left;
+  border-radius: var(--radius-md);
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+button.btable__app--peek:hover,
+button.btable__app--peek.is-open { background: var(--surface-inset); }
+button.btable__app--peek:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
+/* Every AppLogo carries a native `title`. Over a trigger whose whole job is to
+   open a panel of names, that meant a second, browser-drawn label arriving a
+   second later on top of the first. Letting the pointer pass through the marks
+   leaves the panel as the only thing that answers. The same applies inside the
+   panel, where the name is already printed beside each mark. */
+.btable__app--peek .applogo,
+.bapk .applogo { pointer-events: none; }
+
+/* The stack. Each mark overlaps the one before and is cut out of it by a ring
+   in the colour of whatever is behind the cell. That colour changes under row
+   hover and under the trigger's own hover, so the ring changes with it.
+   Without that the ring shows as a white halo on a grey row. */
+.btable__logos { display: inline-flex; align-items: center; }
+.btable__logos > .applogo {
+  box-shadow: 0 0 0 2px var(--surface-raised);
+  transition: box-shadow var(--dur-fast) var(--ease-standard);
+}
+.btable__logos > .applogo + .applogo { margin-left: -5px; }
+.btable tbody tr:hover .btable__logos > .applogo { box-shadow: 0 0 0 2px var(--table-row-hover); }
+button.btable__app--peek:hover .btable__logos > .applogo,
+button.btable__app--peek.is-open .btable__logos > .applogo { box-shadow: 0 0 0 2px var(--surface-inset); }
+/* Plain text, not a pill. The status column already holds this row's one pill,
+   and a second rounded chip beside a stack of rounded squares would be one more
+   shape to parse, saying only a number. */
+.btable__more {
+  font-size: var(--fs-sm); font-weight: var(--fw-medium);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Not a Button. A brand or neutral button in every unassigned row would make
+   the table look like a column of calls to action; this is a link with an
+   affordance, sized to the row it sits in. */
+.btable__assign {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: 3px 8px 3px 6px;
+  /* Solid. Dashed placeholder edges are out of the console (owner, 14 Sep 2026). */
+  border: var(--bw-thin) solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: none; cursor: pointer;
+  font-family: inherit; font-size: var(--fs-sm); color: var(--text-secondary);
+}
+.btable__assign:hover { border-color: var(--border-strong); background: var(--surface-sunken); color: var(--text-primary); }
+.btable__assign:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
+
+/* --- Application panel -----------------------------------------------------
+
+   Every application a policy covers, opened from the cell. See apps-peek.tsx.
+
+   Portalled to the body with fixed coordinates, like `.brpk` and the Picker
+   popup, because `.btable__scroll` is an overflow-x container that would clip
+   it. Unlike `.brpk` it takes the pointer, because it holds a button and a list
+   that scrolls. */
+.bapk {
+  position: fixed;
+  z-index: var(--z-popover);
+  /* The portal is outside `.brand-root`, so the border-box reset does not reach
+     it. Without this the border sits outside the width the placement code
+     clamps to the viewport, and the right edge runs 2px off screen. */
+  box-sizing: border-box;
+  width: 264px; max-width: calc(100vw - 16px);
+  /* The cap before placement has measured anything. After that, placement caps
+     it to the room on the side it opened. The viewport term is what stops a
+     short window from ever getting a panel taller than itself. */
+  max-height: min(380px, calc(100vh - 16px));
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  background: var(--surface-overlay, var(--surface-raised));
+  border: var(--bw-thin) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--el-high);
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+.bapk *,
+.bapk *::before,
+.bapk *::after { box-sizing: border-box; }
+/* The two things `.brand-root` gives every button that a portal does not get.
+   Only the family and the cursor: `.bx-btn` sets its own size and weight at
+   this same specificity, and the shorthand would reset both. */
+.bapk :where(button) { font-family: inherit; cursor: pointer; }
+/* The console's focus ring, restated for the same reason. */
+.bapk :focus-visible {
+  outline: var(--bw-thin) solid var(--focus-ring);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--focus-halo);
+}
+
+/* The count and the one action, pinned above the list so that neither scrolls
+   away with it. */
+.bapk__head {
+  flex: none;
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-4);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-5);
+  border-bottom: var(--bw-thin) solid var(--border-subtle);
+}
+.bapk__count { font-size: var(--fs-sm); font-weight: var(--fw-semibold); color: var(--text-primary); }
+
+/* Capped and scrolled, so a policy with a hundred and twenty applications gets
+   a panel the same height as one with twelve. The list shrinks further when
+   placement has less room than the cap.
+
+   `overscroll-behavior` keeps a wheel that reaches the end of the list from
+   scrolling the page behind it. That would move the trigger out from under the
+   panel and re-place it while somebody is still reading. */
+.bapk__list {
+  flex: 1 1 auto; min-height: 0;
+  max-height: 296px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: 0; padding: var(--space-2);
+  list-style: none;
+}
+/* Inside the edge. The panel clips its overflow, so an outline drawn outside
+   the list would be cut off. */
+.bapk__list:focus-visible { outline-offset: -2px; box-shadow: none; border-radius: var(--radius-md); }
+/* No hover on a row. The rows are not controls, and a highlight that follows
+   the pointer down a list says each line can be pressed. */
+.bapk__row {
+  display: flex; align-items: center; gap: var(--space-4);
+  padding: var(--space-3) var(--space-3);
+  min-width: 0;
+}
+.bapk__name {
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--fs-md); color: var(--text-body);
+}
+
+/* --- Assigning applications ------------------------------------------------
+
+   A checklist rather than a picker, because here the dialog IS the question:
+   every application is visible without opening a second layer inside it. */
+.bassign { display: flex; flex-direction: column; gap: var(--space-4); }
+.bassign__lede { margin: 0; font-size: var(--fs-sm); color: var(--text-tertiary); line-height: 1.55; }
+/* `.bassign__search` stood here — this surface's own magnifier-and-field. Every search in
+   the console is `SearchBox` from the kit now; see the note on `.bx-search`. */
+/* Capped and scrolled, so a tenant with sixty applications gets a dialog the
+   same height as a tenant with six. */
+.bassign__list {
+  display: flex; flex-direction: column;
+  max-height: 320px; overflow-y: auto;
+  border: var(--bw-thin) solid var(--border-subtle); border-radius: var(--radius-md);
+}
+.bassign__row {
+  display: flex; align-items: center; gap: var(--space-4);
+  width: 100%; padding: var(--space-3) var(--space-4);
+  /* A button now, not a `<label>` wrapping a native checkbox, so it needs the
+     reset a button wants and the text alignment a row wants. */
+  border: 0; border-bottom: var(--bw-thin) solid var(--border-subtle);
+  background: none; font: inherit; text-align: left;
+  cursor: pointer;
+}
+.bassign__row:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
+.bassign__row:last-child { border-bottom: 0; }
+.bassign__row:hover { background: var(--surface-inset); }
+.bassign__row.is-on { background: var(--accent-subtle-bg, var(--surface-inset)); }
+.bassign__name { flex: 1; min-width: 0; font-size: var(--fs-md); color: var(--text-primary); }
+.bassign__meta { flex: none; font-size: var(--fs-xs); color: var(--text-tertiary); }
+.bassign__foot { margin: 0; font-size: var(--fs-sm); color: var(--text-secondary); }
+
+/* --- Exposure cell -----------------------------------------------------------
+
+   Deliberately not a red pill on every failing row. Nine rows of red stop
+   meaning danger within a day — the same reason COMPONENTS.md makes destructive
+   row triggers neutral — so the tone lives in the grade letter and
+   the row stays readable.
+
+   The dot in front of the words is gone. It carried the same tone as the
+   grade letter three words to its right, so the cell stated its severity
+   twice and the left-hand copy was the one with no content in it. The letter is last because the finding is the thing
+   worth reading and the grade is the thing worth ranking by. */
+.btable__exposure {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 3px var(--space-4);
+  border: var(--bw-thin) solid transparent; border-radius: var(--radius-md);
+  background: none; font-size: var(--fs-sm); color: var(--text-secondary);
+  cursor: pointer; white-space: nowrap;
+}
+.btable__exposure:hover { border-color: var(--border-default); background: var(--surface-raised); }
+.btable__exposure:focus-visible { outline: none; box-shadow: 0 0 0 4px var(--focus-halo); }
+.btable__exposure b {
+  min-width: 15px; padding: 0 4px; border-radius: var(--radius-xs);
+  font-size: var(--fs-xs); font-weight: var(--fw-bold); text-align: center;
+}
+.btable__exposure.is-ok b { background: var(--fb-positive-bg); color: var(--fb-positive-fg); }
+.btable__exposure.is-notice b { background: var(--fb-neutral-bg); color: var(--fb-neutral-fg); }
+.btable__exposure.is-warn b { background: var(--fb-notice-bg); color: var(--fb-notice-fg); }
+.btable__exposure.is-bad b { background: var(--fb-negative-bg); color: var(--fb-negative-fg); }
+.btable__exposure.is-bad { color: var(--fb-negative-fg); }
+
+.btable__leaking { font: inherit; color: var(--fb-negative-fg); text-decoration: underline; cursor: pointer; }
+/* The count is the whole cell now. Underlined so there is a visible cue that it
+   holds something — an inspectable value that looks like plain text is one
+   nobody points at. */
+.btable__rules {
+  display: inline-flex; align-items: center;
+  white-space: nowrap;
+  font: inherit; color: inherit;
+  background: none; border: 0; padding: 0;
+  cursor: default;
+  text-decoration: underline solid var(--border-strong);
+  text-underline-offset: 3px;
+}
+.btable__rules:hover,
+.btable__rules.is-open { text-decoration-color: var(--accent); color: var(--text-primary); }
+.btable__rules:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-xs); }
+
+/* --- Rule peek -------------------------------------------------------------
+   Portalled to the body with fixed coordinates, because the table it belongs to
+   is an overflow-x container that would otherwise clip it. */
+.brpk {
+  position: fixed;
+  z-index: var(--z-popover);
+  /* border-box, so the measured width is the declared width. As content-box the
+     8px padding and 1px border pushed it 18px wider than the viewport clamp
+     allowed for, and the right edge ran off screen. */
+  box-sizing: border-box;
+  width: 288px;
+  padding: 8px;
+  background: var(--surface-overlay, var(--surface-raised));
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--el-high);
+  pointer-events: none;
+}
+.brpk__head {
+  padding: 2px 4px 7px;
+  font-size: var(--fs-xs); font-weight: var(--fw-medium);
+  color: var(--text-tertiary);
+}
+
+/* Row kebabs are the kit's RowMenu. `.bmenu` below is still the profile menu's. */
+.bmenu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  min-width: 190px;
+  padding: var(--space-3);
+  background: var(--surface-overlay);
+  border: var(--bw-thin) solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--el-high);
+  z-index: var(--z-dropdown);
+  text-align: left;
+}
+/* Row, not block: every item now leads with a mark, and the label has to sit
+   on the icon's baseline rather than under it. */
+.bmenu button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+  color: var(--text-body);
+  text-align: left;
+}
+.bmenu button svg { flex: none; color: var(--text-muted); }
+.bmenu button:hover { background: var(--surface-sunken); }
+.bmenu button:hover svg { color: var(--text-secondary); }
+.bmenu button:focus-visible {
+  outline: none; background: var(--surface-sunken);
+  box-shadow: 0 0 0 4px var(--focus-halo);
+}
+
+/* The one item that cannot be undone by clicking again.
+
+   Coloured at rest rather than only on hover, because the point is to be seen
+   while the menu is being SCANNED — a red that only appears once the pointer is
+   already on it arrives after the decision. */
+.bmenu button.is-danger,
+.bmenu button.is-danger svg { color: var(--fb-negative-fg); }
+.bmenu button.is-danger:hover { background: var(--fb-negative-bg); }
+.bmenu button.is-danger:hover svg { color: var(--fb-negative-fg); }
+.bmenu__rule { display: block; height: 1px; margin: var(--space-3) 0; background: var(--border-subtle); }
+.btable__foot {
+  padding: var(--space-5) var(--space-6);
+  border-top: var(--bw-thin) solid var(--border-subtle);
+  background: var(--surface-sunken);
+  font-size: var(--fs-sm);
+  color: var(--text-tertiary);
+}
+
+/* --- New policy modal ------------------------------------------------------ */
+
+.bname { display: flex; flex-direction: column; gap: var(--space-7); }
+
+/* --- Builder -------------------------------------------------------------- */
+
+/* --- Rule editor ---------------------------------------------------------- */
+
+.bblock { border-bottom: var(--bw-thin) solid var(--border-subtle); }
+.bblock:last-child { border-bottom: none; }
+
+/* --- Narrow --------------------------------------------------------------- */
+
+/* A toolbar filter, whichever control draws it.
+
+   The filters were native `<select>`s and carried `.btoolbar__select` with an
+   `.is-set` variant saying "this one is narrowing the list". They are `Picker`s
+   now — one list control for the whole console, so a filter opens the same way
+   here as in the rule editor — and `Picker` styles its own trigger, so the
+   "active" mark moves to a wrapper around it rather than onto the element.
+
+   Same three channels it always had: the accent edge, the tinted ground and the
+   heavier label. A filter doing something has to look different from one at its
+   default, or the only way to know what a list is hiding is to open all of
+   them. */
+.btoolbar__filter { display: inline-flex; width: 168px; }
+.btoolbar__filter.is-set .bx-picker__trigger {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: var(--fw-medium);
+}
+
+/* --- Library pages: compact width ------------------------------------------------
+
+   Zones, Device profiles, Risk signal profiles and Authentication methods.
+
+   While a library page shows its list, everything on it sits in columns 2 to 9
+   of the page grid, so a column of padding stands on each side. Below 1280px the
+   page is too narrow to give columns away and the content takes all ten again.
+
+   Only while the width switch says Compact (`page-width.ts`). On Full the page
+   drops the class and sits on the whole grid, the way Policies does.
+
+   Two classes, not one: console-theme.css restates `.bpage > *` at one class
+   and loads later, so a one-class rule here would lose the tie.
+
+   The card view that sat here came back on 16 Sep 2026 as `LibraryRows`' card
+   rendering (`.blib__cards`, below). */
+@media (min-width: 1280px) {
+  .bpage.bpage--compact > * { grid-column: 2 / -2; }
+}
+
+/* --- Head and bar (`PageHead`, `page-bar.tsx`) -----------------------------------
+
+   The head is the title block and, at most, Documentation or the page's preview
+   switches. The bar is one line:
+   the search box and the filters on the left; the view and the primary action
+   on the right. */
+.bpage__docs {
+  display: inline-flex; align-items: center; gap: var(--space-3);
+  height: var(--ctl-height-sm); padding: 0 var(--space-4);
+  border: 0; border-radius: var(--radius-md); background: none;
+  font: inherit; font-size: var(--fs-md); color: var(--text-secondary);
+  cursor: not-allowed;
+}
+.bpage__docs:hover { background: var(--surface-sunken); }
+
+/* Preview switches on the heading row (`PageHead`'s `preview`): against the
+   right edge, on the title's line. They wrap under the title with the rest of
+   the row rather than squeezing the caption. */
+.bpage__preview {
+  flex: none; display: flex; align-items: center; flex-wrap: wrap;
+  gap: var(--space-3) var(--space-6);
+}
+/* The width switch: its word, then the two segments. The word is the picker
+   prefix's tertiary ink, so "Width" and "Flow" read as the same kind of label. */
+.bwidth { display: inline-flex; align-items: center; gap: var(--space-3); }
+.bwidth__label { font-size: var(--fs-md); color: var(--text-tertiary); white-space: nowrap; }
+.bwidth .bseg { flex-wrap: nowrap; }
+
+.bbar { justify-content: space-between; min-width: 0; }
+.bbar__left, .bbar__right { display: flex; align-items: center; gap: var(--space-4); min-width: 0; }
+.bbar__left { flex: 1 1 auto; }
+/* The primary action is the far right, whatever else a page puts before it. */
+.bbar__right { flex: none; margin-left: auto; }
+/* A dropdown filter in the bar sizes to its words — "Show  All zones",
+   "Type  Trusted device" — rather than the toolbar's fixed 168px, which cut the
+   longer answer once the prefix took its share. */
+.bbar__filter { width: auto; }
+
+/* Segments: words, the chosen one filled. No box round the group — the fill on
+   the one chosen is what makes it a control, as on Claude's pages. The fill is
+   the accent's soft step, so it is the console's slate in one look and the
+   rebrand's blue in the other, from the same tokens. */
+.bseg { display: inline-flex; align-items: center; gap: var(--space-1); flex-wrap: wrap; min-width: 0; }
+.bseg button {
+  height: var(--ctl-height-sm); padding: 0 var(--space-5);
+  border: 0; border-radius: var(--radius-md); background: none;
+  font: inherit; font-size: var(--fs-md); color: var(--text-tertiary);
+  white-space: nowrap; cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard);
+}
+.bseg button:hover { color: var(--text-primary); }
+.bseg button.is-on { background: var(--accent-soft); color: var(--accent-strong); font-weight: var(--fw-medium); }
+.bseg button:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--focus-halo); }
+
+/* `.bsearchtoggle` stood here — search as an icon that opened into a field.
+   Withdrawn the same day; every bar has a search box. */
+
+/* A control inside a list row or a card's facts sits above the row's press
+   target (`.blist__open::after`), or pressing "Assign apps" would open the
+   policy instead. */
+.blist__fact :is(button, a, [role='button']),
+.blib__cardfacts :is(button, a, [role='button']) { position: relative; z-index: 1; }
+
+@media (max-width: 720px) {
+  .bbar__right { margin-left: 0; }
+}
+
+/* --- The same library as a table, and as cards (`library-view.tsx`) ------------
+
+   One design for all three libraries. Both reuse the list's parts where they
+   are the same thing — the tile, the name button, the menu — so a zone looks
+   like a zone whichever view it is in, and only the arrangement changes.
+
+   Heights are FIXED in each view, as the list's are, because paging is a
+   division (`libRowHeight`). A card or a row that grew with its content would
+   put the pager under the fold. */
+.blib__views { flex: none; }
+
+.blib__table tbody tr { height: 57px; }
+.blib__table .blist__tile,
+.btable__primary > .blist__tile {
+  flex: none; display: grid; place-items: center;
+  width: 32px; height: 32px; border-radius: var(--radius-md);
+}
+/* The policies table's name cell spaces its name and badges 8px apart; the
+   mark takes the library tables' 12px to the name. */
+.btable__primary > .blist__tile { margin-right: var(--space-2); }
+/* The name cell is the press target, as the list's whole row is; the menu cell
+   keeps its own. */
+.blib__cellname {
+  position: relative;
+  display: inline-flex; align-items: center; gap: var(--space-5);
+  min-width: 0; max-width: 100%;
+}
+.blib__cellname .blist__open { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.blib__table td { vertical-align: middle; }
+.blib__table td > .bz7__chip + .bz7__chip,
+.blib__table td > .bx-badge + .bx-badge { margin-left: var(--space-2); }
+.blib__none { color: var(--text-muted); }
+
+.blib__cards {
+  /* Measured: 36px head, 12px gap, two 24px fact lines 8px apart, 16px padding
+     each side and the border — 134. `libRowHeight` says the same. */
+  --blib-card-h: 134px;
+  list-style: none; margin: 0; padding: 0;
+  display: grid; gap: var(--space-6);
+  grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
+}
+.blib__card {
+  position: relative;
+  display: flex; flex-direction: column; gap: var(--space-5);
+  height: var(--blib-card-h); min-width: 0; overflow: hidden;
+  padding: var(--space-6);
+  background: var(--surface-raised);
+  border: var(--bw-thin) solid var(--border-subtle); border-radius: var(--radius-lg);
+}
+.blib__card:hover { background: var(--surface-sunken); }
+.blib__card:has(.blist__open:focus-visible) { box-shadow: inset 0 0 0 2px var(--focus-ring); }
+.blib__cardhead { display: flex; align-items: center; gap: var(--space-5); min-width: 0; }
+.blib__cardhead .blist__tile {
+  flex: none; display: grid; place-items: center;
+  width: 36px; height: 36px; border-radius: var(--radius-md);
+}
+.blib__cardname {
+  flex: 1 1 auto; min-width: 0;
+  display: flex; align-items: center; gap: var(--space-4);
+}
+.blib__cardname .blist__open { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.blib__cardname .bx-badge { flex: none; }
+/* Above the name's full-card press target, as `.blist__side` is on a row. */
+.blib__cardmenu { flex: none; position: relative; z-index: 1; }
+/* A two-column grid, so every value in a card starts on one x whatever its
+   label's length. It was a row per fact with a 72px label floor, and "High risk
+   score" is wider than that — its value started 30px right of the one above. */
+.blib__cardfacts {
+  margin: 0; min-width: 0;
+  display: grid; grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center; gap: var(--space-4) var(--space-6);
+}
+.blib__cardfacts > div { display: contents; }
+.blib__cardfacts dt {
+  font-size: var(--fs-sm); color: var(--text-tertiary); white-space: nowrap;
+}
+.blib__cardfacts dt:empty { display: none; }
+.blib__cardfacts dt:empty + dd { grid-column: 1 / -1; }
+.blib__cardfacts dd {
+  margin: 0; min-width: 0; overflow: hidden;
+  display: flex; align-items: center; gap: var(--space-3); flex-wrap: nowrap;
+  font-size: var(--fs-sm); color: var(--text-secondary);
+}
+
+/* Policies: the neutral tile the libraries use (the table row, and the list and
+   card views behind `POLICY_VIEW`), and the table's footer line as a caption
+   under a list. */
+.bpol__tile { background: var(--surface-inset); color: var(--text-tertiary); }
+/* The template star beside a policy's name (owner, 18 Nov 2026): shown while the row is hovered, kept and filled blue
+   (the selection colour, never orange) once marked. Touch screens have no hover, so there it always shows. */
+.bpol__template-mark {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--radius-sm);
+  background: none; color: var(--text-tertiary); cursor: pointer;
+  opacity: 0; transition: opacity var(--dur-fast) ease, color var(--dur-fast) ease, background var(--dur-fast) ease;
+}
+/* Hover only, marked or not, and at the far end of the name cell after its tags (owner, 18 Nov 2026: "move this into a
+   better position … only show on hover, not every time"). The ⋯ menu says the same thing in words at rest. */
+.btable__primary .btable__marks { flex: 1; }
+.btable__marks .bpol__template-mark { order: 2; margin-left: auto; }
+tr:hover .bpol__template-mark,
+.blist__row:hover .bpol__template-mark,
+.bpol__template-mark:focus-visible { opacity: 1; }
+.bpol__template-mark:hover { background: var(--int-ghost-bg-hover); color: var(--text-secondary); }
+.bpol__template-mark.is-on,
+.bpol__template-mark.is-on:hover { color: var(--blue); }
+@media (hover: none) { .bpol__template-mark { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .bpol__template-mark { transition: none; } }
+.bpol__foot { margin: 0; font-size: var(--fs-sm); color: var(--text-secondary); }
+.bpol__foot .btable__leaking { margin-left: 0; }
+
+/* --- Library lists that fit the window --------------------------------------------
+
+   With `.blist--paged` a list shows only the rows that fit below its toolbar
+   (screens/paged-list.ts) and pages the rest, so the page never scrolls. That
+   needs every row to be the same height: the row is fixed at --blist-row-h, its
+   facts stay on one line and anything past the edge is clipped rather than
+   wrapped into a taller row. */
+.blist--paged { --blist-row-h: 84px; }
+.blist--paged .blist__row { height: var(--blist-row-h); min-height: 0; overflow: hidden; }
+.blist--paged .blist__main { overflow: hidden; }
+.blist--paged .blist__meta { flex-wrap: nowrap; overflow: hidden; }
+.blist--paged .blist__name { flex-wrap: nowrap; }
+
+.blist__pager {
+  display: flex; align-items: center; justify-content: flex-end; gap: var(--space-3);
+  padding-top: var(--space-5);
+  font-size: var(--fs-md); color: var(--text-secondary);
+  /* Kept in view on a window too short for even the fewest rows. */
+  position: sticky; bottom: 0; z-index: 1;
+  background: var(--surface-page);
+}
+
+/* --- The pager lives at the bottom of the page ----------------------------------
+
+   On every paged page, however few rows there are (owner, 16 Sep 2026: "stick
+   this to the bottom of every page for all the pagination, and it should stay
+   there only"). It sat directly under the list, so a page of three risk
+   profiles had its pager a third of the way down and a page of nineteen zones
+   had it at the bottom — the same control in two places.
+
+   1. A page that pages fills the scrolling column, which is a flex column. */
+.bshell__main > .bpage:has(.blist__pager) { flex: 1 0 auto; }
+/* 2. Head, bar, list, pager: the list's row takes the free space and the list
+      keeps its own height at the top of it, so the pager is the page's last
+      row, on the bottom edge. The paged-list hook counts the pager by its
+      height, not its position, for exactly this. */
+.bpage:has(> .blist__pager) { grid-template-rows: auto auto 1fr auto; }
+/* Not the overlays and not the docked panel. A kit Drawer renders in place, so
+   on a paged page its scrim and panel are grid children too — and Chrome
+   honours `align-self` on fixed boxes, so `start` shrank the drawer to its
+   content and the scrim to nothing (16 Sep 2026). The docked panel stretches
+   down to the pager on purpose. */
+.bpage:has(> .blist__pager) > :not(.blist__pager, .bdock, .bx-scrim, .bx-drawer) { align-self: start; }
+.bpage > .blist__pager { grid-row: -2 / -1; }
+/* 3. Display tokens keeps the pager inside its panel, a flex column: the panel
+      takes the free space and the pager goes to its end. Three rows — back
+      link, head, panel. It was four while a tab bar sat between the head and
+      the panel (gone 21 Sep 2026); left at four, the panel took an `auto` row
+      and the free space went to an empty fourth, unpinning the pager. */
+.bpage.bdt:has(.bdt__panel > .blist__pager) { grid-template-rows: auto auto 1fr; }
+.bdt__panel > .blist__pager { margin-top: auto; }
+
+/* --- A panel docked beside the list (`DockPanel`) ---------------------------------
+
+   The policy builder's inspector, on a library page: "Used by" on Zones and
+   Device profiles. The head and the bar keep the page's width; below them the
+   list gives up a column on the right and the panel stands in it, from the
+   bar down to the pager. The list's LEFT edge never moves, so opening the panel
+   narrows the list rather than shifting it.
+
+   Two tracks on Full. On Compact the one-column insets stay either side, as
+   explicit tracks one tenth of the ten-column grid wide, so the head, the bar,
+   the list's left edge and the panel's right edge line up with the page they
+   were on before the panel opened. */
+.bpage.has-dock {
+  --dock-w: clamp(340px, 34%, 440px);
+  grid-template-columns: minmax(0, 1fr) var(--dock-w);
+}
+.bpage.has-dock > :not(.bpage__head, .bbar, .bdock, .bx-scrim, .bx-drawer) { grid-column: 1; }
+/* Rows 3 and 4: the list's and the pager's. Explicit so it sits beside the
+   rows whatever order auto-placement meets it in. */
+.bpage.has-dock > .bdock { grid-column: 2; grid-row: 3 / span 2; }
+.bpage.has-dock:not(:has(> .blist__pager)) > .bdock { grid-row: 3; }
+/* An empty LIST is not an empty PAGE. `empty.css` turns a page whose content IS
+   an empty state into a flex column so it can centre it — and that quietly
+   voids every `grid-column` above, which put the docked panel full-width and
+   ABOVE the empty state as soon as a search narrowed the list to nothing with
+   "Used by" open. While the panel is open the page still has two columns.
+   (0,4,0) beats empty.css's (0,3,0), so sheet order does not matter. */
+.bpage.has-dock:has(> .bempty:not(.is-compact)) { display: grid; }
+@media (min-width: 1280px) {
+  .bpage.bpage--compact.has-dock {
+    --dock-inset: calc((100% - 9 * var(--space-6)) / 10);
+    grid-template-columns: var(--dock-inset) minmax(0, 1fr) var(--dock-w) var(--dock-inset);
+  }
+  .bpage.bpage--compact.has-dock > :not(.bpage__head, .bbar, .bdock, .bx-scrim, .bx-drawer) { grid-column: 2; }
+  .bpage.bpage--compact.has-dock > .bdock { grid-column: 3; }
+}
+
+/* The panel: the inspector's card — its own edge and radius, a head with the
+   close control, a body that scrolls on its own so the page never does. */
+.bdock {
+  display: flex; flex-direction: column;
+  min-width: 0; min-height: 0;
+  border: var(--bw-thin) solid var(--border-subtle); border-radius: var(--radius-xl);
+  background: var(--surface-raised);
+  overflow: hidden;
+  animation: bdock-in var(--dur-normal) var(--ease-standard);
+}
+@keyframes bdock-in {
+  from { opacity: 0; transform: translateX(16px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bdock { animation: none; }
+}
+.bdock__head {
+  flex: none; display: flex; align-items: flex-start; gap: var(--space-4);
+  padding: var(--space-5) var(--space-4) var(--space-5) var(--space-6);
+  border-bottom: var(--bw-thin) solid var(--border-subtle);
+}
+.bdock__title { flex: 1; min-width: 0; }
+.bdock__title h2 {
+  margin: 0;
+  font-size: var(--fs-md); font-weight: var(--fw-semibold); color: var(--text-primary);
+}
+/* Focus lands on the heading when the panel opens, as a place to read from,
+   not as a control, so it draws no ring. */
+.bdock__title h2:focus { outline: none; }
+.bdock__title p {
+  margin: 2px 0 0;
+  font-size: var(--fs-sm); color: var(--text-tertiary); line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.bdock__body {
+  flex: 1; min-height: 0;
+  overflow-y: auto; overscroll-behavior: contain;
+  padding: var(--space-5);
+}
+
+/* The row the panel is about, marked while it is open — the builder marks its
+   selected card the same way. */
+.blist__row[data-docked],
+.blist__row[data-docked]:hover { background: var(--accent-soft); }
+.blib__card[data-docked] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.btable tbody tr[data-docked] td,
+.btable tbody tr[data-docked]:hover td { background: var(--accent-soft); }
+
+/* Too narrow for a list and a panel side by side: the list keeps the page and
+   the panel lays over its right edge, full height under the top bar, as the
+   kit's drawer does — but still without a scrim, so the list stays live. */
+/* 900, not 899. The shell drops its rail to an overlay at 900 (shell.css), and
+   this is the same judgement — there is no room for a second column — so at
+   exactly 900px the page used to keep a grid column for the panel while the
+   rail had already left the grid. See the width scale at the top of this file. */
+@media (max-width: 900px) {
+  .bpage.has-dock { grid-template-columns: repeat(10, minmax(0, 1fr)); }
+  .bpage.has-dock > :not(.bpage__head, .bbar, .bdock, .bx-scrim, .bx-drawer) { grid-column: 1 / -1; }
+  .bpage.has-dock > .bdock {
+    position: fixed; top: var(--nav-topbar-h); right: 0; bottom: 0;
+    width: min(420px, calc(100% - 32px));
+    z-index: var(--z-overlay);
+    border-width: 0 0 0 var(--bw-thin); border-radius: 0;
+    box-shadow: var(--el-overlay);
+  }
+}
+.blist__range { margin-right: var(--space-4); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* An application that already has another policy: said in its row, and not tickable. */
+.bassign__row.is-taken { cursor: not-allowed; color: var(--text-tertiary); }
+
+/* Policies: pick rows, act on several (6 Nov 2026). */
+.btable__col-pick { width: 40px; padding-right: 0 !important; }
+.bpol__pick { width: 16px; height: 16px; margin: 0; accent-color: var(--blue, var(--text-primary)); cursor: pointer; vertical-align: middle; }
+/* Next step (Policies.tsx): a moved draft's Publish, in a column of its own (owner, 6 Nov 2026). */
+.btable__col-next { width: 128px; }
+
+/* A section heading inside the policies table (owner, 10 Nov 2026). */
+.btable__group td { padding: var(--space-3) var(--space-4); background: var(--surface-sunken); border-bottom: var(--bw-thin) solid var(--border-subtle); font-size: var(--fs-sm); color: var(--text-tertiary); }
+.btable__group b { margin-right: var(--space-3); font-weight: var(--fw-semibold); color: var(--text-secondary); }
+
+/* Sections: each its own table, with its heading above (owner, 10 Nov 2026). */
+.btable__section + .btable__section { margin-top: var(--space-6); }
+.btable__sectionhead { margin: 0; padding: var(--space-3) var(--space-4); display: flex; align-items: baseline; gap: var(--space-3); font-size: var(--fs-md); font-weight: var(--fw-semibold); color: var(--text-primary); }
+.btable__sectionhead span { font-size: var(--fs-sm); font-weight: var(--fw-regular, 400); color: var(--text-tertiary); }
+
+/* New policies' two lists: a second tab row above them (owner, 10 Nov 2026). */
+.bpol__main { min-width: 0; }
+.bpol__sub { margin: 0 0 var(--space-4); align-self: flex-start; }
+.btable__appname { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; text-align: left; }

@@ -1,0 +1,534 @@
+import { coversEveryApp, enforces, type App, type Group, type Policy, type User } from '../data'
+import { isPostSignIn } from '../post-sign-in'
+import { listNames } from '../rule-who'
+/* A cycle, and a harmless one: app-standing reads `policiesForApp` from here
+   and `summarise` and the delete lines below read `appStanding` from there,
+   all inside function bodies, never while either module is still loading. */
+import { appStanding, deciderChanges, type StandRow } from './app-standing'
+
+/* -----------------------------------------------------------------------------
+   What protects an application, and what attaching one more would mean.
+
+   The Applications screen asks a question no other screen asks: not "what does
+   this policy cover" but "what covers this application" — the same relation
+   read from the other end. Everything that answers it lives here rather than in
+   the screen, so the assertions below can be made without rendering anything,
+   which is how every model decision in this codebase is pinned.
+
+   `usage.ts:policiesUsing` is NOT the thing to generalise for this. It finds
+   policies whose rule CONDITIONS name a library object — a zone, a fingerprint
+   profile — and its own comment refuses to be widened. An application is not
+   referenced by a condition; it is the subject of the policy.
+   -------------------------------------------------------------------------- */
+
+/* Whether a policy actually decides sign-ins.
+
+   `enforces` AND at least one enabled rule, which is exactly the pair of tests
+   `Coverage.match` applies before it will draw a cell. Stated once, here, so
+   the panel's precedence numbers and the coverage grid cannot disagree about
+   which policies are in the race: a policy that is a draft, or switched off,
+   or that has no enabled rule to run, reaches no sign-in — and
+   numbering it 2 of 3 on this screen while the grid leaves its column blank
+   would make one of the two a liar. */
+export function decidesFor(p: Policy): boolean {
+  return enforces(p) && p.rules.some((r) => r.enabled)
+}
+
+/* Every policy naming this app, in store order — because store order IS
+   precedence, the same order the policies table and the builder read.
+
+   Never the system policy. `coversEveryApp` is true for it, so a filter written
+   as "covers this app" would put the tenant default at the top of every
+   application's list and imply it had been attached to each one. It is the
+   fall-through, and it belongs in `Protection.fallback` where it can be said
+   once, as what happens when nothing above matched.
+
+   Never a post sign-in policy either (post-sign-in.ts, owner 13 Oct 2026). It
+   names applications, but it acts during the session and decides no sign-in,
+   so it is kept off an application's Policies tab, the Apps list's
+   Protection cell and every standing read from here — not listed as one that
+   "never decides". */
+export function policiesForApp(appId: string, policies: readonly Policy[]): Policy[] {
+  return policies.filter((p) => !p.isSystem && !isPostSignIn(p) && p.appIds.includes(appId))
+}
+
+export interface Protection {
+  /** Policies on this app, in store order. */
+  own: Policy[]
+  /** The subset that decides sign-ins, same order. */
+  decides: Policy[]
+  /** The tenant default. Found by `coversEveryApp`, never by an empty `appIds`. */
+  fallback: Policy | null
+}
+
+export function protectionOf(appId: string, policies: readonly Policy[]): Protection {
+  const own = policiesForApp(appId, policies)
+  return {
+    own,
+    decides: own.filter(decidesFor),
+    /* By `coversEveryApp`, not by `appIds.length === 0`. Those are two
+       different facts: a policy somebody created and has not assigned yet also
+       has no applications, and calling it the tenant default would be a serious
+       misreading of a half-finished draft. */
+    fallback: policies.find(coversEveryApp) ?? null,
+  }
+}
+
+/* 1, 2, 3… for the rows that decide; null for the rows that do not.
+
+   Same length and order as the input, so a caller can zip it against the rows
+   it drew. The numbers are EARNED: a switched-off policy sitting between two
+   live ones does not take a number and does not push the one below it down,
+   because it is not in the order — it is beside it. */
+export function orderOf(rows: Policy[]): (number | null)[] {
+  let n = 0
+  return rows.map((p) => (decidesFor(p) ? ++n : null))
+}
+
+/* Why this row has no number, or null when it has one.
+
+   Precedence, not a set: a policy that is switched off AND has no enabled rules
+   is reported as switched off, because that is the one fact that explains the
+   other three and the only one worth acting on first. */
+export function whyNotDeciding(p: Policy): string | null {
+  /* Draft first, and it is not the same sentence as switched-off. "Switched
+     off" says somebody turned it off; a draft has never been on, and telling
+     an administrator they switched off something they never published is the
+     kind of small lie that costs a screen its credibility. */
+  if (p.status === 'draft') return 'Draft. It decides no sign-ins.'
+  if (p.status === 'inactive') return 'Inactive. It decides no sign-ins.'
+  /* Checked, not enforced: it runs on every sign-in and changes none. */
+  if (p.status === 'monitor') return 'Monitoring. It decides no sign-ins.'
+  if (!p.rules.some((r) => r.enabled)) return 'No rule is turned on. Every sign-in falls through.'
+  return null
+}
+
+/** "No rules", "1 rule", "4 rules" — the rules a policy has written, its last row not counted. */
+export function rulesLabel(p: Pick<Policy, 'rules'>): string {
+  const n = p.rules.length
+  return n === 0 ? 'No rules' : `${n} rule${n === 1 ? '' : 's'}`
+}
+
+/* Names in a sentence: "Box", "Box and Slack", "Box and 3 other applications".
+   Empty for none. `plural` names the rest, which is always two or more. */
+export function listPhrase(names: string[], plural = 'applications'): string {
+  if (names.length === 0) return ''
+  if (names.length === 1) return names[0]
+  if (names.length === 2) return `${names[0]} and ${names[1]}`
+  return `${names[0]} and ${names.length - 1} other ${plural}`
+}
+
+/* Whether the policy decides for somebody on this app: its row on the app
+   page, read from the engine (`appStanding`). Not `decidesFor`: a live policy
+   with no rules decides by its last row, and a live one shadowed for everyone
+   it names decides nothing. */
+const decidesOn = (appId: string, policy: Policy, policies: readonly Policy[], users: readonly User[]) =>
+  appStanding(appId, policies, users).rows.some((r) => r.policy.id === policy.id && r.state === 'decides')
+
+/* The applications only this policy decides, in the policy's own order.
+
+   Take this policy away (delete it, or turn it off) and these fall through to
+   the tenant default: everybody it decides for there — each group, person or
+   everyone else, people in two groups too — goes to the tenant default, by the
+   same moves the Remove dialog lists (`deciderChanges`). An app where somebody
+   it decides for goes to another policy instead is not on the list: that
+   policy still decides there. `users` and `groups` are the directory; without
+   them only everyone else is asked about. */
+export function decidedOnlyBy(policy: Policy, policies: readonly Policy[], users: readonly User[] = [], groups: readonly Group[] = []): string[] {
+  if (policy.isSystem) return []
+  const fallback = policies.find(coversEveryApp) ?? null
+  const without = policies.filter((p) => p.id !== policy.id)
+  return policy.appIds.filter((appId) => {
+    if (!decidesOn(appId, policy, policies, users)) return false
+    const moves = deciderChanges(appId, policies, without, users, groups).filter((m) => m.from?.id === policy.id)
+    return moves.length > 0 && moves.every((m) => m.to?.id === fallback?.id)
+  })
+}
+
+/* The one line the delete confirmation says about a policy.
+
+   "Protects" only the applications where it decides for somebody — the
+   numbered rows on each app page, so this line and that page agree. A draft,
+   an inactive policy, or a live one shadowed everywhere is assigned to its
+   apps and protects nothing. Null when there is nothing worth saying (a draft
+   with no applications). Pass the directory (`users`, `groups`): a policy for
+   named people decides for nobody without it. */
+export function deleteDetail(
+  policy: Policy,
+  policies: readonly Policy[],
+  apps: readonly App[],
+  users: readonly User[] = [],
+  groups: readonly Group[] = [],
+): string | null {
+  const facts = deleteFacts(policy, policies, apps, users, groups)
+  if (!facts) return null
+  const say = (list: readonly App[]) => listPhrase(list.map((a) => a.name))
+  if (facts.protects.length === 0) return `Assigned to ${say(facts.assigned)}. It decides no sign-ins.`
+  const to = facts.fallsTo
+  if (!to) return `Protects ${say(facts.protects)}.`
+  if (to.apps === 'all') return `Protects ${say(facts.protects)}. Sign-ins there will use the ${to.policy.name}.`
+  return `Protects ${say(facts.protects)}. Sign-ins to ${say(to.apps)} will use the ${to.policy.name}.`
+}
+
+/* The same line as the things it names, so the delete confirm can draw each
+   application with its logo (owner, 23 Oct 2026: "logos beside application
+   names"; app-facts.tsx `DeleteFactsLine`). `deleteDetail` words it. */
+export interface DeleteFacts {
+  /** The applications it decides sign-ins on. Empty when it decides none, and `assigned` names them instead. */
+  protects: App[]
+  /** The applications it is on, when it decides sign-ins on none of them. */
+  assigned: App[]
+  /** The tenant default its sign-ins go to once it has gone, and on which of `protects` ('all': every one). Null when none go there. */
+  fallsTo: { policy: Policy; apps: App[] | 'all' } | null
+}
+
+export function deleteFacts(
+  policy: Policy,
+  policies: readonly Policy[],
+  apps: readonly App[],
+  users: readonly User[] = [],
+  groups: readonly Group[] = [],
+): DeleteFacts | null {
+  const named = apps.filter((a) => policy.appIds.includes(a.id))
+  if (named.length === 0) return null
+  const deciding = named.filter((a) => decidesOn(a.id, policy, policies, users))
+  if (deciding.length === 0) return { protects: [], assigned: named, fallsTo: null }
+  const alone = decidedOnlyBy(policy, policies, users, groups)
+  const fallback = policies.find(coversEveryApp)
+  if (alone.length === 0 || !fallback) return { protects: deciding, assigned: [], fallsTo: null }
+  return {
+    protects: deciding,
+    assigned: [],
+    fallsTo: { policy: fallback, apps: alone.length === deciding.length ? 'all' : deciding.filter((a) => alone.includes(a.id)) },
+  }
+}
+
+/* One application, one policy (owner, 14 Oct 2026). The sign-in policy an application belongs to, or undefined. The tenant
+   default and post sign-in policies are left out: the default covers every application by being the fall-through, and a
+   post sign-in policy is linked from the application's page, so neither counts as its one policy. `except` is the policy
+   being edited, which is not "another" one. */
+export function ownerOf(appId: string, policies: readonly Policy[], except?: string): Policy | undefined {
+  return policies.find((p) => p.id !== except && !p.isSystem && !isPostSignIn(p) && p.appIds.includes(appId))
+}
+
+export type AttachKind = 'fresh' | 'already-here' | 'also' | 'system'
+
+/* What assigning this policy to this app would actually be.
+
+   `isSystem` is tested FIRST, before the empty-`appIds` branch, and that order
+   is the whole reason this function exists rather than being inlined as a
+   ternary. The tenant default names no applications — it covers everything by
+   being the system policy — so a check that asks "is the list empty?" first
+   classifies it as an unassigned draft and offers to attach the fall-through to
+   Salesforce. Every other surface in the product disambiguates with `isSystem`
+   first; so does this.
+
+   `move` was the fourth kind and it has become `also`, which is not a rename.
+   It described taking a policy AWAY from the application it was on, because a
+   policy had one and giving it another meant losing the first. A policy holds a
+   list now, so the same gesture adds. That turns the consequential choice in
+   this picker into a free one, and the copy that warned about it has to stop. */
+export function attachKind(p: Policy, appId: string): AttachKind {
+  if (p.isSystem) return 'system'
+  if (p.appIds.length === 0) return 'fresh'
+  return p.appIds.includes(appId) ? 'already-here' : 'also'
+}
+
+/* What the picker may offer, unassigned first.
+
+   The old reason for that order was that attaching an unassigned policy cost
+   nothing while attaching an assigned one TOOK it from somewhere. Neither half
+   is a cost any more — adding an application to a policy that already has two
+   removes nothing from either.
+
+   The order stays, for a different and smaller reason: a policy with no
+   applications is doing nothing at all until it gets one, so it is the one this
+   list can most usefully offer first. What has gone is the warning that used to
+   ride on the distinction.
+
+   Sign-in policies only: Add existing policy never offers a post sign-in one,
+   which is added to an application from its own builder. */
+export function attachableTo(appId: string, policies: Policy[]): Policy[] {
+  /* It already has its one policy: nothing to add. */
+  if (ownerOf(appId, policies)) return []
+  const kinds = policies
+    .filter((p) => !isPostSignIn(p))
+    .map((p) => ({ p, kind: attachKind(p, appId) }))
+    .filter((x) => x.kind === 'fresh' || x.kind === 'also')
+  return [...kinds.filter((x) => x.kind === 'fresh'), ...kinds.filter((x) => x.kind === 'also')].map((x) => x.p)
+}
+
+/* The policy as it would be after attaching. Pure: nothing here reaches a store.
+
+   Throws on an app id the tenant does not have, and that guard is not
+   defensive noise. `store.appById` resolves an unknown id to `apps[0]` with no
+   undefined branch, so a bad write does not throw anywhere — it silently
+   renders the policy as **Salesforce** on six different surfaces. The screen
+   cannot produce a bad id; this refuses one anyway, because the guard is the
+   difference between a future bug being loud and being a mystery. */
+/* REPLACE POLICY MAKES A DRAFT COPY (owner, 22 Oct 2026: "the pick becomes a draft copy on this app alone,
+   nothing changes until I activate it").
+
+   Replacing used to swap at once: the new policy went on, the old one came off, and because that moved real
+   sign-ins it had to be checked first — "Before saving: applications", a six-section page that opened OVER the
+   drawer the admin was reading and never once said "replace". The owner's answer is to take the risk out of the
+   press rather than to explain it better. A draft decides nobody (`engineDecides`), so copying the pick onto
+   this application as a draft changes nothing for anybody; the admin reads it, turns it on when ready, and the
+   check belongs at THAT moment, where "Before turning on" already lives.
+
+   Off: the live swap, which is still what `replaceOnApp` and the guard's `alsoAfter` wiring are for. Kept,
+   not deleted.
+
+   OFF SINCE 24 OCT 2026, the owner's choice (option A): "pick a policy in a slider, one confirm that swaps it
+   live on this app, with Undo. No copy, no draft." He had found the draft copy "not smooth" and its "Draft
+   waiting" note "not useful" (23 Oct). So a replace is the live swap again, but not the 22 Oct one: the risk the
+   draft took out of the press is said BEFORE it instead, in one confirm (replace-dialog.tsx `ReplaceDialog`)
+   that names what comes off, what goes on, what becomes of the old policy and where sign-ins go if the new one
+   decides nothing yet; then `replaceOnApp` writes both halves with one Undo. The pre-flight page stays off as
+   well (`REPLACE_RUNS_CHECKS`). `draftCopy` and everything else behind this flag is kept: on, the 22 Oct draft
+   copy comes back exactly as it was. */
+export const REPLACE_MAKES_DRAFT: boolean = false
+
+/* REPLACE RUNS THE CHECKS (owner, 24 Oct 2026, option A: "one confirm that swaps it live on this app").
+
+   The same answer as Remove's (`REMOVE_RUNS_CHECKS`, below), for the same reason and by the same choice: the
+   owner wants one confirm and no "Before saving: applications" page, the page he called "too complicated" on
+   22 Oct because it opened over the slider, never said "replace" and never named the policy coming off.
+
+   Unlike the draft copy this replaced, the swap DOES move sign-ins the moment it writes, so the confirm is
+   what the press rests on: it names the policy coming off and the one going on, what becomes of the old one
+   (still on other applications, or a draft — and whether its saved draft then replaces its published rules),
+   the applications the new one is on already, and where sign-ins go while the new one decides nothing. What is
+   given up is what the page alone could say: the saved sign-ins that would newly fail, the modelled totals,
+   the break-in test.
+
+   On: the confirm's Replace runs the checks first when the swap moves somebody — when EITHER policy decides
+   here, the one coming off as much as the one going on (a deciding policy replaced by a draft drops everybody it
+   decided for to the Global Default; ApplicationPage.tsx `checkThenPutOn`) — reading the tenant with BOTH halves
+   applied (`alsoOff`, guard.ts `alsoAfter`), and the page's primary reads "Replace on {app}". That wiring is
+   kept, not deleted. */
+export const REPLACE_RUNS_CHECKS: boolean = false
+
+/* REPLACE AND EDIT-A-SHARED-POLICY AS POPUPS (owner, 26 Oct 2026, over the head's two buttons: "I want 3 buttons inside
+   of 2 … so don't need the side nav, we can directly showcase them something like a popup, and based on select
+   showcase them the context").
+
+   Two buttons stay in the head, Edit policy and Replace policy, and three things sit behind them: Edit for all and
+   Duplicate for this application (Edit policy, on a policy more than one application shares), and Replace. None of
+   them opens a side slider any more. Each is one popup that shows what the pick does, here, before the press:
+
+   - `FORK_IN_POPUP`: Edit policy on a shared policy (shared-policy-fork.tsx). Two ways, one picked at a time, and the
+     sentence and the list under them change with the pick. Off: the 23 Oct slider.
+   - `REPLACE_IN_POPUP`: Replace policy (AddExistingPolicy.tsx). The list, then the pick's context in the same popup:
+     the facts the confirm used to say in a second dialog (replace-dialog.tsx `ReplaceCard`), and the one button is
+     Replace, which writes. The second confirm is not drawn, since the popup IS the confirm. Off: the 24 Oct slider
+     and its confirm, exactly as they were.
+
+   Both kept, not deleted: a flag is how the owner compares the two. Add existing policy, on an application with no
+   policy, stays a slider; nothing here changes it. */
+export const FORK_IN_POPUP: boolean = true
+export const REPLACE_IN_POPUP: boolean = true
+
+/* THREE BUTTONS IN THE HEAD, ONE POPUP EACH (owner, 26 Oct 2026, of the popup that offered Edit for all and Duplicate as
+   two cards: "give me 3 buttons there, not inside the popup, so based on the button selected we show a different popup,
+   with context. As minimal as we can").
+
+   The choice moves out of the popup and into the head. Edit policy (the orange one), Duplicate policy and Replace
+   policy are three buttons, and each opens the one popup that is about it: Edit policy, on a policy more than one
+   application shares, says who it reaches; Duplicate policy says what the copy is and who keeps the original;
+   Replace policy is the list, then what the pick does. A popup has no cards to choose between, so its footer is
+   Cancel and its one verb. Edit policy on a policy used by this application alone goes straight to the builder, as it
+   always did.
+
+   Off: the head with two buttons and the popup that carries both ways (`FORK_IN_POPUP`), kept for comparison. */
+export const HEAD_THREE_BUTTONS: boolean = true
+
+/* ONE SPLIT BUTTON IN THE HEAD (owner, 27 Oct 2026: "instead of three buttons, we need two, so the replace policy
+   option will be on hold … add a split button by default. Show an Edit option for this application … and a single
+   Edit All button that starts editing all policies"; then, of the Edit all button: "move this button as well inside
+   the split button").
+
+   The head is a split button and the ⋯. On a policy more than one application shares:
+
+   - the split's action is Edit for this app (orange): it opens the one popup that says what the copy is and who keeps
+     the original (the old Duplicate policy);
+   - its chevron holds two rows: Edit all, which opens the one popup that says who an edit reaches (the old Edit
+     policy), and Replace policy (below).
+
+   On a policy this application has to itself there is nothing to be "all" of, and a copy would only be a draft
+   twin, so the action is Edit policy straight to the builder and the menu holds Replace policy alone.
+
+   While the page's save bar is up the head stands down to secondary, as it always has: the bar holds the one orange
+   button. Off: the three buttons of `HEAD_THREE_BUTTONS`, untouched. */
+export const HEAD_SPLIT_EDIT: boolean = true
+
+/* REPLACE POLICY IS ON HOLD IN THE SPLIT (owner, 27 Oct 2026: "the replace policy option will be on hold … indicate
+   that it's On hold (add pill) inside the split button").
+
+   The row stays in the split's menu so nobody wonders where it went, drawn disabled with an "On hold" pill. Nothing
+   is deleted: `onReplace`, the Replace popup (`REPLACE_IN_POPUP`) and the live swap behind it are all still wired, and
+   turning this off makes the row open the popup again. Read only where `HEAD_SPLIT_EDIT` draws the head. */
+export const HEAD_REPLACE_ON_HOLD: boolean = true
+
+/* REMOVE RUNS THE CHECKS (owner, 23 Oct 2026: "take the Before saving page off Remove as well, so the two
+   paths are consistent").
+
+   Replace stopped running "Before saving: applications" because a replace then landed as a draft copy and
+   moved nobody (`REPLACE_MAKES_DRAFT`; since 24 Oct a replace is a live swap again, and it skips the page by
+   the owner's choice too, `REPLACE_RUNS_CHECKS` above). Remove is NOT that: taking a deciding policy off an application
+   changes who gets in at the next sign-in, and there is no draft to defer it behind. The owner weighed that
+   and chose consistency, which is his call to make; this comment records what the press now rests on, so
+   nobody has to reconstruct it.
+
+   WHAT IS LEFT is the remove confirm (AppProtection.tsx `RemoveDialog`), and it is not thin: it names what
+   becomes of the policy (`removeCopy` — stays on N others, or becomes a draft and whether its saved draft
+   replaces the published rules) and then lists, from the engine, every group and person this policy decides
+   for here and the policy that decides for them once it is gone (`deciderChanges` / `visibleMoves`). An
+   admin still cannot remove a policy without being told, by name, who moves where.
+
+   WHAT IS GIVEN UP is the rest of that page: the saved sign-ins that would newly fail, with the person and
+   the decision they expected; the modelled totals over the whole tenant; and the break-in test. Those are
+   the things a confirm cannot carry without becoming the page it replaced.
+
+   On: the 22 Oct behaviour, where a removal that moves anybody opens the checks first. Nothing behind this
+   is deleted — `useAppsGuard` still runs for an add here, and for the builder's own Applications pane,
+   which is a different gesture and is deliberately untouched. */
+export const REMOVE_RUNS_CHECKS: boolean = false
+
+export function attachTo(p: Policy, appId: string, apps: App[]): Policy {
+  if (!apps.some((a) => a.id === appId)) {
+    throw new Error(`attachTo: no application with id ${appId}`)
+  }
+  /* Idempotent, and it has to be: `attachKind` reports `already-here` but the
+     picker is not the only caller, and a list that can hold the same
+     application twice would draw it twice, count it twice, and let one removal
+     leave the other behind. */
+  if (p.appIds.includes(appId)) return p
+  return { ...p, appIds: [...p.appIds, appId] }
+  /* `status`, `lastModified` and `modifiedBy` are deliberately untouched. The
+     store stamps the timestamp on save — two writers of one field is two
+     sources of truth — and a policy that became ACTIVE because somebody
+     attached it would be a silent enforcement change nobody asked for.
+
+     In particular attaching does NOT promote a draft. Giving a policy its
+     application is one of the things a draft was missing, not proof that it is
+     finished, and publishing something because a form was filled in is exactly
+     the silent enforcement change the paragraph above refuses. */
+}
+
+/* Taking ONE application off a policy.
+
+   It used to take the only one, so it always emptied the policy and always
+   demoted it to a draft. With a list that is the exception rather than the
+   rule: a policy on GitHub and AWS, removed from GitHub, is still a live policy
+   protecting AWS, and demoting it would switch off enforcement on an
+   application nobody touched. So `appId` is a parameter now — this removes the
+   one it is given — and the demotion is conditional on the list emptying.
+
+   When it does empty, the demotion still fires, for the original reason: a
+   policy with no application is missing something it needs before it can be
+   published, and the product has exactly one word for that. It is not left
+   ACTIVE with a warning hung off it; that is a state this product does not
+   have.
+
+   It is also the only demotion here. `attachTo` does not promote in return: an
+   assigned draft is a draft that now has an application. */
+export function detachFrom(p: Policy, appId: string): Policy {
+  if (p.isSystem) throw new Error('detachFrom: the tenant default has no application to remove')
+  const appIds = p.appIds.filter((id) => id !== appId)
+  return appIds.length === 0 ? { ...p, appIds, status: 'draft' } : { ...p, appIds }
+}
+
+
+export interface AppSummary {
+  own: number
+  decides: number
+  /** What the cell says: "3 policies", "Default only". */
+  label: string
+  /** The qualification, when there is one: "1 not deciding", "Draft", "Inactive". */
+  tag: string | null
+  tone: 'on' | 'part' | 'off'
+  title?: string
+}
+
+/* The one word for a lone policy that decides nothing: its status word, the
+   one the policies list shows, or "Never decides" for a policy that is on and
+   shadowed, or is not an app access policy at all. "Off" is not a status, and
+   a draft was never on. */
+const OFF_WORD: Record<Exclude<StandRow['state'], 'decides'>, string> = {
+  draft: 'Draft',
+  inactive: 'Inactive',
+  monitor: 'Monitoring',
+  never: 'Never decides',
+  'not-app-access': 'Never decides',
+}
+
+/* Why that lone row decides nothing, for the cell's title. */
+function offWhy(row: StandRow): string | undefined {
+  if (row.state === 'not-app-access') return 'Not an app access policy.'
+  if (row.state === 'never') {
+    const winners = [...new Set(row.lostTo.map((l) => l.to.name))]
+    return winners.length > 0 ? `${listNames(winners, 2)} decides instead.` : undefined
+  }
+  return whyNotDeciding(row.policy) ?? undefined
+}
+
+/* The list cell — what protects this app, without opening anything.
+
+   A count alone would be the wrong reading. Three policies of which one is
+   switched off is not "3 policies" in any sense an administrator cares about,
+   and a row that says 3 while two decide is the list quietly overstating its
+   own coverage. So the count and the shortfall are two separate strings, and
+   the tone carries whether anything is outstanding — which is the same
+   argument the authentication-methods summary makes for its own collapsed
+   rows.
+
+   Read from `appStanding`, so "deciding" is the engine's answer: a live
+   policy shadowed for everyone it names counts as not deciding, and a live
+   policy with no rules decides, by its last row. `users` lets a policy bound
+   to named people be asked about them; without it those people are not
+   asked. */
+export function summarise(appId: string, policies: readonly Policy[], users: readonly User[] = []): AppSummary {
+  const { rows } = appStanding(appId, policies, users)
+  const own = rows.map((r) => r.policy)
+  const decides = rows.filter((r) => r.n !== null)
+
+  if (own.length === 0) {
+    return {
+      own: 0,
+      decides: 0,
+      /* Not "Not protected": the tenant default still decides these sign-ins. */
+      label: 'Default only',
+      tag: null,
+      tone: 'off',
+      title: 'No policy of its own. Sign-ins use the default policy.',
+    }
+  }
+
+  const label = `${own.length} polic${own.length === 1 ? 'y' : 'ies'}`
+  /* Every row without a number, the shadowed ones too. */
+  const behind = own.length - decides.length
+
+  if (decides.length === 0) {
+    /* Several, none deciding: words, not "2 not deciding" beside "2
+       policies" — a number says itself once. */
+    const only = rows[0]
+    const word = only.state === 'decides' ? null : OFF_WORD[only.state]
+    return {
+      own: own.length,
+      decides: 0,
+      label,
+      tag: own.length === 1 ? word : 'None deciding',
+      tone: 'off',
+      title: own.length === 1 ? offWhy(only) : 'None of these policies decides sign-ins.',
+    }
+  }
+
+  return {
+    own: own.length,
+    decides: decides.length,
+    label,
+    tag: behind > 0 ? `${behind} not deciding` : null,
+    tone: behind > 0 ? 'part' : 'on',
+  }
+}

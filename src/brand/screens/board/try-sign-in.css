@@ -1,0 +1,110 @@
+/* -----------------------------------------------------------------------------
+   Try a sign-in on the board: test mode's layout on the canvas, and the one
+   gate left on the chain (Policy testing V4, §2).
+
+   Layout first. The right-hand column is test mode's again (§2.4-bis): the
+   test panel (test-panel.css) holds the sentence, the verdict and the tests,
+   in the inspector's own track, so `.bb.is-testing` sets no columns of its
+   own — the board's ordinary two tracks, the grip between them. A rule
+   clicked on the chain puts its editor in the panel's place. The canvas keeps
+   the trace (trace.css) and the zoom and undo dock at its bottom centre.
+
+   Colour, from the owner's rules. Blue (`--accent`) for what is active and
+   nothing else: the stage the marker stands on, the marker, the lit spine,
+   the pressed Try a sign-in button. The decision badges carry the only green,
+   amber and red. "Can't tell" and "Depends" are `--text-tertiary`.
+
+   Motion owns the marker and every card: nothing below gives them, or any
+   element motion animates, a transform or a transition.
+   -------------------------------------------------------------------------- */
+
+/* --- The board in test mode ------------------------------------------------- */
+
+.bb.is-testing { --bb-card: 440px; }
+
+/* The world's side padding goes, so the fit measures the card column and the
+   canvas's margin alone. */
+.bb.is-testing .bb__world { padding-left: 0; padding-right: 0; }
+/* A route is read top to bottom in one look where it can be: at a laptop's
+   900 px a two-rule policy, its gates and its outcome fit above the view
+   dock. The connectors are shorter than the editing chain's, which leaves
+   room for the `+` it no longer draws, and the last row keeps its name alone. */
+.bb.is-testing .bb__link.is-bare { height: 28px; }
+.bb.is-testing .bb__card.is-terminal .bb__title em { display: none; }
+/* The cards stay folded while a route is read, so the fold has nothing to do,
+   and a folded card's summary line repeats the outcome pill beside its name. */
+.bb.is-testing .bb__fold__btn { display: none; }
+.bb.is-testing .bb__fold--sum { display: none; }
+/* The start node heads the column the marker runs down, and is no wider than
+   it: the pill's sentence ellipsises rather than widening the world the fit
+   measures. */
+.bb.is-testing .bb__stage .bb__start { align-self: flex-start; position: relative; max-width: var(--bb-card); }
+.bb.is-testing .bb__start > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The outcome pill and the grey word on a card's head, pushed to its right. */
+.bb__tout { display: inline-flex; align-items: center; gap: var(--space-3); flex: none; margin-left: auto; padding-left: var(--space-3); }
+/* The last row's padlock says what cannot be done to it — edits, not reads. */
+.bb.is-testing .bb__card.is-terminal .bb__lockmark { display: none; }
+/* The card a row in the test panel lands on, while the pointer is on the
+   row: the accent, quieter than the matched card's ring. */
+.bb.is-testing .bb__card.is-traced { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft), var(--el-low); }
+
+/* What they see, in the outcome node's popover: the panel's own padding. */
+.bb__tsee { padding: var(--space-5); }
+/* A connector and nothing on it. */
+.bb__link.is-bare { pointer-events: none; }
+
+/* The stage the marker stands on: the blue edge, the active state. */
+.bb__card.is-marked { border-color: var(--accent); }
+/* The marker on a card sits on its head row, not the middle of its pills. */
+.bb__card > .tmarker--dot { top: calc(var(--space-4) + 13px); }
+
+/* "This policy decides", on the spine: the marker stands beside it. */
+.bb__tdecides { position: relative; align-self: center; display: flex; }
+
+/* The pressed bar button: the one blue button on the bar while test mode is on. */
+.bbtop__try .bx-btn[aria-pressed='true'] {
+  background: var(--accent-soft);
+  border-color: var(--accent-soft-border);
+  color: var(--accent-strong);
+}
+.bbtop__try { display: inline-flex; }
+
+/* --- Which policy, when another one decides ------------------------------------ */
+
+.bb__gate {
+  position: relative;
+  display: flex; flex-direction: column;
+  min-height: 40px;
+  border: var(--bw-thin) solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--el-low);
+}
+.bb__gate.is-marked { border-color: var(--accent); }
+/* The marker on a gate sits on its head row — half the row's 38 px — so an
+   open Which policy list does not carry it down into the list. */
+.bb__gate > .tmarker--dot { top: 19px; }
+.bb__gate__in { min-width: 0; }
+.bb__gate__row {
+  display: grid; grid-template-columns: 88px minmax(0, 1fr) auto; align-items: center; column-gap: var(--space-4);
+  width: 100%; min-height: 38px; padding: 0 var(--space-5);
+  border: 0; background: none; text-align: left; font: inherit; color: inherit;
+}
+.bb__gate__row.is-button { grid-template-columns: 88px minmax(0, 1fr) auto 14px; cursor: pointer; border-radius: var(--radius-md); }
+/* "Decided by {policy}" and its reason pill, in place of label · value · word. */
+.bb__gate__row.has-content,
+.bb__gate__row.is-button.has-content { grid-template-columns: minmax(0, 1fr) 14px; padding-top: var(--space-3); padding-bottom: var(--space-3); }
+.bb__gate__row:not(.is-button).has-content { grid-template-columns: minmax(0, 1fr); }
+.bb__gate__content { display: flex; min-width: 0; }
+.bb__gate__row.is-button:focus-visible { outline: none; box-shadow: 0 0 0 4px var(--focus-halo); }
+.bb__gate__chev { color: var(--text-tertiary); rotate: -90deg; }
+.bb__gate__row[aria-expanded='true'] .bb__gate__chev { rotate: 0deg; }
+.bb__gate__label { font-size: var(--fs-xs); color: var(--text-secondary); }
+.bb__gate__value {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--text-primary);
+}
+.bb__gate__word { font-size: var(--fs-xs); color: var(--text-secondary); white-space: nowrap; }
+.bb__gate__word.is-unknown { color: var(--text-tertiary); }
+.bb__gate__body { padding: 0 var(--space-3) var(--space-3); border-top: var(--bw-thin) solid var(--border-subtle); }

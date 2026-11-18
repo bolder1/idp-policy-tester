@@ -1,0 +1,2317 @@
+/* ---------------------------------------------------------------------------
+   Brand kit styles.
+
+   Every value here resolves to a token from tokens.css (generated from the
+   design-system repo, brand #EB5424 locked). No raw colour values — that is
+   rule 1 of COMPONENTS.md and it is enforced by reading, so it is worth
+   keeping literally true.
+   --------------------------------------------------------------------------- */
+
+/* The token file is generated and carries no reset, so the document surface is
+   established here. color-scheme keeps native controls and scrollbars in step
+   with the chosen theme. */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+/* The type stack lives on body, not only on .brand-root.
+   Anything portalled to document.body — the rules popover in the policy table
+   is one — sits outside .brand-root and so inherited the UA default. It was
+   rendering in Times New Roman, which is invisible in a screenshot review
+   because nobody expects to check the font of a tooltip. */
+body {
+  font-family: var(--font-ui);
+  font-size: var(--fs-md);
+  color: var(--text-body);
+}
+html {
+  background: var(--surface-page);
+  color-scheme: light;
+}
+html[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+.brand-root {
+  height: 100%;
+  font-family: var(--font-ui);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  color: var(--text-body);
+  background: var(--surface-page);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-variant-numeric: tabular-nums;
+}
+
+.brand-root *,
+.brand-root *::before,
+.brand-root *::after {
+  box-sizing: border-box;
+}
+
+/* :where() for the same reason as the resets below. Written as
+   `.brand-root h2` this is (0,1,1) and beats every single-class component rule,
+   so a heading that asked for its own margin silently got 0 — which is what was
+   collapsing the gallery's section spacing. Zero specificity still overrides
+   the UA default, because author styles always outrank it. */
+.brand-root :where(h1, h2, h3, h4) {
+  margin: 0;
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.014em;
+  color: var(--text-primary);
+}
+
+.brand-root :where(p) { margin: 0; }
+
+/* :where() so these resets carry zero specificity of their own. Written as
+   `.brand-root button` they beat every single-class component rule — which is
+   how the dark nav's sub-items ended up rendering in ink on a near-black
+   surface. */
+.brand-root :where(button) {
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+}
+
+.brand-root :where(input, select, textarea) { font: inherit; color: inherit; }
+
+.brand-root a { color: var(--text-link); text-decoration: none; }
+
+/* Focus is never suppressed. A hairline that traces the control, and a soft
+   halo that finds it from across the page — see the note on `--focus-ring` in
+   console-theme.css for why it stopped being 2px of near-black. */
+.brand-root :focus-visible:not(:where([role='dialog'][tabindex='-1'], [role='alertdialog'][tabindex='-1'])) {
+  outline: var(--bw-thin) solid var(--focus-ring);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--focus-halo);
+  border-radius: var(--radius-sm);
+}
+/* A dialog or drawer takes focus itself only so focus has somewhere to land on open (dialog-chrome.ts), as a heading
+   does below. It is not a control, so it draws no ring: on the hero confirm the ring read as a blue border round the
+   whole card. Excluded above through `:where`, so the rule's weight is unchanged and the panel keeps its own shadow
+   and corners; the browser's own ring is taken off here. The controls inside keep theirs. */
+.brand-root :where([role='dialog'], [role='alertdialog'])[tabindex='-1']:focus-visible { outline: none; }
+
+/* Sentence case, 12px or more. The uppercase, letter-spaced micro-label is gone
+   from the console (owner, 14 Sep 2026). */
+.brand-root .u-label {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-tertiary);
+}
+
+/* A heading that takes focus only so focus has somewhere to land (after a save
+   bar leaves, say). It is not a control, so it draws no control ring. */
+.brand-root :where(h1, h2, h3)[tabindex='-1']:focus,
+.brand-root :where(h1, h2, h3)[tabindex='-1']:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.brand-root .u-mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+
+.brand-root .u-muted { color: var(--text-tertiary); }
+
+/* Screen-reader-only. Two names for one thing, because both are in use across
+   screens that were written years apart; they are defined together so they
+   cannot drift.
+
+   They belong here rather than in whichever builder stylesheet happened to need
+   them first — an accident that stopped being harmless the moment those
+   stylesheets were split into their own chunks. `.u-sr` was defined in v1's and
+   used by the Zones screen, which is not v1: splitting would have rendered its
+   severity prefixes as visible text. */
+.u-sr,
+.u-sr-only {
+  /* Pinned to 0,0, and that is not cosmetic.
+
+     Absolute with no coordinates leaves the box at its STATIC position while
+     its containing block is the nearest positioned ancestor — and where there
+     is none, that is the initial containing block. The scroller it appears to
+     live in then does not clip it, so the document grows to reach it. Four of
+     these in the authentication list put one at y=1185 and gave the whole app a
+     second scrollbar and 392px of white below it: the page was 794 tall and the
+     document 1186.
+
+     Reading order comes from the DOM, not from coordinates, so a screen reader
+     is unaffected by where the 1px box sits. Pinning it means the utility is
+     safe wherever it is used rather than only where its host happens to be
+     positioned — and it is used inside the builders, user-config and the method
+     forms, all of which scroll. */
+  position: absolute; top: 0; left: 0;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* --- Button ---------------------------------------------------------------
+   Four roles = the four interactive/* semantic roles. Destructive triggers use
+   `neutral`; `danger` appears only as the confirming control inside a
+   destructive dialog. */
+
+.bx-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  height: var(--ctl-height-md);
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-md);
+  border: var(--bw-thin) solid transparent;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  transition:
+    background var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+.bx-btn--sm { height: var(--ctl-height-sm); padding: 0 var(--space-4); font-size: var(--fs-xs); }
+.bx-btn.is-block { width: 100%; }
+/* `aria-disabled` paints the same as `disabled`: a button that is not pressable
+   yet must not look pressable, whichever of the two says so. */
+.bx-btn:disabled,
+.bx-btn[aria-disabled='true'] { opacity: var(--disabled-opacity); cursor: not-allowed; }
+
+.bx-btn--brand { background: var(--int-brand-bg); color: var(--int-brand-text); border-color: var(--int-brand-bg); }
+.bx-btn--brand:not(:disabled):hover { background: var(--int-brand-bg-hover); border-color: var(--int-brand-bg-hover); }
+.bx-btn--brand:not(:disabled):active { background: var(--int-brand-bg-active); border-color: var(--int-brand-bg-active); }
+
+.bx-btn--neutral { background: var(--int-neutral-bg); color: var(--int-neutral-text); border-color: var(--int-neutral-border); }
+.bx-btn--neutral:not(:disabled):hover { background: var(--int-neutral-bg-hover); border-color: var(--int-neutral-border-hover); }
+.bx-btn--neutral:not(:disabled):active { background: var(--int-neutral-bg-active); }
+
+.bx-btn--ghost { background: transparent; color: var(--int-ghost-text); }
+.bx-btn--ghost:not(:disabled):hover { background: var(--int-ghost-bg-hover); }
+.bx-btn--ghost:not(:disabled):active { background: var(--int-ghost-bg-active); }
+
+/* Text only, in the link colour: no fill and no edge, so it sits in a row of
+   switches without reading as a second primary. The padding stays so the press
+   target is a button's, and the hover is the underline a link gives. */
+.bx-btn--link { background: transparent; color: var(--text-link); border-color: transparent; padding-inline: var(--space-3); }
+.bx-btn--link:not(:disabled):hover { text-decoration: underline; text-underline-offset: 3px; }
+.bx-btn--link.bx-btn--sm { font-size: var(--fs-sm); }
+
+/* Destructive actions are an outline, not a fill: the red edge and red words say
+   what the button does without it becoming the loudest thing in the footer. The
+   owner asked for this for every delete and discard (14 Sep 2026). */
+.bx-btn--danger { background: transparent; color: var(--fb-negative-fg); border-color: var(--int-danger-bg); }
+.bx-btn--danger:not(:disabled):not([aria-disabled='true']):hover { background: var(--fb-negative-bg); color: var(--fb-negative-fg); border-color: var(--int-danger-bg-hover); }
+.bx-btn--danger:not(:disabled):not([aria-disabled='true']):active { background: var(--fb-negative-bg); border-color: var(--int-danger-bg-hover); }
+.bx-btn--danger:focus-visible { outline-color: var(--focus-ring-danger); }
+/* Disabled, there is nothing to destroy, so it drops the red and reads as any
+   other disabled outline (a faded red edge still said "danger" on a clean load). */
+.bx-btn--danger:disabled,
+.bx-btn--danger[aria-disabled='true'] { color: var(--int-neutral-text); border-color: var(--int-neutral-border); }
+
+/* --- Icon button -----------------------------------------------------------
+   Square, icon only, and never without a label — the label is both the
+   accessible name and the tooltip, so an icon that cannot be guessed still
+   names itself on hover and on focus. */
+
+.bx-iconbtn {
+  display: inline-grid; place-items: center; flex: none;
+  width: var(--ctl-height-md); height: var(--ctl-height-md);
+  border-radius: var(--radius-md);
+  border: var(--bw-thin) solid transparent;
+  color: var(--text-secondary);
+  transition: background var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard);
+}
+.bx-iconbtn--sm { width: var(--ctl-height-sm); height: var(--ctl-height-sm); border-radius: var(--radius-sm); }
+.bx-iconbtn--neutral { border-color: var(--int-neutral-border); background: var(--int-neutral-bg); }
+.bx-iconbtn--neutral:not(:disabled):hover { background: var(--int-neutral-bg-hover); border-color: var(--int-neutral-border-hover); color: var(--text-primary); }
+.bx-iconbtn--ghost:not(:disabled):hover { background: var(--int-ghost-bg-hover); color: var(--text-primary); }
+/* A press answers at once, one step darker than the hover: what the button opens can take a frame, and until then
+   nothing said it had been pressed. Colour only, no movement. A pressed toggle (`is-on`) keeps its own fill. */
+.bx-iconbtn--ghost:not(:disabled):not(.is-on):active { background: var(--int-ghost-bg-active); }
+.bx-iconbtn--neutral:not(:disabled):not(.is-on):active { background: var(--int-neutral-bg-active); }
+/* Quiet until reached for, then unmistakable. A destructive icon button that
+   is red at rest turns every list into an alarm; one that is never red is a
+   delete you press by accident. So it rests in the row's grey and goes red
+   under the pointer or keyboard focus (destructive triggers are neutral). */
+.bx-iconbtn--danger { color: var(--text-secondary); }
+.bx-iconbtn--danger:not(:disabled):is(:hover, :focus-visible) { background: var(--fb-negative-bg); border-color: var(--fb-negative-border); color: var(--fb-negative-fg); }
+.bx-iconbtn.is-on { background: var(--surface-inverse); border-color: var(--surface-inverse); color: var(--text-inverse); }
+.bx-iconbtn:disabled { opacity: var(--disabled-opacity); cursor: not-allowed; }
+
+/* --- Menu button -------------------------------------------------------------
+   One trigger carrying a group of related actions. The toolbar it replaced had
+   eleven flat controls; grouping costs a click and returns the bar to the two
+   decisions that matter. */
+
+/* A kebab trigger: square, no text, no chevron. */
+/* The selector is doubled so these outweigh rebrand.css's own
+   `[data-brand] .bx-btn { padding: 0 16px }`, which matches at the same weight and loads after
+   this file. Unweighted, the 16px sides came back inside a square button, leaving 6.4px of
+   content box for a 14px mark — and a mark is a flex item, so it was squeezed to that width
+   at full height. Measured 22 Oct 2026: every icon-only trigger in the rebrand drew its mark
+   6.4 x 14. On the old horizontal ellipsis that is what read as a DASH rather than a kebab,
+   which is what the owner saw in the app Policies head. The button keeps its own size; only
+   its mark stops being crushed. */
+.bx-btn.bx-menu__trigger--icon.bx-menu__trigger--icon { width: var(--ctl-height-sm); padding: 0; }
+.bx-btn.bx-menu__trigger--icon > svg { flex: none; }
+.bx-btn.bx-menu__trigger--icon.bx-btn--md { width: var(--ctl-height-md); }
+
+/* A trigger drawn as the thing the menu is about — a status pill — with its chevron INSIDE it.
+
+   It was a ghost button holding a tinted pill, with the chevron parked outside: at rest that is a badge with a
+   stray caret beside it, and the owner read it as exactly that (22 Oct 2026: "this doesn't feel like
+   clickable … the user can easily understand that it's just not a tag only"). So the BUTTON is the pill now —
+   the tint, the edge and the radius move onto it, the word's own span gives up its chrome, and the caret sits
+   within the shape. A caret inside a chip is a dropdown; a caret beside one is furniture.
+
+   The tones are custom properties rather than five sets of declarations, so the one rule that paints them can
+   outweigh both looks’ is-open repaint (the console’s neutral tint, the rebrand’s blue pill) without being
+   written out five times over.
+
+   Through `.bx-menu >`, so a look’s own small-button sides (rebrand.css `.bx-btn--sm`) do not box the pill. */
+.bx-menu > .bx-btn.bx-menu__trigger--face {
+  --face-bg: transparent;
+  --face-fg: var(--text-secondary);
+  --face-edge: var(--border-default);
+  gap: var(--space-2);
+  height: auto;
+  padding: var(--pill-py) var(--space-3) var(--pill-py) var(--pill-px);
+  border-radius: var(--pill-radius);
+  font-size: var(--pill-fs);
+  font-weight: var(--pill-fw);
+  line-height: var(--pill-line);
+}
+.bx-menu > .bx-btn.bx-menu__trigger--face:has(.bx-status--active),
+.bx-menu > .bx-btn.bx-menu__trigger--face:has(.bx-status--always) { --face-bg: var(--fb-positive-bg); --face-fg: var(--fb-positive-fg); --face-edge: var(--fb-positive-border); }
+.bx-menu > .bx-btn.bx-menu__trigger--face:has(.bx-status--monitor) { --face-bg: var(--fb-info-bg); --face-fg: var(--fb-info-fg); --face-edge: var(--fb-info-border); }
+.bx-menu > .bx-btn.bx-menu__trigger--face:has(.bx-status--inactive) { --face-bg: var(--surface-inset); --face-fg: var(--text-tertiary); --face-edge: var(--border-subtle); }
+.bx-menu > .bx-btn.bx-menu__trigger--face:has(.bx-status--draft) { --face-fg: var(--text-tertiary); --face-edge: var(--border-default); }
+/* The tone rules above carry the same three classes plus :has(), so they outweigh this block's own defaults —
+   written the other way round, the defaults won and every status came out grey.
+
+   Both states in one selector, so an open trigger is not repainted neutral by the kit or blue by the rebrand. */
+.bx-menu > .bx-btn.bx-menu__trigger--face,
+.bx-menu > .bx-btn.bx-menu__trigger--face.is-open {
+  background: var(--face-bg); color: var(--face-fg); border: var(--bw-thin) solid var(--face-edge);
+}
+/* Pressable: the edge firms up, the chip lifts, and the caret turns over while the menu is down. */
+.bx-menu > .bx-btn.bx-menu__trigger--face:hover,
+.bx-menu > .bx-btn.bx-menu__trigger--face.is-open { border-color: var(--border-strong); box-shadow: var(--el-low); }
+.bx-menu > .bx-btn.bx-menu__trigger--face > svg { transition: transform var(--dur-fast) var(--ease-standard); }
+.bx-menu > .bx-btn.bx-menu__trigger--face.is-open > svg { transform: rotate(180deg); }
+/* The word only; the button wears everything else. */
+.bx-menu__trigger--face .bx-status { padding: 0; border: 0; background: none; color: inherit; border-radius: 0; }
+.bx-menu__face { display: inline-flex; }
+
+.bx-menu { position: relative; display: inline-flex; }
+.bx-menu__trigger.is-open { background: var(--int-neutral-bg-active); }
+.bx-menu__pop {
+  position: absolute; top: calc(100% + 6px); z-index: var(--z-popover);
+  min-width: 232px; padding: var(--space-3);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-default); border-radius: var(--radius-lg);
+  box-shadow: var(--el-high);
+}
+.bx-menu__pop.is-end { right: 0; }
+.bx-menu__pop.is-start { left: 0; }
+.bx-menu__item {
+  display: flex; align-items: flex-start; gap: var(--space-4);
+  width: 100%; padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md); text-align: left; cursor: pointer;
+  color: var(--text-muted);
+}
+.bx-menu__item.is-divided { margin-top: var(--space-3); border-top: 1px solid var(--border-subtle); padding-top: var(--space-4); }
+.bx-menu__item svg { margin-top: 2px; flex: none; }
+.bx-menu__item > span { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.bx-menu__item strong { font-size: var(--fs-md); font-weight: var(--fw-medium); color: var(--text-primary); }
+.bx-menu__item em { font-style: normal; font-size: var(--fs-xs); color: var(--text-tertiary); }
+.bx-menu__item kbd {
+  flex: none; margin-top: 1px; padding: 1px 5px;
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-xs);
+  background: var(--surface-sunken);
+  font-family: inherit; font-size: var(--fs-xs); color: var(--text-muted);
+}
+/* Focus is the highlight. Hover moves focus in MenuButton and RowMenu, so the
+   pointer and the arrow keys light the same row and never two. */
+.bx-menu__item:focus,
+.bx-menu__item:focus-visible { outline: none; box-shadow: none; }
+.bx-menu__item:focus:not(:disabled),
+.bx-menu__item:hover:not(:disabled) { background: var(--surface-sunken); }
+.bx-menu__item.is-danger:focus strong,
+.bx-menu__item.is-danger:hover strong { color: var(--fb-negative-fg); }
+.bx-menu__item:disabled { opacity: var(--disabled-opacity); cursor: not-allowed; }
+/* A pill after the label (MenuItem `pill`): the row's own reason, at the end of the line. It is a span, so the
+   `> span` rule above would stretch it into a column; this one outweighs that and keeps it a pill. */
+.bx-menu__item > .bx-menu__pill { flex: none; flex-direction: row; align-self: center; }
+/* The split's menu is sized by what its rows say: a row stays on one line and widens the menu, instead of breaking at
+   the 232px floor. */
+.bx-split .bx-menu__item strong { white-space: nowrap; }
+/* A disabled row fades its icon and words, not its pill: "On hold" is what the row has to say. */
+.bx-menu__item.has-pill:disabled { opacity: 1; }
+.bx-menu__item.has-pill:disabled > svg,
+.bx-menu__item.has-pill:disabled > span:not(.bx-menu__pill) { opacity: var(--disabled-opacity); }
+
+/* --- Split button ---------------------------------------------------------------
+   An action and its chevron drawn as ONE object (SplitButton), the way every design
+   system that ships one draws it: a single filled pill, the label, a thin rule, and a
+   narrow chevron under the same outer radius. The RULE is the signifier — it is what
+   says "two zones, one control" and what tells the thing apart from a select — so it
+   is the one part that has to read.
+
+   The first go here drew two boxes: a full control-height chevron (as wide as a
+   standalone kebab), a divider made of a darker-orange border under a hairline
+   overlap, and a hover that repainted one half. The owner read it as an empty orange
+   box parked against the button, which is exactly what it was.
+
+   So: the chevron is an APPENDAGE, 28px against the action's full height, with the
+   glyph at the size the status pill's own chevron wears in the same head; the rule is
+   the button's own text colour thinned, which is light on a filled button and ink on
+   an outlined one; and hover and press belong to the CONTROL — the whole pill takes
+   the state, and the half under the pointer says which zone will answer. */
+.bx-split {
+  display: inline-flex;
+  --bx-split-chev: 28px;
+  --bx-split-chev-sm: 24px;
+  /* Thinned from the button's own text colour: white on a fill, ink on an outline. */
+  --bx-split-rule: color-mix(in srgb, currentColor 34%, transparent);
+  /* The hovered zone, said as a wash OVER the state's fill rather than a colour of its
+     own, so the control never looks like half of it changed. */
+  --bx-split-zone: color-mix(in srgb, currentColor 13%, transparent);
+}
+/* Positioned so the rule can hang on the chevron's leading edge, and so a focus ring is
+   never clipped by the half beside it. */
+.bx-split > .bx-btn,
+.bx-split > .bx-menu > .bx-btn { position: relative; }
+
+/* One outer radius, square inner edges. `:not(.bx-menu__trigger)` names the action half
+   AND outweighs rebrand.css's own `[data-brand] .bx-btn` border-radius, which matches at
+   the same weight and loads later — the trap the face trigger above dodges through
+   `.bx-menu >`. Without it only the chevron squared, and the rule sat inside a fully
+   rounded button. */
+.bx-split > .bx-btn:not(.bx-menu__trigger) { border-start-end-radius: 0; border-end-end-radius: 0; }
+.bx-split > .bx-menu > .bx-btn.bx-menu__trigger--icon {
+  width: var(--bx-split-chev-sm);
+  /* Said again here because rebrand.css's `[data-brand] .bx-btn` padding matches the kit's
+     own icon-trigger rule at the same weight and loads after it, which puts the 16px sides
+     back; the glyph is a flex item, so it was squeezed to nothing and the zone widened to
+     its min-content instead of taking the width above. */
+  padding: 0;
+  /* The halves overlap by their own border width, so the seam is one line and not two. */
+  margin-inline-start: calc(-1 * var(--bw-thin));
+  border-start-start-radius: 0; border-end-start-radius: 0;
+}
+.bx-split > .bx-menu > .bx-btn.bx-menu__trigger--icon.bx-btn--md { width: var(--bx-split-chev); }
+/* The chevron at the status pill's own size (MenuButton's face variant: 13 / 12), not the
+   14px a standalone kebab takes — in a 28px zone that one reads as a glyph, not a box. */
+.bx-split > .bx-menu > .bx-btn.bx-menu__trigger--icon > svg { flex: none; width: 13px; height: 13px; }
+.bx-split > .bx-menu > .bx-btn.bx-menu__trigger--icon.bx-btn--sm > svg { width: 12px; height: 12px; }
+
+/* The rule itself: a pseudo-element, not a border, so no variant's `border-color` on
+   hover or press can take it away. Short of the full height, as the references draw it. */
+.bx-split > .bx-menu > .bx-btn.bx-menu__trigger--icon::before {
+  content: ''; position: absolute; inset-block: 22%; inset-inline-start: 0;
+  width: var(--bw-thin); border-radius: var(--bw-thin);
+  background: var(--bx-split-rule);
+}
+/* An outlined half already has an edge of its own; ink at a third of strength on white is
+   a smudge, so the neutral variant's rule is the border colour the rest of the kit uses. */
+.bx-split > .bx-menu > .bx-btn--neutral.bx-menu__trigger--icon::before { background: var(--int-neutral-border); }
+
+/* Hover and press are the CONTROL's: both halves take the state's fill together. */
+.bx-split:hover > .bx-btn--brand,
+.bx-split:hover > .bx-menu > .bx-btn--brand { background: var(--int-brand-bg-hover); border-color: var(--int-brand-bg-hover); }
+.bx-split:active > .bx-btn--brand,
+.bx-split:active > .bx-menu > .bx-btn--brand { background: var(--int-brand-bg-active); border-color: var(--int-brand-bg-active); }
+.bx-split:hover > .bx-btn--neutral,
+.bx-split:hover > .bx-menu > .bx-btn--neutral { background: var(--int-neutral-bg-hover); border-color: var(--int-neutral-border-hover); }
+.bx-split:active > .bx-btn--neutral,
+.bx-split:active > .bx-menu > .bx-btn--neutral { background: var(--int-neutral-bg-active); }
+/* Then the zone under the pointer, as a wash over whatever fill the control is wearing —
+   a layer, so it cannot fight the rules above over one `background` property. */
+.bx-split > .bx-btn:not(:disabled):hover,
+.bx-split > .bx-menu > .bx-btn:not(:disabled):hover,
+.bx-split > .bx-menu > .bx-btn.is-open {
+  background-image: linear-gradient(var(--bx-split-zone), var(--bx-split-zone));
+}
+/* Open, the chevron keeps the control's own colours. Both looks repaint an open trigger as
+   a standalone control — the console's a neutral tint, the rebrand's a blue pill with blue
+   text — which on a filled split is a grey or blue patch bitten out of the button. The text
+   colour matters twice over here: the glyph went blue on orange, and `currentColor` is what
+   the rule and the zone wash are mixed from, so they went blue with it. */
+.bx-split > .bx-menu > .bx-btn.bx-menu__trigger.is-open { background-color: var(--int-brand-bg-hover); }
+.bx-split > .bx-menu > .bx-btn--brand.bx-menu__trigger.is-open { color: var(--int-brand-text); }
+.bx-split > .bx-menu > .bx-btn--neutral.bx-menu__trigger.is-open { background-color: var(--int-neutral-bg-active); color: var(--int-neutral-text); }
+/* A focus ring stays on the half that HAS focus — the two run different actions, and one
+   ring around both would not say which Enter presses — and is raised so neither clips it. */
+.bx-split > .bx-btn:hover,
+.bx-split > .bx-btn:focus-visible,
+.bx-split > .bx-menu > .bx-btn:hover,
+.bx-split > .bx-menu > .bx-btn:focus-visible,
+.bx-split > .bx-menu > .bx-btn.is-open { z-index: 1; }
+
+/* --- Row menu ------------------------------------------------------------------
+   The kebab at the end of a row (RowMenu), and its menu, portalled to the app
+   root at fixed coordinates so no table scroller can clip it. */
+.bx-rowmenu {
+  display: inline-grid; place-items: center; flex: none;
+  width: var(--ctl-height-sm); height: var(--ctl-height-sm);
+  border: var(--bw-thin) solid transparent; border-radius: var(--radius-md);
+  background: none; color: var(--text-tertiary); cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard);
+}
+.bx-rowmenu--md { width: var(--ctl-height-md); height: var(--ctl-height-md); }
+.bx-rowmenu:not(:disabled):hover,
+.bx-rowmenu.is-open { background: var(--surface-inset); color: var(--text-primary); }
+/* The press, a step past the inset hover — the step button's press (`.bx-step__btn`). An open menu keeps its fill. */
+.bx-rowmenu:not(:disabled):not(.is-open):active { background: var(--border-subtle); }
+.bx-rowmenu:disabled { opacity: var(--disabled-opacity); cursor: not-allowed; }
+.bx-menu__pop.bx-rowmenu__pop {
+  position: fixed; right: auto;
+  z-index: var(--z-popover);
+  min-width: 200px; max-width: min(320px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px); overflow-y: auto;
+  text-align: left;
+}
+
+/* --- Tip -------------------------------------------------------------------
+   Where a demoted sentence goes. Hover, focus and touch all open it; Escape
+   closes it; aria-describedby carries it without a pointer. */
+
+.bx-tip { position: relative; display: inline-flex; align-items: center; }
+/* `fixed`, in a portal on document.body — see the note on Tip in kit.tsx. It
+   used to be absolute and centred on its trigger, which put it half off-screen
+   near an edge and let any `overflow: hidden` ancestor clip it away entirely.
+   Both coordinates now come from JS, measured against the viewport. */
+.bx-tip__pop {
+  position: fixed; top: 0; left: 0;
+  /* A width, not a fixed size: 262 is the intent, but on a narrow phone the
+     viewport wins — a tooltip wider than the screen cannot be clamped into it. */
+  width: 262px; max-width: calc(100vw - 16px);
+  padding: var(--space-4) var(--space-5);
+  background: var(--surface-inverse); color: var(--text-inverse);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-xs); font-weight: var(--fw-regular); line-height: 1.5;
+  text-align: left; letter-spacing: 0; text-transform: none;
+  box-shadow: var(--el-high); z-index: var(--z-tooltip);
+  /* Never intercepts the pointer: a tooltip under the cursor that eats the
+     mouseleave is a tooltip that will not close. */
+  pointer-events: none;
+}
+.bx-tip__pop strong { color: inherit; font-weight: var(--fw-semibold); }
+
+/* An `Info` icon on its own (21 Sep 2026). It was a `?` on a bordered disc; the
+   icon draws its own circle, so the disc, its edge and the glyph's type
+   settings went. The 16px box stays, so nothing beside a mark moves. The
+   radius is kept for the focus ring, which is drawn around the box. */
+.bx-tipdot {
+  display: grid; place-items: center; flex: none;
+  width: 16px; height: 16px; padding: 0; border-radius: var(--radius-full);
+  border: 0; background: none;
+  color: var(--text-tertiary); cursor: help;
+}
+.bx-tipdot > svg { display: block; }
+.bx-tipdot:hover { color: var(--text-secondary); }
+
+/* --- A person's mark -----------------------------------------------------------
+
+   Two initials on a neutral disc (21 Sep 2026, first on the Display tokens
+   person picker, where it rides in `Picker`'s `art` slot — beside every row
+   and on the trigger once someone is chosen).
+
+   Neutral in BOTH looks, on purpose. The audience drawer's `.baud__avatar`
+   draws in `--accent`, which the rebrand turns blue; these are the tokens that
+   stay grey in either — and in the current look they are the very same
+   #eef1f4 and slate that one already shows, so the two read as one mark. */
+.bx-avatar {
+  display: grid; place-items: center; flex: none;
+  width: 26px; height: 26px; border-radius: var(--radius-full);
+  background: var(--surface-inset); color: var(--text-secondary);
+  font-size: 11px; font-weight: var(--fw-semibold); line-height: 1;
+  letter-spacing: 0.02em;
+}
+
+/* --- Faces (faces.tsx) ------------------------------------------------------
+   A person is a circle, a group a rounded square; initials on the inset grey.
+   The 2px ring in the surface colour is what lets a stack overlap and still
+   read as separate faces. */
+.bx-face {
+  display: inline-grid; place-items: center; flex: none;
+  background: var(--surface-inset); color: var(--text-secondary);
+  font-weight: var(--fw-semibold); line-height: 1; letter-spacing: 0.02em;
+  box-shadow: 0 0 0 2px var(--surface-raised);
+}
+.bx-face.is-sm { width: 22px; height: 22px; font-size: 9px; }
+.bx-face.is-md { width: 26px; height: 26px; font-size: 10px; }
+.bx-face.is-user { border-radius: var(--radius-full); }
+.bx-face.is-group { border-radius: 6px; }
+.bx-face.is-more {
+  width: auto; min-width: 22px; padding: 0 5px; border-radius: var(--radius-full);
+  background: var(--surface-raised); color: var(--text-tertiary);
+  box-shadow: 0 0 0 2px var(--surface-raised), inset 0 0 0 1px var(--border-default);
+  font-variant-numeric: tabular-nums;
+}
+.bx-faces { display: inline-flex; align-items: center; }
+.bx-faces > .bx-tip + .bx-tip { margin-left: -5px; }
+/* A group's mark is a square: stacked, its ring cut the letters of the one
+   before it (1 Oct 2026, "some icons are overlapping") — people's round
+   faces overlap, groups sit side by side, a hair apart. */
+.bx-faces > .bx-tip:has(.bx-face.is-group) + .bx-tip,
+.bx-faces > .bx-tip + .bx-tip:has(.bx-face.is-group) { margin-left: var(--space-1); }
+/* The same stack drawn for the eye beside the names (`FaceStack tips={false}`): its faces with no tip around each. */
+.bx-faces > .bx-face + .bx-face { margin-left: -5px; }
+.bx-faces > .bx-face.is-group + .bx-face,
+.bx-faces > .bx-face + .bx-face.is-group { margin-left: var(--space-1); }
+
+/* --- Search --------------------------------------------------------------- */
+
+/* The box is the label; the input inside it is bare.
+
+   The border, ground and focus ring belong to the wrapper so that the glyph
+   sits INSIDE the field rather than beside it — an icon outside the box reads
+   as a button next to a text field, which is what a magnifier used to mean.
+   The input then has to give all of that up, or the page draws a second border
+   a few pixels inside the first.
+
+   `:focus-within` and not `:focus-visible`, because the element that takes
+   focus is not the element that draws the ring. */
+.bx-search {
+  display: inline-flex; align-items: center; gap: var(--space-3);
+  width: 300px; max-width: 100%;
+  height: var(--ctl-height-md); padding: 0 11px;
+  background: var(--ctl-bg);
+  border: var(--bw-thin) solid var(--ctl-border); border-radius: var(--ctl-radius);
+  color: var(--text-muted);
+}
+.bx-search.is-block { width: 100%; }
+.bx-search:hover { border-color: var(--ctl-border-hover); }
+.bx-search:focus-within { border-color: var(--ctl-border-focus); box-shadow: 0 0 0 4px var(--focus-halo); }
+.bx-search svg { flex: none; }
+/* One class beats the `:where()` base in this file, which is zero-specificity
+   on purpose so that exactly this can happen. */
+.bx-search input {
+  flex: 1; min-width: 0; height: auto; padding: 0;
+  border: 0; background: none;
+  font: inherit; font-size: var(--fs-md); color: var(--text-primary);
+}
+.bx-search input:hover { background: none; }
+.bx-search input:focus-visible { outline: none; box-shadow: none; }
+.bx-search input::-webkit-search-cancel-button { cursor: pointer; }
+
+/* --- Badge ---------------------------------------------------------------- */
+
+/* One line, always, and a ceiling it cannot grow past.
+
+   A badge is a label, not a paragraph. "Account Management" wrapping to two
+   lines in a table cell makes that one row taller than every other row, and a
+   column of rows at two different heights reads as a fault long before it
+   reads as a long word. So the label is one line, clipped at the ceiling, and
+   the full text is on hover — set from measurement in `Badge`, so only the
+   clipped ones carry it.
+
+   The ceiling is a variable with its default in the `var()` fallback rather
+   than declared here, which is the difference between a knob and a constant: a
+   declaration on `.bx-badge` would beat anything an ancestor said, so the
+   fallback is where the default has to live. Any context with room to spare
+   raises it by setting `--badge-max` on itself, and every badge underneath
+   follows without knowing where it is.
+
+   `min()` keeps 100% as the real ceiling underneath that, so a badge in a
+   column narrower than the cap clips at the column rather than overflowing
+   it. */
+.bx-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pill-gap);
+  max-width: min(100%, var(--badge-max, 14ch));
+  padding: var(--pill-py) var(--pill-px);
+  border-radius: var(--pill-radius);
+  font-size: var(--pill-fs);
+  font-weight: var(--pill-fw);
+  line-height: var(--pill-line);
+  border: var(--bw-thin) solid transparent;
+}
+/* `min-width: 0` is the load-bearing one: a flex item defaults to `auto`, which
+   refuses to shrink below its own min-content, and a label that will not shrink
+   is a label that never ellipses. */
+.bx-badge__label {
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bx-badge--neutral { background: var(--fb-neutral-bg); color: var(--fb-neutral-fg); border-color: var(--fb-neutral-border); }
+.bx-badge--brand { background: var(--accent-soft); color: var(--accent-strong); border-color: var(--accent-soft-border); }
+.bx-badge--positive { background: var(--fb-positive-bg); color: var(--fb-positive-fg); border-color: var(--fb-positive-border); }
+.bx-badge--positive-strong { background: var(--fb-positive-strong-bg); color: var(--fb-positive-strong-fg); border-color: var(--fb-positive-strong-border); }
+.bx-badge--negative { background: var(--fb-negative-bg); color: var(--fb-negative-fg); border-color: var(--fb-negative-border); }
+.bx-badge--notice { background: var(--fb-notice-bg); color: var(--fb-notice-fg); border-color: var(--fb-notice-border); }
+.bx-badge--info { background: var(--fb-info-bg); color: var(--fb-info-fg); border-color: var(--fb-info-border); }
+/* Violet. For "New", "Beta", "Recommended" — labels that want attention but are
+   not a state and are not an action. They used to borrow brand orange, which
+   put them in direct competition with the primary button on the same screen. */
+.bx-badge--accent { background: var(--fb-accent-bg); color: var(--fb-accent-fg); border-color: var(--fb-accent-border); }
+.bx-badge--system { background: var(--surface-inset); color: var(--text-tertiary); border-color: var(--border-subtle); }
+
+/* A decision says its whole phrase. "Allow on 1 factor" is seventeen
+   characters and "Would allow with 2FA" twenty, and the 14ch cap above clips
+   exactly the part that tells the three apart (decision-badge.tsx). */
+.bx-decision-badge,
+.bx-would-badge { --badge-max: 24ch; }
+
+/* Can't tell: grey text, never a badge, so it cannot be read as a fourth
+   decision or as a pass. The decisions it could be sit beside it, or under it
+   in a narrow cell. `--text-tertiary` passes AA on white in both themes. */
+.bx-canttell {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--space-2);
+  color: var(--text-tertiary);
+}
+.bx-canttell__or::before { content: '·'; margin-right: var(--space-2); }
+.bx-canttell.is-stacked { flex-direction: column; align-items: flex-start; }
+.bx-canttell.is-stacked .bx-canttell__or { font-size: var(--fs-xs); }
+.bx-canttell.is-stacked .bx-canttell__or::before { content: none; }
+
+/* --- Decision chip / status ----------------------------------------------
+
+   No dots, anywhere (owner, 14 Sep 2026). A status is a tinted pill with its
+   word in it: the tint is what a column is scanned by, and the word is what
+   makes it readable to anyone who cannot separate the hues.
+
+   Both families take the shared pill geometry, so a decision chip and a badge
+   on the same row are the same object at the same size. */
+.bx-decision,
+.bx-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pill-gap);
+  font-size: var(--pill-fs);
+  font-weight: var(--pill-fw);
+  line-height: var(--pill-line);
+  white-space: nowrap;
+}
+.bx-decision {
+  padding: var(--pill-py) var(--pill-px);
+  border-radius: var(--pill-radius);
+  border: var(--bw-thin) solid transparent;
+}
+.bx-decision--sm { font-size: var(--pill-fs); padding: 0 var(--space-3); }
+.bx-decision--positive { background: var(--fb-positive-bg); color: var(--fb-positive-fg); border-color: var(--fb-positive-border); }
+.bx-decision--positive-strong { background: var(--fb-positive-strong-bg); color: var(--fb-positive-strong-fg); border-color: var(--fb-positive-strong-border); }
+.bx-decision--negative { background: var(--fb-negative-bg); color: var(--fb-negative-fg); border-color: var(--fb-negative-border); }
+.bx-decision--notice { background: var(--fb-notice-bg); color: var(--fb-notice-fg); border-color: var(--fb-notice-border); }
+
+/* Draft, Active, Monitoring, Inactive, and Always on for the system policy —
+   nothing else. Active and Always on take the positive tint; Monitoring the
+   info blue, because it checks and protects nobody; Inactive the neutral fill;
+   Draft a solid outline. */
+.bx-status--active {
+  padding: var(--pill-py) var(--pill-px);
+  border-radius: var(--pill-radius);
+  background: var(--fb-positive-bg);
+  color: var(--fb-positive-fg);
+  border: var(--bw-thin) solid var(--fb-positive-border);
+}
+.bx-status--draft {
+  padding: var(--pill-py) var(--pill-px);
+  border-radius: var(--pill-radius);
+  border: var(--bw-thin) solid var(--border-default);
+  color: var(--text-tertiary); background: none;
+}
+/* Inactive is a lifecycle state, not a failure — neutral, never red. */
+.bx-status--inactive {
+  padding: var(--pill-py) var(--pill-px);
+  border-radius: var(--pill-radius);
+  background: var(--surface-inset);
+  color: var(--text-tertiary);
+  border: var(--bw-thin) solid var(--border-subtle);
+}
+.bx-status--always {
+  padding: var(--pill-py) var(--pill-px);
+  border-radius: var(--pill-radius);
+  background: var(--fb-positive-bg);
+  color: var(--fb-positive-fg);
+  border: var(--bw-thin) solid var(--fb-positive-border);
+}
+.bx-status--monitor {
+  padding: var(--pill-py) var(--pill-px);
+  border-radius: var(--pill-radius);
+  background: var(--fb-info-bg);
+  color: var(--fb-info-fg);
+  border: var(--bw-thin) solid var(--fb-info-border);
+}
+
+/* --- Toggle --------------------------------------------------------------- */
+
+/* --- Switch --------------------------------------------------------------------
+   The knob is absolutely placed and translated a known distance, rather than
+   parked by  and chased by a layout animation. Two things
+   follow from that: the travel cannot disagree with the track, and the inset is
+   free to be large enough that the knob is visibly inside the track at both
+   ends — at 2px the knob shadow spilled over the edge and the control read as
+   broken.
+
+   Sizes are the ones the references land on: md is the default at 44×24, up
+   from 34×20, because a switch is a hit target as well as a picture. */
+
+.bx-toggle {
+  position: relative; flex: none;
+  width: 44px; height: 24px;
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  border: 1px solid var(--text-placeholder);
+  transition: background var(--dur-normal) var(--ease-standard), border-color var(--dur-normal) var(--ease-standard);
+}
+.bx-toggle--sm { width: 32px; height: 18px; }
+.bx-toggle--lg { width: 52px; height: 30px; }
+
+/* --- Touch: the hit area, not the drawing ------------------------------------
+
+   Measured on a 375px screen: the row menu is 34×34, a switch 44×24, the small
+   switch 32×18. All comfortably clickable with a cursor and all under the 44px
+   a fingertip wants.
+
+   So the BOX grows and the control does not. `pointer: coarse` keeps every
+   pixel of the console's density on a desktop — this is not a phone layout, it
+   is a phone INPUT — and a centred `max(100%, 44px)` pseudo-element reaches 44
+   in whichever axis falls short while leaving the drawing exactly where it was.
+
+   Deliberately NOT on `.bx-tipdot`: it is 16px and sits inline a few pixels
+   from the name it annotates, so a 44px box around it would cover the text and
+   swallow taps meant for the row. A tip is also the one control here that
+   nobody needs to hit — its text is on the row for a screen reader already. */
+@media (pointer: coarse) {
+  .bx-toggle,
+  .bx-rowmenu { position: relative; }
+  .bx-toggle::after,
+  .bx-rowmenu::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
+}
+
+/* On is BLUE (owner, 5 Oct 2026; see the note after the knob rules). A switch
+   says "this is running", a state, and brand orange is for the thing you press
+   to commit. The current look has no blue token and keeps its green there. */
+.bx-toggle.is-on { background: var(--blue, var(--fb-positive-fg)); border-color: var(--blue, var(--fb-positive-fg)); }
+.bx-toggle:not(.is-on):not(:disabled):hover { background: var(--surface-raised); border-color: var(--text-secondary); }
+.bx-toggle.is-on:not(:disabled):hover { background: var(--blue-hover, var(--fb-positive-fg)); border-color: var(--blue-hover, var(--fb-positive-fg)); }
+.bx-toggle:disabled { opacity: var(--disabled-opacity); cursor: not-allowed; }
+
+.bx-toggle__knob {
+  position: absolute; left: 2px; top: 50%;
+  width: 18px; height: 18px; margin-top: -9px;
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  box-shadow: var(--el-low);
+  transition: background-color var(--dur-normal) var(--ease-standard);
+}
+.bx-toggle:not(.is-on) .bx-toggle__knob { background: var(--text-tertiary); box-shadow: none; }
+.bx-toggle:not(.is-on):not(:disabled):hover .bx-toggle__knob { background: var(--text-secondary); }
+/* The small knob is 12px: 2px of track all round with the same 14px of travel.
+   At 14px it sat flush against the right edge when on (1 Oct 2026). */
+.bx-toggle--sm .bx-toggle__knob { width: 12px; height: 12px; margin-top: -6px; }
+.bx-toggle--lg .bx-toggle__knob { width: 24px; height: 24px; margin-top: -12px; left: 2px; }
+
+/* Focus keeps the pill. `.brand-root :focus-visible` gives every focused
+   control the small radius, and at (0,2,0) it beat the track's (0,1,0), so a
+   switch reached by Tab turned into a rounded rectangle. */
+.brand-root .bx-toggle:focus-visible { border-radius: var(--radius-full); }
+
+/* The owner chose Blue on 5 Oct 2026, after comparing six styles. On is blue.
+   Off is white with a 1px `--text-placeholder` edge and a `--text-tertiary`
+   knob, so it feels active, not disabled; the knob turns white as it crosses.
+   Disabled off is the grey pill: `--border-default` fill and edge, white knob,
+   no shadow, not faded. Disabled on keeps the blue and fades. */
+.bx-toggle:disabled:not(.is-on) { background: var(--border-default); border-color: var(--border-default); opacity: 1; }
+.bx-toggle:disabled:not(.is-on) .bx-toggle__knob { background: var(--surface-raised); box-shadow: none; }
+
+/* --- Chip ----------------------------------------------------------------- */
+
+.bx-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  border: var(--bw-thin) solid var(--border-default);
+  background: var(--surface-raised);
+  overflow: hidden;
+  transition: border-color var(--dur-fast) var(--ease-standard), background var(--dur-fast) var(--ease-standard);
+}
+.bx-chip__main {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+.bx-chip__main:disabled { cursor: default; }
+.bx-chip.is-clickable:hover { border-color: var(--border-strong); }
+.bx-chip.is-on { background: var(--accent-soft); border-color: var(--accent); }
+.bx-chip.is-on .bx-chip__main { color: var(--accent-strong); font-weight: var(--fw-medium); }
+.bx-chip__main em {
+  font-style: normal;
+  font-size: var(--fs-xs);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-pill);
+  background: var(--surface-inset);
+  color: var(--text-tertiary);
+}
+.bx-chip.is-on .bx-chip__main em { background: var(--accent-soft-border); color: var(--accent-strong); }
+.bx-chip__x {
+  padding: 0 var(--space-4) 0 var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--fs-base);
+  line-height: 1;
+}
+.bx-chip__x:hover { color: var(--text-primary); }
+
+/* --- Tabs ----------------------------------------------------------------- */
+
+.bx-tabs {
+  display: inline-flex;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  background: var(--surface-inset);
+  border: var(--bw-thin) solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+}
+.bx-tabs__tab {
+  position: relative;
+  padding: var(--space-3) var(--space-5);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--text-secondary);
+  transition: color var(--dur-fast) var(--ease-standard);
+}
+.bx-tabs__tab.is-on { color: var(--text-primary); }
+.bx-tabs__bg {
+  position: absolute;
+  inset: 0;
+  background: var(--surface-raised);
+  border-radius: var(--radius-md);
+  box-shadow: var(--el-low);
+}
+.bx-tabs__label { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: var(--space-3); }
+
+/* The underline flavour.
+
+   The board's inspector already tabs this way — `Who / Condition` under a rule
+   name — and it got there first. Two shapes for one job across two screens is a
+   tell that neither was chosen, so the pill is now the exception rather than the
+   default: it belongs where a tablist is a control sitting among other controls,
+   and the underline belongs where it divides a page into sections, which is what
+   both of these do.
+
+   The moving element is the same `__bg` span, so the spring that slid the pill
+   slides the bar, and the two variants cannot drift apart in their motion. */
+.bx-tabs--line {
+  gap: var(--space-2);
+  padding: 0;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  border-radius: 0;
+}
+.bx-tabs--line .bx-tabs__tab {
+  height: 40px;
+  padding: 0 var(--space-3);
+  border-radius: 0;
+  /* Over the container's own rule, not above it — the active bar and the
+     divider are the same line. */
+  margin-bottom: -1px;
+  font-size: var(--fs-md);
+}
+.bx-tabs--line .bx-tabs__tab:hover { color: var(--text-primary); }
+/* The chosen line tab is orange end to end: the bar, the label and its icon. */
+.bx-tabs--line .bx-tabs__tab.is-on { color: var(--brand-text); }
+.bx-tabs--line .bx-tabs__bg {
+  inset: auto 0 0;
+  height: 2px;
+  background: var(--brand);
+  border-radius: 0;
+  box-shadow: none;
+}
+.bx-tabs--line .bx-tabs__tab:focus-visible {
+  outline: none;
+  border-radius: var(--radius-sm);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+/* --- Fields --------------------------------------------------------------- */
+
+/* 8px label to control, matching every other form on the product. */
+.bx-field { display: flex; flex-direction: column; gap: var(--space-4); }
+.bx-field.is-inline { flex-direction: row; align-items: center; gap: var(--space-5); }
+.bx-field.is-inline .bx-field__label { min-width: 128px; }
+.bx-field__control { display: flex; flex-direction: column; gap: var(--space-4); }
+.bx-field__hint { font-size: var(--fs-sm); color: var(--text-tertiary); }
+
+/* :where() throughout — at (0,2,1) these defaults beat every component that
+   asked for a smaller control, so a condition row rendered its selects at 31px
+   and its text inputs at 35px on the same line. Zero specificity keeps the
+   defaults while letting a component set its own size. */
+.brand-root :where(input[type='text'], input[type='search'], input[type='number'], input[type='time'], input[type='date'], select, textarea) {
+  height: var(--ctl-height-md);
+  padding: 0 var(--space-5);
+  border: var(--bw-thin) solid var(--ctl-border);
+  border-radius: var(--ctl-radius);
+  background: var(--ctl-bg);
+  font-size: var(--fs-md);
+  transition: border-color var(--dur-fast) var(--ease-standard), background var(--dur-fast) var(--ease-standard),
+    box-shadow var(--dur-fast) var(--ease-standard);
+}
+
+/* Width is the one thing a control's own context decides, so it is set at zero
+   specificity. In the rule above it was (0,2,1) and beat every component that
+   asked for a narrower field — which is why a 240px search box rendered full
+   width. Everything still defaults to 100%; only an explicit width now wins. */
+.brand-root :where(input[type='text'], input[type='search'], input[type='number'], input[type='time'], input[type='date'], select, textarea) {
+  width: 100%;
+}
+.brand-root textarea { height: auto; padding: var(--space-4) var(--space-5); resize: vertical; }
+/* :where() again — at (0,2,1) this painted a visible border on the toolbar's
+   deliberately borderless name field the moment the pointer touched it.
+
+   Hover used to jump straight to `--border-strong`. That is a four-step change
+   in value on a mouse-over, which is what "harsh" means when somebody says a
+   border is harsh: not the resting state, which is a hairline, but the distance
+   it travels the moment the pointer arrives. One step now, and the fill does
+   most of the answering. */
+.brand-root :where(input, select):hover { border-color: var(--ctl-border-hover); background: var(--ctl-bg-hover); }
+.brand-root :where(input, select, textarea):focus-visible {
+  outline: none;
+  border-color: var(--ctl-border-focus);
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 4px var(--focus-halo);
+}
+.brand-root :where(input, textarea)::placeholder { color: var(--text-placeholder); }
+
+/* A control in a STACKED FORM FIELD takes the form size, whatever size the
+   caller asked for (16 Sep 2026).
+
+   `Picker` defaults to `sm` because most of its callers are row controls — a
+   condition's operator, a weight, a filter. In a field with a label above it
+   that default drew a 34px dropdown directly over a 40px number field and under
+   a 40px text input, which is the drift the scale change was meant to end.
+
+   Scoped to the three wrappers that mean "label above a control" rather than
+   applied by width: `width="fill"` is not the same signal (the weight picker
+   and the board's editors fill their cells too, and are meant to stay small).
+   A fifth form wrapper is one selector. */
+.bx-field .bx-picker__trigger,
+.bfp2__enrolctl .bx-picker__trigger,
+.bmc__field .bx-picker__trigger {
+  height: var(--ctl-height-md);
+}
+
+/* --- Callout -------------------------------------------------------------- */
+
+.bx-callout {
+  display: flex;
+  gap: var(--space-5);
+  padding: var(--space-5) var(--space-6);
+  border-radius: var(--radius-lg);
+  border: var(--bw-thin) solid;
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+}
+/* The mark is an icon now. `margin-top` aligns its optical centre with the
+   first line of text rather than with the top of the box — 16px of glyph beside
+   a 1.55-leading line sits low without it. */
+.bx-callout__mark { flex: none; margin-top: 1px; }
+/* The title only. It read `.bx-callout strong`, which also broke every bold
+   word in the body onto a line of its own ("stays on / Slack / . Edits…"). */
+.bx-callout > div > strong { display: block; margin-bottom: 2px; }
+.bx-callout--info { background: var(--fb-info-bg); border-color: var(--fb-info-border); color: var(--fb-info-fg); }
+.bx-callout--neutral { background: var(--fb-neutral-bg); border-color: var(--fb-neutral-border); color: var(--fb-neutral-fg); }
+.bx-callout--notice { background: var(--fb-notice-bg); border-color: var(--fb-notice-border); color: var(--fb-notice-fg); }
+.bx-callout--negative { background: var(--fb-negative-bg); border-color: var(--fb-negative-border); color: var(--fb-negative-fg); }
+.bx-callout--positive { background: var(--fb-positive-bg); border-color: var(--fb-positive-border); color: var(--fb-positive-fg); }
+
+/* --- Note (kit.tsx `Note`) ---------------------------------------------------
+   The What's new card on Authentication methods, made the one note (owner,
+   16 Oct 2026): a white card with a hairline, the info mark, one heading in
+   the info blue, the body in grey. Not a `.bx-callout`, so the rebrand's
+   "a tint, no box" never takes its line away. The head row holds still as
+   Read more opens: the mark keeps to the first line, the action is in the row
+   at its top, never centred on the card. Nothing here transforms or
+   transitions `.bx-note__more`: Motion drives its height and opacity. */
+.bx-note {
+  display: flex; align-items: flex-start; gap: var(--space-5);
+  padding: var(--space-5) var(--space-6);
+  background: var(--surface-raised);
+  border: var(--bw-thin) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  color: var(--text-secondary);
+  font-size: var(--fs-md); line-height: 1.55;
+}
+/* 16px of glyph beside a 1.55-leading line sits on the first line's centre at 3px down. */
+.bx-note__mark { flex: none; margin-top: 3px; color: var(--fb-info-fg); }
+.bx-note__main { flex: 1; min-width: 0; }
+.bx-note__head { display: flex; align-items: flex-start; gap: var(--space-5); }
+.bx-note__text { flex: 1; min-width: 0; }
+/* Three classes: `.bpage h2/h3` and their rebrand twins (0,2,1) set every
+   heading on a page to the section scale, and a note's heading is the body's
+   size in the info blue. */
+.bx-note .bx-note__head .bx-note__title {
+  margin: 0;
+  font-size: inherit; line-height: inherit; letter-spacing: 0;
+  font-weight: var(--fw-semibold); color: var(--fb-info-fg);
+}
+.bx-note__body { color: var(--text-secondary); }
+.bx-note__toggle {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  margin: 0; padding: 0;
+  border: 0; background: none; cursor: pointer;
+  font: inherit; font-weight: var(--fw-medium); color: var(--text-link);
+  vertical-align: baseline;
+}
+.bx-note__toggle:hover { text-decoration: underline; text-underline-offset: 3px; }
+.bx-note__toggle:focus-visible { outline: none; border-radius: var(--radius-sm); box-shadow: 0 0 0 3px var(--focus-halo); }
+.bx-note__toggle svg { flex: none; }
+.bx-note__action { flex: none; display: flex; }
+.bx-note__more { overflow: hidden; }
+/* A list that opens under the body: points, one a line, in the body's grey. */
+.bx-note__more > ul,
+.bx-note__more > ol {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  margin: var(--space-3) 0 0; padding-left: var(--space-6);
+}
+.bx-note__more li::marker { color: var(--text-muted); }
+.bx-note__more > p { margin: var(--space-3) 0 0; }
+
+/* Narrow: the action goes under the text rather than squeezing it. */
+@media (max-width: 720px) {
+  .bx-note__head { flex-wrap: wrap; }
+  .bx-note__text { flex-basis: 100%; }
+}
+
+/* --- Card ----------------------------------------------------------------- */
+
+.bx-card {
+  background: var(--surface-raised);
+  border: var(--bw-thin) solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--el-low);
+}
+.bx-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-6);
+  padding: var(--space-6) var(--space-7);
+  border-bottom: var(--bw-thin) solid var(--border-subtle);
+}
+.bx-card__head h2 { font-size: var(--fs-base); }
+.bx-card__head p { margin-top: 2px; font-size: var(--fs-sm); color: var(--text-tertiary); }
+.bx-card__actions { display: flex; gap: var(--space-4); flex: none; }
+.bx-card__body { padding: var(--space-7); }
+.bx-card__body.is-flush { padding: 0; }
+
+/* --- Overlays ------------------------------------------------------------- */
+
+.bx-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(18, 23, 30, 0.42);
+  z-index: var(--z-overlay);
+}
+/* The track is pinned to the scrim rather than left `auto`. An auto track sizes
+   to the dialog's own max-content, so a dialog wider than the viewport grew the
+   track to match and `max-width: 100%` on the panel had nothing to clamp
+   against — the right-hand edge, and the buttons on it, ended up off-screen. */
+.bx-scrim--center {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  place-items: center;
+  padding: var(--space-8);
+  /* Above slide-overs, below popovers. A centred dialog is opened FROM a drawer
+     or a slider far more often than the other way round, and it sat at the
+     overlay layer (300) under the drawer (400): its right half, with Delete,
+     Save and Discard on it, was under the panel and could not be clicked.
+     Popovers portalled from inside a dialog (pickers, row menus) stay above it
+     at --z-popover. */
+  z-index: calc(var(--z-modal) + 50);
+}
+
+.bx-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  /* The caller's width is a pixel number and nothing was clamping it to the
+     window. On a phone every drawer in the console opened at its desktop width
+     — 780px inside a 375px viewport — so the panel ran off the right edge, the
+     page grew a horizontal scrollbar, and the half of the content past the fold
+     was reachable only by scrolling the whole document sideways. Every screen
+     behind it looked correct, which is why it survived: nothing but a narrow
+     window shows it.
+
+     `100%` and not `100vw`: a fixed element resolves both against the viewport,
+     but `100vw` counts the classic scrollbar's width and would overflow by
+     ~15px on the desktop widths this is meant to leave alone. */
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-overlay);
+  border-left: var(--bw-thin) solid var(--border-subtle);
+  box-shadow: var(--el-overlay);
+  z-index: var(--z-modal);
+}
+/* The leading edge, draggable. Same grammar as the builder's column split: an
+   invisible corridor that surfaces a pill when the pointer is near, so a resize
+   affordance can sit on a boundary without becoming a third thing on screen.
+   Double-click returns it to the width the caller opened it at. */
+.bx-drawer__grip {
+  position: absolute; left: -3px; top: 0; bottom: 0; width: 10px; z-index: 1;
+  display: grid; place-items: center;
+  cursor: col-resize; touch-action: none;
+}
+.bx-drawer__grip span {
+  width: 4px; height: 46px; border-radius: var(--radius-lg);
+  background: var(--border-strong); opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-standard), background var(--dur-fast) var(--ease-standard),
+    height var(--dur-fast) var(--ease-standard);
+}
+.bx-drawer__grip:hover span,
+.bx-drawer__grip:focus-visible span { opacity: 1; }
+.bx-drawer__grip:active span { opacity: 1; background: var(--accent); height: 68px; }
+.bx-drawer__grip:focus-visible { outline: none; }
+.bx-drawer__grip:focus-visible span { background: var(--accent); }
+
+.bx-drawer__head,
+.bx-modal__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-5);
+  padding: var(--space-6) var(--space-7);
+  border-bottom: var(--bw-thin) solid var(--border-subtle);
+}
+.bx-drawer__head h2,
+.bx-modal__head h2 { font-size: var(--fs-lg); }
+/* A name with no spaces in it ("Delete corporate-network-apac-singapore-…?")
+   breaks where it must instead of pushing the close button out of the dialog. */
+.bx-drawer__head > div,
+.bx-modal__head h2 { min-width: 0; overflow-wrap: anywhere; }
+.bx-drawer__head p { margin-top: 2px; font-size: var(--fs-sm); color: var(--text-tertiary); }
+/* A control, not a character.
+
+   It was the multiplication sign at 20px with no padding — a hit target the
+   size of the glyph, roughly 11 by 20 CSS pixels, on the one button in a dialog
+   everybody reaches for without looking. It is a square with a real icon in it
+   now, at the small control height, so it is the same size and shape as every
+   other icon button in the console.
+
+   `bx-dialog__x`, not `bx-drawer__x`: `Modal` was using the drawer's class,
+   which is how the two ended up sharing a bug nobody could find by searching
+   for the component they were looking at. */
+.bx-dialog__x {
+  flex: none;
+  display: grid; place-items: center;
+  width: var(--ctl-height-sm); height: var(--ctl-height-sm);
+  margin: -2px -6px 0 0;
+  border-radius: var(--radius-md);
+  color: var(--text-tertiary);
+  transition: background var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard);
+}
+.bx-dialog__x:hover { background: var(--state-hover-bg); color: var(--text-primary); }
+.bx-dialog__x:active { background: var(--state-press-bg); }
+/* BARE MODE: the only child, so it is the dialog's own corner control and it
+   floats over the body rather than taking a row above it. `>` is what makes
+   this bare-only — with a head row the button is inside the `<header>`, where
+   it is already in the right place and must stay in the flow.
+
+   Static, it was laid out as the first item of the panel's flex COLUMN: a 34px
+   band across the top of every hero and rows confirm with the button at its
+   LEFT edge, which is the dead space above the title and the reason the glow
+   looked like it was floating in the card instead of filling its head. */
+.bx-modal > .bx-dialog__x {
+  position: absolute;
+  inset-block-start: var(--space-5); inset-inline-end: var(--space-5);
+  z-index: 1;
+  margin: 0;
+}
+.bx-drawer__body { flex: 1; overflow-y: auto; padding: var(--space-7); }
+.bx-drawer__foot,
+.bx-modal__foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-4);
+  padding: var(--space-6) var(--space-7);
+  border-top: var(--bw-thin) solid var(--border-subtle);
+  background: var(--surface-sunken);
+}
+
+.bx-modal {
+  /* The containing block for the bare-mode close button, which floats in the
+     card's top-right corner rather than sitting in the column. */
+  position: relative;
+  max-height: 88vh;
+  /* The width comes in as an inline pixel value, so without this a wide dialog
+     overflows the scrim on a narrow viewport instead of shrinking into it. */
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-overlay);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--el-overlay);
+  overflow: hidden;
+  z-index: var(--z-modal);
+}
+.bx-modal__body { overflow-y: auto; padding: var(--space-7); }
+.bx-modal__body.is-flush { padding: 0; }
+
+/* --- Save bar ------------------------------------------------------------- */
+
+/* A footer across the page column, not a card floating over it.
+
+   Portalled into `.bshell__main` as its last child. That column is a flex
+   column that scrolls, so `margin-top: auto` puts the footer at the bottom of
+   the window on a short page, and `sticky` keeps it pinned there while a long
+   page scrolls under it. In the flow, it never covers the last control — the
+   floating card needed every page to reserve 84px of padding for that.
+
+   Motion animates opacity only, so nothing here competes for `transform`. */
+.bx-savebar {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
+  /* The words and buttons start and end with the form above (owner, 15 Oct
+     2026), measured by footer-edge.ts into --footer-l / --footer-r. Until it
+     has measured, the page's own side inset. */
+  padding: var(--space-6) var(--footer-r, 32px) var(--space-6) var(--footer-l, 32px);
+  background: var(--surface-raised);
+  border-top: var(--bw-thin) solid var(--border-subtle);
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.06);
+  /* Over the page it pins above, under popovers, dialogs and the toast. */
+  z-index: 20;
+}
+/* No `__text` any more: the footer carries buttons only (owner, 23 Oct 2026), so its line and the blocked reason's
+   notice colour went with it. */
+.bx-savebar > .bx-btn { flex: none; min-width: 148px; }
+@media (max-width: 720px) {
+  .bx-savebar { padding: var(--space-5) var(--footer-r, 20px) var(--space-5) var(--footer-l, 20px); }
+}
+/* A page sized to the column (`.bcp--fit`) gives the footer its line rather
+   than pushing the column into a scroll the height of the footer. */
+.bshell__main:has(> .bx-savebar) > .bcp--fit { height: auto; flex: 1 1 0; }
+
+/* --- Renaming in place (kit NameField) --------------------------------------
+
+   A heading-sized input, the count under its left edge, and a small raised
+   pair — ✕ and ✓ — under its right edge. Sized to the heading it replaces. */
+.bx-namefield { display: flex; flex-direction: column; gap: var(--space-2); width: min(460px, 100%); min-width: 0; }
+.bx-namefield__input {
+  width: 100%; height: var(--ctl-height-lg); padding: 0 var(--space-5);
+  background: var(--surface-raised);
+  border: var(--bw-thin) solid var(--border-default); border-radius: var(--radius-md);
+  font-family: inherit; font-size: 20px; font-weight: 700; letter-spacing: 0; color: var(--text-primary);
+}
+.bx-namefield__input:focus-visible,
+.bx-namefield__input:focus { outline: none; border-color: var(--ctl-border-focus); box-shadow: 0 0 0 4px var(--focus-halo); }
+.bx-namefield__input[aria-invalid='true'] { border-color: var(--fb-negative-border); }
+.bx-namefield__foot { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); }
+.bx-namefield__count { padding-top: 2px; font-size: var(--fs-sm); color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+.bx-namefield__acts {
+  display: inline-flex; align-items: stretch;
+  background: var(--surface-raised);
+  border: var(--bw-thin) solid var(--border-subtle); border-radius: var(--radius-md);
+  box-shadow: var(--el-low);
+  overflow: hidden;
+}
+.bx-namefield__btn {
+  width: 36px; height: 30px;
+  display: grid; place-items: center;
+  background: none; cursor: pointer;
+}
+.bx-namefield__btn + .bx-namefield__btn { border-left: var(--bw-thin) solid var(--border-subtle); }
+.bx-namefield__btn.is-cancel { color: var(--fb-negative-fg); }
+.bx-namefield__btn.is-apply { color: var(--fb-positive-fg); }
+.bx-namefield__btn:hover { background: var(--surface-inset); }
+.bx-namefield__btn:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
+
+/* --- App logos ------------------------------------------------------------ */
+
+.applogo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  overflow: hidden;
+}
+.applogo--img { background: var(--surface-raised); border: var(--bw-thin) solid var(--border-subtle); }
+.applogo--img img { width: 100%; height: 100%; object-fit: contain; display: block; }
+/* The mark for an app with no mark.
+
+   Same box, same border and same ground as a resolved logo — the square is a
+   slot, and a slot that changes shape depending on whether it is filled makes a
+   column of mixed rows look misaligned when it is not. Only the content
+   differs: a real logo, or an icon saying that this is an application and
+   nothing more. Muted, because it is the one thing in that column with no
+   identity to assert. */
+.applogo--generic {
+  background: var(--surface-inset);
+  border: var(--bw-thin) solid var(--border-subtle);
+  color: var(--text-muted);
+}
+
+/* Two more pill families, for labels that are categories rather than states —
+   severity bands, environments, owners. They exist so a categorical tag never
+   has to borrow a semantic colour and imply an outcome it does not have. */
+.bx-badge--lime { background: var(--fb-lime-bg); color: var(--fb-lime-fg); border-color: var(--fb-lime-border); }
+.bx-badge--magenta { background: var(--fb-magenta-bg); color: var(--fb-magenta-fg); border-color: var(--fb-magenta-border); }
+
+/* --- Number stepper ---------------------------------------------------------------
+   One bordered control holding the whole question: step down, the value, its
+   unit, step up. The unit lives inside the border so it cannot wrap away from
+   the number it belongs to, which is what the old loose-`em`-plus-bounds-chip
+   arrangement did at the first narrow column. */
+
+.bx-stepwrap { display: inline-flex; flex-direction: column; gap: 3px; }
+
+.bx-step {
+  display: inline-flex; align-items: center; gap: 2px;
+  height: var(--ctl-height-md); padding: 0 4px;
+  background: var(--ctl-bg);
+  border: var(--bw-thin) solid var(--ctl-border); border-radius: var(--ctl-radius);
+  transition: border-color 0.14s ease, box-shadow 0.14s ease, background 0.14s ease;
+}
+.bx-step.is-focus { border-color: var(--accent); box-shadow: 0 0 0 4px var(--focus-halo); }
+.bx-step.is-invalid { border-color: var(--fb-negative-border); background: var(--fb-negative-bg); }
+
+/* The correction, made visible. Half a second of the negative tone is enough to
+   register that the number changed under you without turning into an error
+   state you have to dismiss. */
+.bx-step.is-corrected {
+  border-color: var(--fb-negative-border);
+  background: var(--fb-negative-bg);
+}
+
+.bx-step__btn {
+  flex: none; display: grid; place-items: center;
+  width: 26px; height: 26px; padding: 0;
+  border: 0; border-radius: var(--radius-sm);
+  background: none; color: var(--text-secondary); cursor: pointer;
+}
+.bx-step__btn:not(:disabled):hover { background: var(--surface-sunken); color: var(--text-primary); }
+.bx-step__btn:not(:disabled):active { background: var(--border-subtle); }
+/* The bound, felt rather than read. */
+.bx-step__btn:disabled { opacity: var(--disabled-opacity); cursor: not-allowed; }
+
+.bx-step__val { display: inline-flex; align-items: baseline; gap: 4px; padding: 0 3px; }
+.bx-step__val input {
+  width: calc(var(--bx-digits, 3) * 1ch + 8px);
+  min-width: 22px; padding: 0; height: auto;
+  border: 0; background: none; box-shadow: none;
+  font-family: inherit; font-size: var(--fs-md); font-variant-numeric: tabular-nums;
+  color: var(--text-primary); text-align: center;
+}
+.bx-step__val input:focus-visible { outline: none; }
+.bx-step__val em {
+  font-style: normal; font-size: var(--fs-sm); color: var(--text-tertiary);
+  white-space: nowrap; user-select: none;
+}
+
+.bx-step__hint {
+  font-size: var(--fs-xs); color: var(--text-muted); text-align: center;
+  opacity: 0; transition: opacity 0.14s ease;
+}
+.bx-step__hint[data-on='true'] { opacity: 1; }
+.bx-step.is-corrected + .bx-step__hint { color: var(--fb-negative-fg); }
+
+/* --- The same number, as a FIELD -------------------------------------------------
+
+   The console's own shape (Allowed Device Registrations): a box that takes the
+   width it is given, the value against the left edge like any text input, and
+   the two steps stacked as chevrons inside the right edge. Chosen where the
+   number sits in a column of dropdowns and switches — a 96px minus/value/plus
+   pill among full-width fields reads as a different kind of question, which is
+   the one thing it is not (owner, 16 Sep 2026).
+
+   Placed by grid rather than reordered by flex: the two buttons have to occupy
+   one 26px column in two rows, which a row of flex children cannot do. The DOM
+   keeps decrease before increase — the reading order a screen reader gets is
+   the same either way, and `role="spinbutton"` on the input is what actually
+   carries the control. */
+.bx-stepwrap--field { display: flex; width: 100%; min-width: 0; }
+.bx-step--field {
+  display: grid; width: 100%; min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: 1fr 1fr;
+  height: var(--ctl-height-md); padding: 0 0 0 var(--space-5); gap: 0;
+}
+.bx-step--field > .bx-step__val { grid-column: 1; grid-row: 1 / -1; align-items: center; padding: 0; min-width: 0; }
+.bx-step--field > .bx-step__val input { width: 100%; text-align: left; }
+/* Increase is the top chevron, and it is the LAST child — the up arrow has to
+   be the one that adds, whatever order the buttons are written in. */
+.bx-step--field > .bx-step__btn { width: 26px; height: auto; border-radius: 0; }
+.bx-step--field > .bx-step__btn:first-of-type { grid-column: 2; grid-row: 2; }
+.bx-step--field > .bx-step__btn:last-of-type { grid-column: 2; grid-row: 1; }
+.bx-stepwrap--field > .bx-step__hint { text-align: left; padding-top: 3px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .bx-step, .bx-step__hint { transition: none; }}
+
+/* --- The weight, as three words ------------------------------------------------
+
+   Lifted out of the device-fingerprint screen when a second screen needed the
+   same control. Both arguments that shaped it are worth keeping, because both
+   were re-opened once already:
+
+   Three pills, not a dropdown. A select is the right control for a list you
+   have to go and look at. This is three words, all of which fit on the row — so
+   the dropdown was hiding two thirds of a decision behind a click and rendering
+   the third in form-field grey, on the one control a risk profile exists to set.
+
+   One shared border and internal hairlines, so the three read as one control
+   with a position rather than as three chips that happen to be adjacent. Only
+   the chosen one is coloured — three lit pills would be a legend, not a
+   setting. */
+/* --- The weight picker -------------------------------------------------------
+
+   `.bx-tiers` / `.bx-tier` — a three-pill segmented control — stood here. It is
+   a dropdown now: three pills is three controls' worth of width for one value,
+   repeated down every row of a table, and thirty-two of them on the risk-signal
+   screen made the two weight columns the widest thing on it while spending two
+   thirds of each on the answers that are NOT the answer.
+
+   The COLOUR survives, because the argument for it was never about the shape.
+   It was one hue at three intensities once, on the reasoning that a weight is
+   not good or bad and a traffic light would claim it was. The counter-argument
+   won and it is about reading rather than semantics: three shades of one blue
+   are only ordered if you can see all three at once, and here you see one per
+   row, many rows apart. A hue you can name from a single row tells you where
+   the value sits without a legend.
+
+   The tone rides on a wrapper because `Picker` owns its trigger's classes. */
+.bx-tierpick { display: inline-flex; min-width: 0; }
+.bx-tierpick .bx-picker { width: 100%; }
+.bx-tierpick .bx-picker__trigger {
+  /* The scale, not a number of its own. At a fixed 28 it was the one control
+     on the signals list that did not move when the scale did. */
+  height: var(--ctl-height-sm); min-height: var(--ctl-height-sm);
+  font-weight: var(--fw-medium);
+}
+/* No hue ramp. It was red / amber / green on the trigger, hot to cool, and the
+   argument for it is written out in `tier-pick.tsx`: you see one per row, many
+   rows apart, and three shades of one hue are only ordered if you can see all
+   three at once.
+
+   The ramp was right about the control and wrong about the page. Thirty-two of
+   these sit on the risk-signal table in two columns, so the "one per row"
+   premise does not hold — you see a wall of them — and red on a weight of High
+   reads as an alarm about a setting nobody has done anything wrong by choosing.
+   The trigger says the word. The word is the value.
+
+   `is-high` / `is-medium` / `is-low` still ride on the wrapper. They cost
+   nothing, they are what a future ramp would hang off, and removing them from
+   the component would make restoring one a change in two files. */
+.bx-tierpick .bx-picker__value { color: inherit; }
+.bx-tierpick .bx-picker__trigger svg { color: inherit; opacity: 0.7; }
+
+/* Absent, not disabled: a signal a platform cannot collect has no weight to
+   set, and a greyed control invites somebody to work out why. */
+/* Was two words of grey text; it is a dash now, so it is sized like the
+   control it stands in place of rather than like a caption. The words are
+   still there for a pointer and a screen reader — see the note at the call
+   site in RiskSignals.tsx. */
+.bx-tiers--none { font-size: var(--fs-md); color: var(--text-muted); white-space: nowrap; }
+
+/* --- The tick ------------------------------------------------------------- */
+
+/* ONE checkbox mark, for every multi-select list in the console.
+
+   There were five. `.bb__whotick` in the Who dialog was 15px with a 4px radius
+   and filled with ink; `.cp__tick` in the value menu was 15px, a 3px radius and
+   a 1.5px edge, filled with the accent; `.bfp2__picktick` in the attribute
+   drawer was 16px with a 2px radius, filled `--accent-strong`; and Assign
+   applications used a native `<input type="checkbox">`, which is whatever the
+   operating system draws. Five marks for one idea, and four of them were within
+   a pixel of each other — close enough that nobody would call it a decision and
+   far enough that the dialogs never quite matched.
+
+   The tick glyph is `--surface-raised`, not white, and that is load-bearing:
+   the accent ramp has a light half in one theme, and a white check on it is an
+   empty box. The device drawer's rule already knew this; the others did not. */
+.bx-tick {
+  flex: none;
+  display: grid; place-items: center;
+  width: 16px; height: 16px;
+  border-radius: var(--radius-xs);
+  border: var(--bw-thin) solid var(--border-strong);
+  background: var(--surface-raised);
+  /* Always in the DOM, invisible until ticked, so a label never shifts
+     sideways as it is chosen. */
+  color: transparent;
+  transition: background-color var(--dur-fast) var(--ease-standard), border-color var(--dur-fast) var(--ease-standard);
+}
+.is-on > .bx-tick,
+.is-on .bx-tick {
+  border-color: var(--accent-strong);
+  background: var(--accent-strong);
+  color: var(--surface-raised);
+}
+
+/* A check with its sentence under it (kit `CheckRow`), drawn as the device profile's enrolment rows are
+   (`.bfp2__enrolcheck`, device-fingerprint-v2.css). The tick keeps a column of its own so every label in a list lines
+   up, and the sentence starts at the ROW's left edge, under the mark, so it keeps the column's whole width instead of
+   losing the mark's width to an indent. The whole row is the control, so the whole row is the hit target. */
+.bx-checkrow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--space-3);
+  row-gap: var(--space-1);
+  width: 100%;
+  padding: var(--space-2) 0;
+  background: none;
+  border: 0;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.bx-checkrow__label { grid-column: 2; display: flex; align-items: center; gap: var(--space-2); font-weight: var(--fw-semibold); color: var(--text-primary); }
+.bx-checkrow__hint { grid-column: 1 / -1; min-width: 0; font-size: var(--fs-sm); color: var(--text-tertiary); }
+.bx-checkrow:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
+.bx-checkrow:disabled { opacity: var(--disabled-opacity); cursor: not-allowed; }
+
+/* The leave dialog body — one line, secondary. See LeaveDialog in leave-guard.tsx. */
+/* `.bx-leave__body` was here until 22 Oct 2026. All five discard dialogs drew
+   it; all five now use the kit's `Confirm`, which supplies `.bx-confirm__body`,
+   so the class had no markup left. */
+
+/* The change-state pill is a short sentence, never a long name, so it gets
+   room for all of it and never gives way to a title beside it. */
+.bx-badge.bx-change {
+  --badge-max: 24ch;
+  flex: none;
+}
+
+/* --- The one delete confirmation (screens/confirm-delete.tsx) ------------------
+
+   A hard delete, laid out as the decision it is: it is permanent (the callout),
+   what it does to the policies that use it (a section each), and — only when
+   live sign-ins change — DELETE typed to confirm. The gaps between those three are
+   the widest in the dialog, because they are three separate things to weigh;
+   inside a section everything is close, because it is one thing. */
+.bx-confirm { display: flex; flex-direction: column; gap: var(--space-6); }
+.bx-confirm p { margin: 0; font-size: var(--fs-md); line-height: 1.5; color: var(--text-secondary); }
+
+.bx-confirm__sec { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+/* The consequence, in one line: the loudest words after the title. */
+.bx-confirm__sec > h3 {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  line-height: 1.4;
+  color: var(--text-primary);
+}
+
+/* The policies, as a list you can act on. One edge for the whole list and a
+   hairline between rows — the library lists' shape — and a ceiling, so a
+   profile used by twenty policies scrolls inside the dialog instead of pushing
+   Delete off the bottom of the window. */
+.bx-confirm__uses {
+  display: flex;
+  flex-direction: column;
+  max-height: 264px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: var(--bw-thin) solid var(--border-default);
+  border-radius: var(--radius-md);
+}
+.bx-confirm__use {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: var(--bw-thin) solid var(--border-subtle);
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+.bx-confirm__use:last-child { border-bottom: 0; }
+.bx-confirm__use:hover { background: var(--surface-sunken); }
+/* Focus on the ROW, because the row is what pressing the name opens — the
+   same rule `.blist__row` follows. */
+.bx-confirm__use:has(.bx-confirm__policy:focus-visible) { box-shadow: inset 0 0 0 2px var(--focus-ring); }
+
+/* The name line is the button, and its `::after` stretches the press over the
+   whole row, rule line included: a chevron promises the row opens something,
+   so the row has to. */
+.bx-confirm__policy {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+  text-align: left;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+/* Scoped to a positioned row: unscoped, a list without `.bx-confirm__use` let
+   the stretch reach the dialog itself and swallow every click in it. The row
+   draws the focus ring, so the button draws none. */
+.bx-confirm__use > .bx-confirm__policy::after { content: ''; position: absolute; inset: 0; }
+.bx-confirm__use > .bx-confirm__policy:focus-visible { outline: none; box-shadow: none; }
+.bx-confirm__name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.bx-confirm__use:hover .bx-confirm__name { color: var(--text-link); }
+.bx-confirm__go { flex: none; margin-left: auto; color: var(--text-muted); }
+.bx-confirm__rules { font-size: var(--fs-sm); color: var(--text-muted); overflow-wrap: anywhere; }
+
+/* --- The gate ----------------------------------------------------------------
+
+   The rung of the friction ladder this dialog is on, as one block: nothing, an
+   acknowledgement to tick, or a word to type (docs/specs/POPUPS.md, edge case
+   6 — "nothing -> checkbox -> typed name" — which the spec promised and the
+   code never had a middle of).
+
+   IT BREAKS OUT OF THE PROSE COLUMN. The hero caps its text at 30ch and centres
+   it, which is right for a sentence and wrong for a control: a field capped at
+   30ch sat centred in a 480px card with 76px of empty margin either side, which
+   is why "full width" could not be had by styling it. Prose keeps the cap; the
+   gate takes the content box and aligns left, because a label over a field is
+   read as a form and forms in this console start at the left edge. */
+.bx-confirm__gate { width: 100%; text-align: start; }
+/* A sibling of the text, never a child of it: in the hero the text column is
+   capped and centred, and a child cannot be wider than the box that caps it.
+   In the rows shape the mark holds the first column, so the gate spans both —
+   a gate indented to clear the chip would read as belonging to the list. */
+.bx-confirm--rows .bx-confirm__gate { grid-column: 1 / -1; margin-block-start: var(--space-3); }
+
+/* DELETE typed to confirm. The word is set apart in the label so there is no
+   doubt what to type. 8px from the label to the control, which is what every
+   other form in the console uses — it was 4px here, and a field that sits
+   closer to its label than any other field looks like a different component. */
+.bx-confirm__type { display: flex; flex-direction: column; gap: var(--space-4); }
+.bx-confirm__type label { font-size: var(--fs-md); color: var(--text-secondary); }
+.bx-confirm__type strong { font-weight: var(--fw-semibold); color: var(--text-primary); overflow-wrap: anywhere; }
+.bx-confirm__type input { width: 100%; }
+
+/* The middle rung: one thing to agree to, in the console's own checkbox.
+
+   The mark is the kit's `.bx-tick` — the same box the device profile's enrolment
+   rows use, so this is that control and not a lookalike. The row is the owner's
+   22 Oct ruling about those rows ("it should start with the check box not with
+   the headings"): the mark holds the first column, the label sits beside it, and
+   the sentence runs the full width underneath, starting at the row's left edge.
+
+   What the sentence has to be: something that is only true if you go through
+   with it. "This can't be undone" is true whether you press Delete or Cancel, so
+   it is a restatement; "I know 2 rules will need another zone" is work the admin
+   is taking on, which is what there is to acknowledge. */
+.bx-confirm__ack {
+  display: grid; grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--space-3); row-gap: var(--space-1);
+  width: 100%; padding: var(--space-3);
+  background: var(--surface-sunken); border: var(--bw-thin) solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  font: inherit; text-align: start; cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-standard), background var(--dur-fast) var(--ease-standard);
+}
+.bx-confirm__ack:hover { border-color: var(--ctl-border-hover); }
+/* The field's focus recipe, not the enrolment row's 2px ring: in the top rung
+   this dialog shows an input and in the middle rung a checkbox, and two rungs of
+   one ladder that focus differently read as two different dialogs. */
+.bx-confirm__ack:focus-visible {
+  outline: none;
+  border-color: var(--ctl-border-focus);
+  box-shadow: 0 0 0 4px var(--focus-halo);
+}
+.bx-confirm__acklabel { grid-column: 2; font-size: var(--fs-md); color: var(--text-primary); }
+
+/* Why the action cannot be taken yet, said in the dialog rather than in a
+   `title`. A tooltip is pointer-only — the HTML spec discourages relying on it
+   — so the one person who most needs to know why Delete is inert, the keyboard
+   or touch user standing in the gate, was the one who could not read it. */
+.bx-confirm__why { margin: var(--space-4) 0 0; font-size: var(--fs-sm); color: var(--text-tertiary); }
+
+@media (prefers-reduced-motion: reduce) {
+  .bx-confirm__use { transition: none; }
+}
+
+/* --- Review changes (kit ReviewChanges) --------------------------------------------
+
+   The dialog's frame: the layout switch in the header, and padding round the
+   change list. The list itself is `.bx-cl` below. (17 Sep 2026: the carded,
+   colour-filled `.bx-rv__*` version stood here.) */
+.bx-modal__extra {
+  flex: none; display: flex; align-items: center;
+  margin: -5px 0 -5px auto;
+}
+.bseg.bx-rv__views { flex-wrap: nowrap; }
+.bx-rv { padding: var(--space-4) var(--space-7) var(--space-6); }
+.bx-review__none, .bx-review__blocked { margin: var(--space-4) 0; font-size: var(--fs-md); color: var(--text-secondary); }
+.bx-review__blocked { color: var(--fb-notice-fg); font-weight: var(--fw-medium); }
+
+/* --- A list of changes (change-list.tsx) --------------------------------------------
+
+   Review changes' body and the device profile wizard's Review. The live
+   console's own Review Changes is the reference, on this console's tokens and
+   without its tint on every row:
+
+     a SECTION per part of the page, as an accordion — a chevron, the section's
+     name and how many changes it holds; inside it, a tinted chip per kind over
+     the rows it covers; and a row that is a name and a value on ONE line,
+     close together, on a quiet fill.
+
+   The two things being fixed on 18 Sep 2026: the name sat on the left edge and
+   the value against the right, a hand-span of white apart ("the user has to
+   read on the left and then go all the way to the right"), and every added row
+   in the review was pooled under one heading whatever section it came from.
+   ONE grid for the whole review, not one per section: every value in it
+   starts past the longest name anywhere in the review, so Profile, Devices and
+   Signals line their values up on a single x. Per section, the three columns
+   landed in three different places and read as three reviews (owner, 18 Sep
+   2026: "make it consistent in terms of spacing and width… we can make it as a
+   single review").
+
+   The rows breathe: 33px each, against the 25px they were when the same owner
+   asked for compact — "add some space between each row, it feels very
+   congested". One spacing scale all the way down: 6px inside a row, 8px
+   between blocks, 16px between sections.
+
+   Colour: the kind's chip and the value, both from the feedback ramps. Rows
+   have no rules and no icons. */
+/* The container sits on the wrapper so the narrow rules can restyle the list
+   itself; an element is never matched by its own container query. */
+.bx-cl__wrap { container: bx-cl / inline-size; min-width: 0; }
+.bx-cl { display: flex; flex-direction: column; gap: var(--space-6); min-width: 0; }
+
+/* Before and after: one grid for the key and every row. */
+.bx-cl.is-compare .bx-cl__key,
+.bx-cl.is-compare .bx-cl__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 13px minmax(0, 1fr);
+  column-gap: var(--space-5);
+  align-items: center;
+}
+/* The key is drawn once, above the first section. It does NOT stick: past
+   twelve rows only one section is open, and a pinned key then named two
+   columns that were nowhere on screen. */
+.bx-cl__key {
+  padding: var(--space-2) var(--space-5) var(--space-3);
+  border-bottom: var(--bw-thin) solid var(--border-subtle);
+  font-size: var(--fs-sm); color: var(--text-tertiary);
+}
+
+/* --- A section, as an accordion -------------------------------------------------- */
+.bx-cl__sec { min-width: 0; }
+.bx-cl__head {
+  display: flex; align-items: center; gap: var(--space-4);
+  min-height: 26px;
+}
+/* `.bx-modal h3` and `.bpage h3` set the size and weight; this sets the rest. */
+.bx-cl__title {
+  flex: 1 1 auto; min-width: 0;
+  display: flex; align-items: center; gap: var(--space-4);
+  margin: 0;
+  font-size: var(--fs-md); font-weight: var(--fw-semibold); color: var(--text-primary);
+}
+/* The whole header line opens the section — a title you can only open by
+   hitting a 15px chevron is the usual fault of this pattern. */
+.bx-cl__toggle {
+  flex: 1 1 auto; min-width: 0;
+  display: flex; align-items: center; gap: var(--space-4);
+  margin-left: -4px; padding: var(--space-1) 4px;
+  border: 0; border-radius: var(--radius-md); background: none;
+  font: inherit; color: inherit; text-align: left; cursor: pointer;
+}
+.bx-cl__toggle:hover { color: var(--text-link); }
+.bx-cl__toggle:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--focus-halo); }
+.bx-cl__chev {
+  flex: none; color: var(--text-tertiary);
+  transform: rotate(-90deg);
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+.bx-cl__sec.is-open .bx-cl__chev { transform: none; }
+.bx-cl__count {
+  margin-left: auto;
+  font-size: var(--fs-sm); font-weight: var(--fw-regular); color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+
+.bx-cl__body { display: flex; flex-direction: column; gap: var(--space-4); padding-top: var(--space-4); }
+/* A shut section stays MOUNTED and hides with `hidden`, because the toggle's
+   `aria-controls` has to point at something that exists (change-list.tsx). The
+   UA's `[hidden] { display: none }` is the weakest rule there is, so the author
+   `display` above — and the `display: grid` the list view sets below — both
+   beat it and the section never actually collapsed. Say it again, louder, at a
+   specificity that clears the list view's three-class selector. */
+.bx-cl__body[hidden],
+.bx-cl.is-list .bx-cl__body[hidden] { display: none; }
+
+/* --- A block of rows, under its kind's chip -------------------------------------- */
+.bx-cl__block {
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-lg);
+  background: var(--surface-sunken);
+}
+.bx-cl__kindrow { margin: 0 0 var(--space-3); }
+/* The kind's chip IS the kit's badge — see `BADGE_TONE` in change-list.tsx —
+   so it carries the one pill family's geometry, type and tones with nothing
+   restated here. Only the measure: a badge caps at 14ch for a table cell, and
+   "Happens for you" is longer than that. */
+.bx-cl__kind { --badge-max: none; }
+
+/* --- The rows -------------------------------------------------------------------- */
+/* 25px: one 14px line at the root's 1.5 line-height, plus 2px either side.
+   There is no min-height — a single line already exceeds any floor worth
+   setting, so one would only mislead the next person retuning this. */
+.bx-cl__rows { margin: 0; padding: 0; list-style: none; }
+.bx-cl__row { padding-block: var(--space-3); font-size: var(--fs-md); }
+.bx-cl__name { min-width: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
+.bx-cl__before { min-width: 0; color: var(--text-tertiary); overflow-wrap: anywhere; }
+.bx-cl__after,
+.bx-cl__value { min-width: 0; color: var(--text-primary); font-weight: var(--fw-medium); overflow-wrap: anywhere; }
+.bx-cl__arrow { color: var(--text-muted); }
+
+/* List: the name, then what it will be. The grid is on the WHOLE list and
+   every level below subgrids to it — section, body, block, rows, row — so one
+   pair of columns runs through the review and a value in Signals starts where
+   a value in Profile does.
+
+   `fit-content(320px)`, not `minmax(auto, 260px)`: the name track sizes to the
+   LONGEST NAME IN THE REVIEW and stops there, instead of holding a fixed 260px
+   whatever is in it. The old track took its full 260px even when the only row
+   said "macOS version" — 95px of text, then 210px of nothing, then the value
+   (owner, 23 Sep 2026: "why so much space here"). `fit-content` keeps the two
+   things the shared column was for — every value in the review starts on one
+   x, and a name is never cut — while spending no width on names nobody wrote.
+   The 320px ceiling is where a name stops growing and starts wrapping, so one
+   long attribute cannot push the values off the right of the panel.
+
+   24px between a name and its value. It was 40px, set when the column was a
+   fixed 260px and every value looked detached from its name; with the track
+   hugging the text, 40px put the hole back. Every block carries the same
+   padding, so the fills offset their tracks by the same amount and the columns
+   still agree. */
+.bx-cl.is-list {
+  display: grid; grid-template-columns: fit-content(320px) minmax(0, 1fr);
+  column-gap: var(--space-8); row-gap: var(--space-6);
+}
+/* A SUBGRID DOES NOT INHERIT THE PARENT'S GAP, and that is what made the
+   review look broken however the tracks were written.
+
+   `grid-template-columns: subgrid` lines a child up with the parent's tracks,
+   but the child's own `column-gap` decides the space between them — and these
+   levels had one: `.bx-cl__body` carries `gap: var(--space-4)` from its flex
+   layout, which survives into the grid as an 8px column gap. So the outer 40px
+   was never drawn; the value sat 8px off its name while the NAME TRACK held a
+   fixed 260px, which is the hole the owner saw ("why so much space here").
+   Measured in the browser: every value of the outer gap, from 16 to 40px, came
+   out as 8px on screen. Set it on every level and the declared gap is the one
+   you get — 24px, verified. */
+.bx-cl.is-list .bx-cl__sec,
+.bx-cl.is-list .bx-cl__body,
+.bx-cl.is-list .bx-cl__block,
+.bx-cl.is-list .bx-cl__rows,
+.bx-cl.is-list .bx-cl__row {
+  grid-column: 1 / -1;
+  display: grid; grid-template-columns: subgrid;
+  column-gap: var(--space-8);
+}
+.bx-cl.is-list .bx-cl__sec { row-gap: var(--space-4); }
+.bx-cl.is-list .bx-cl__body { row-gap: var(--space-4); padding-top: 0; }
+.bx-cl.is-list .bx-cl__row { align-items: baseline; padding-block: var(--space-3); }
+/* The header, the chip, the note and the link span both tracks. */
+.bx-cl.is-list .bx-cl__head,
+.bx-cl.is-list .bx-cl__kindrow,
+.bx-cl.is-list .bx-cl__none,
+.bx-cl.is-list .bx-cl__more { grid-column: 1 / -1; }
+/* A row with no name of its own: the value takes the line. */
+.bx-cl.is-list .bx-cl__row.is-bare .bx-cl__value { grid-column: 1 / -1; }
+/* The values are ink (owner, 23 Sep 2026: "only black for the list, the colour
+   in the pills on the headings is enough"). The kind chip over the block says
+   added, changed, removed or effect once; repeating it in every value below it
+   tinted whole paragraphs of the dialog. In Before & after the old value keeps
+   its quieter ink and its strike, which is what tells the two columns apart. */
+/* On its way out: struck, and never the dark ink of a value that stays. */
+.bx-cl__value.is-leaving {
+  font-weight: var(--fw-regular);
+  text-decoration: line-through; text-decoration-thickness: 1px;
+}
+/* Nothing there: a quiet word or a dash, never struck or tinted. */
+.bx-cl__nil { color: var(--text-muted); font-weight: var(--fw-regular); text-decoration: none; }
+.bx-cl__value.is-leaving .bx-cl__nil { display: inline-block; }
+
+.bx-cl__none {
+  margin: 0; padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-lg); background: var(--surface-sunken);
+  font-size: var(--fs-md); color: var(--text-muted);
+}
+.bx-cl__more {
+  align-self: flex-start;
+  margin: 0 0 0 var(--space-5); padding: 0;
+  border: 0; background: none; cursor: pointer;
+  font: inherit; font-size: var(--fs-md); font-weight: var(--fw-medium); color: var(--text-link);
+}
+.bx-cl__more:hover { text-decoration: underline; }
+.bx-cl__more:focus-visible { outline: none; border-radius: var(--radius-xs); box-shadow: 0 0 0 3px var(--focus-halo); }
+
+/* Narrow: the name on its own line, the values under it. */
+@container bx-cl (max-width: 519px) {
+  .bx-cl.is-compare .bx-cl__key { display: none; }
+  .bx-cl.is-compare .bx-cl__row { grid-template-columns: minmax(0, 1fr) 13px minmax(0, 1fr); row-gap: 0; padding-block: var(--space-2); }
+  .bx-cl.is-compare .bx-cl__name { grid-column: 1 / -1; }
+  /* One track, so a row's name and value stack instead of fighting over ~280px. */
+  .bx-cl.is-list { grid-template-columns: minmax(0, 1fr); }
+  .bx-cl.is-list .bx-cl__row { padding-block: var(--space-2); }
+  .bx-cl.is-list .bx-cl__value { font-weight: var(--fw-semibold); }
+}
+
+/* --- The confirm --------------------------------------------------------------
+   Two shapes on the Modal shell (owner, 22 Oct 2026). The tone is four custom
+   properties set once per dialog — exactly how the toast sets `--toast-tone`
+   (shell.css) — so the mark, the glow and the rings all read from one place and
+   adding a tone costs one line rather than five rules. Every value is a token:
+   the feedback ramps are the same ones the toast, the Callout and the status
+   pills already use.
+
+   `--dlg-glow` is the ramp's DOT and not its FG, which is the whole reason the
+   first hero looked muddy. The fg is ink meant to be read on a tinted chip —
+   #b02a37 maroon, #7a5a00 olive — and tinting a white card with ink pulls the
+   red channel off white, so the delete came out brown and the warning came out
+   khaki. The dot is the ramp's own bright signal colour, and 8% of it in oklab
+   lands on a clean pale wash of the right hue. The fg still inks the text; the
+   dot lights the card. */
+.bx-confirm { --dlg-fg: var(--fb-info-fg); --dlg-bg: var(--fb-info-bg); --dlg-edge: var(--fb-info-border); --dlg-glow: var(--fb-info-dot); }
+.bx-confirm.is-success { --dlg-fg: var(--fb-positive-fg); --dlg-bg: var(--fb-positive-bg); --dlg-edge: var(--fb-positive-border); --dlg-glow: var(--fb-positive-dot); }
+.bx-confirm.is-removed,
+.bx-confirm.is-error { --dlg-fg: var(--fb-negative-fg); --dlg-bg: var(--fb-negative-bg); --dlg-edge: var(--fb-negative-border); --dlg-glow: var(--fb-negative-dot); }
+.bx-confirm.is-warning { --dlg-fg: var(--fb-notice-fg); --dlg-bg: var(--fb-notice-bg); --dlg-edge: var(--fb-notice-border); --dlg-glow: var(--fb-notice-dot); }
+
+/* 8px to the body, not 4: it is what Material and Fluent both put between a
+   dialog's title and its text, and what every other stacked pair in this
+   console uses. At 4 the two read as one wrapped sentence. */
+.bx-confirm__title { margin: 0 0 var(--space-4); font-size: var(--fs-lg); font-weight: var(--fw-semibold); color: var(--text-primary); overflow-wrap: anywhere; }
+.bx-confirm__body { margin: 0; color: var(--text-secondary); }
+.bx-confirm__body + .bx-confirm__body { margin-top: var(--space-3); }
+.bx-confirm__text { min-width: 0; }
+/* There is no head row, so the close control floats over the card's top-right.
+   The title keeps clear of it rather than running underneath. */
+.bx-confirm--rows .bx-confirm__title { padding-inline-end: var(--space-8); }
+
+/* The rows shape: the mark holds a column so the title and the list share one
+   left edge. */
+.bx-confirm--rows { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-4); padding: var(--space-7); }
+.bx-confirm__chip {
+  flex: none; width: 34px; height: 34px; border-radius: 999px;
+  display: grid; place-items: center;
+  background: var(--dlg-bg); color: var(--dlg-fg);
+}
+
+/* The hero shape: a spotlight, not a band. The tint glows out from behind the
+   badge and dies into the card, so there is no seam where a tinted header would
+   have stopped — which is the difference between the owner's reference and the
+   first attempt at it. */
+/* More room (owner, 23 Oct 2026: "give some more space, it feels very compacted, cluttered, make things two lines if
+   possible, and make it global"): wider side gutters, a text column wide enough that a one-sentence body sets in
+   two or three lines rather than four, and more air between the title, the body and the buttons. */
+.bx-confirm--hero { padding: 0 var(--space-10) var(--space-9); text-align: center; }
+.bx-confirm--hero .bx-confirm__text { max-width: 46ch; margin-inline: auto; }
+.bx-confirm--hero .bx-confirm__title { margin-bottom: var(--space-5); }
+/* Balanced lines: centred, a sentence that wrapped by width alone left one word on its last line ("…and becomes a /
+   draft."), which reads as a stray rather than as the end of the sentence. */
+.bx-confirm--hero .bx-confirm__body { line-height: 1.65; text-wrap: balance; }
+
+/* The template band's own treatment (owner, 22 Oct 2026: "remember we did
+   something for the templates, that gradient"), lifted from create.css
+   `.bmarket__hero`: a vertical tint mixed in oklab, deepest at the top edge and
+   flat well before the title. Three changes for this use — it is tinted by the
+   dialog's TONE rather than by `--accent` (which is BLUE in the rebrand skin, so
+   copying that declaration literally would have given every confirm a blue
+   wash); it bleeds to the card's edges, because a dialog has no page gutter to
+   sit inside; and it has no dotted canvas.
+
+   THE DOTS ARE GONE, and that is the fix rather than a simplification. A
+   background-image layer takes no part in the gradient above it, so the 12px
+   grid stood at full strength all the way down while the tint faded out —
+   measured, the dot over the top stop and the dot over the bottom were within a
+   step of each other. The lower half of the hero was therefore grey stipple on
+   white with no colour behind it, which drew the very seam the comment above
+   says the spotlight exists to avoid. The templates page can keep its grid
+   because its band ends on a real 1px edge against a different surface; a
+   dialog has no such edge to stop at.
+
+   THE HEIGHT IS FIXED, so the ripple has a frame to be centred in. It used to be
+   content-driven at about 104px, which cut the outer rings into lens shapes
+   against `overflow: hidden`. */
+.bx-confirm__hero {
+  position: relative; display: grid; place-items: center;
+  height: 176px;
+  margin-inline: calc(-1 * var(--space-10));
+  margin-bottom: var(--space-2);
+  overflow: hidden;
+  background:
+    radial-gradient(circle 150px at 50% 54%, color-mix(in oklab, var(--dlg-glow) 12%, transparent) 0%, transparent 72%),
+    linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--dlg-glow) 8%, var(--surface-raised)) 0%,
+      color-mix(in oklab, var(--dlg-glow) 3%, var(--surface-raised)) 52%,
+      var(--surface-raised) 88%
+    );
+}
+/* `inset: 0; margin: auto` centres each ring WITHOUT a transform. Motion owns
+   `scale` on these to animate them, and it overwrites any CSS transform on an
+   element it drives — the trap this console's rules call out by name.
+
+   Each ring carries its own colour instead of all four sharing one hairline at
+   half opacity. Four hoops of equal weight read as a target; three that fade
+   outward read as a glow, and the innermost is the strongest because that is
+   where the light is coming from. The ramp's border colour was too dark for
+   this at any opacity — every one of the old rings was darker than the darkest
+   ring in the owner's reference — so they are mixed from the glow instead. */
+/* The wrapper comes out of the flow too. Left in it, the band was a two-row
+   grid — an empty rings row and a badge row — and `place-items: center` then
+   centred the badge inside the SECOND row rather than in the band, which sat it
+   28px low with the ripple still centred around the middle. */
+.bx-confirm__rings { position: absolute; inset: 0; }
+.bx-confirm__rings i {
+  position: absolute; inset: 0; margin: auto;
+  border-radius: 999px; border: var(--bw-thin) solid transparent;
+}
+.bx-confirm__rings i:nth-child(1) { border-color: color-mix(in oklab, var(--dlg-glow) 14%, var(--surface-raised)); }
+.bx-confirm__rings i:nth-child(2) { border-color: color-mix(in oklab, var(--dlg-glow) 9%, var(--surface-raised)); }
+.bx-confirm__rings i:nth-child(3) { border-color: color-mix(in oklab, var(--dlg-glow) 5%, var(--surface-raised)); }
+/* The ring sizes are set by the component, beside the stagger that animates
+   them: two places deciding one ripple is how the fourth ring ends up a
+   different distance from the third. */
+/* The badge is lit by the glow rather than cut out of it. A hard 7px white
+   collar and a neutral grey drop read as a sticker pasted onto a tinted field;
+   a soft coloured shadow in the tone's own colour reads as the mark lighting
+   the card, which is what the reference does. The icon takes the glow too, not
+   the darker ink: on a pale wash the ink looks like a different icon set. */
+.bx-confirm__badge {
+  position: relative; width: 64px; height: 64px; border-radius: 999px;
+  display: grid; place-items: center;
+  background: var(--surface-raised); color: var(--dlg-glow);
+  box-shadow: 0 4px 24px color-mix(in srgb, var(--dlg-glow) 16%, transparent), var(--el-low);
+}
+
+/* The hero's footer is the card's own floor, not a bar across it. A tinted
+   strip with a rule above it is right for a form, where it separates what you
+   are filling in from what submits it; under a centred spotlight it cuts the
+   card in two and makes the glow look like a header on something else. The
+   buttons sit centred under the sentence they answer, which is also where the
+   owner's reference puts them.
+
+   `:has` on the panel rather than a prop, because the footer is Modal's and the
+   shape is the confirm's — the same way `.bx-cl` reads its list state. */
+.bx-modal:has(.bx-confirm--hero) .bx-modal__foot {
+  justify-content: center;
+  gap: var(--space-5);
+  padding: var(--space-2) var(--space-10) var(--space-9);
+  border-top: 0;
+  background: none;
+}
+
+/* The things being changed. Names are the reason the dialog exists, so they are
+   a list and not a sentence. */
+.bx-confirm__rows {
+  margin: var(--space-4) 0 0; padding: 0; list-style: none;
+  border: var(--bw-thin) solid var(--border-subtle); border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.bx-confirm__row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--space-3); padding: var(--space-3) var(--space-5);
+  font-size: var(--fs-sm); color: var(--text-body);
+}
+.bx-confirm__row + .bx-confirm__row { border-top: var(--bw-thin) solid var(--border-subtle); }
+/* `__rowname`, not `__name`: ConfirmDelete's usage list already owns
+   `.bx-confirm__name` (line ~1626, with `flex: 1`), and a second rule for the
+   same class later in the file silently overrode it in every delete dialog. */
+.bx-confirm__rowname { min-width: 0; overflow-wrap: anywhere; }
+.bx-confirm__said { flex: none; color: var(--text-tertiary); }
+/* `--fs-sm`, not `--fs-xs`: this console has a 12px type floor and `--fs-xs` is 11. */
+.bx-confirm__pill { flex: none; font-size: var(--fs-sm); font-weight: var(--fw-semibold); border-radius: 999px; padding: 2px var(--space-3); }
+.bx-confirm__pill.is-gone { background: var(--fb-negative-bg); color: var(--fb-negative-fg); }
+.bx-confirm__pill.is-moves { background: var(--fb-notice-bg); color: var(--fb-notice-fg); }
+.bx-confirm__more {
+  padding: var(--space-3) var(--space-5); font-size: var(--fs-sm);
+  color: var(--text-tertiary); background: var(--surface-sunken);
+}
+
+/* Narrow: the mark keeps its column, but a pill drops under the name rather
+   than squeezing it or forcing the row to scroll sideways. */
+@media (max-width: 600px) {
+  .bx-confirm__row { flex-direction: column; align-items: flex-start; gap: var(--space-1); }
+}
+
+
+/* One face, named (faces.tsx). The mark keeps its size and the name sits beside it, so a row of one reads as the
+   word it stands for rather than as two letters with a hover attached. */
+.bx-faces.is-one { display: inline-flex; align-items: center; gap: var(--space-3); }
+.bx-faces.is-one .bx-faces__name { font-weight: var(--fw-medium); color: var(--text-secondary); font-size: var(--fs-sm); }
+
+/* The parts `Confirm` grew when it came up to ConfirmDelete's structure
+   (22 Oct 2026). Deliberately NOT reusing ConfirmDelete's own `__sec`, `__use`,
+   `__policy` and `__name` classes while both components exist: a second rule for
+   a class the other already owns is how `.bx-confirm__name` silently overrode
+   its `flex: 1` earlier today. They converge when ConfirmDelete migrates.
+   `.bx-confirm__type` IS shared on purpose — it is the same field, already
+   styled, and one typed-confirm look is the point. */
+.bx-confirm__warn { margin-block: 0 var(--space-4); }
+.bx-confirm__group { margin-block-start: var(--space-5); }
+.bx-confirm__group:first-of-type { margin-block-start: var(--space-4); }
+.bx-confirm__grouphead {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-md); font-weight: var(--fw-semibold); color: var(--text-primary);
+}
+/* The caption sits between the heading and the rows, so it loses the body's
+   bottom margin and gains a small one of its own. */
+.bx-confirm__group > .bx-confirm__body { margin-block-end: var(--space-3); }
+
+/* A row that opens what it names: the whole row is the target, the chevron only
+   says so. */
+.bx-confirm__open {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+  margin: calc(-1 * var(--space-3)) calc(-1 * var(--space-5));
+  padding: var(--space-3) var(--space-5);
+  background: none; border: 0; font: inherit; color: inherit; text-align: start; cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-standard);
+}
+.bx-confirm__open:hover { background: var(--surface-sunken); }
+.bx-confirm__open:hover .bx-confirm__rowname { color: var(--text-link); }
+.bx-confirm__open:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
+.bx-confirm__chev { flex: none; color: var(--text-tertiary); }
+
+.bx-confirm__lines { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+/* Name and badge on one line, the badge never squeezed by a long name. */
+.bx-confirm__namerow { min-width: 0; display: flex; align-items: center; gap: var(--space-2); }
+/* The rules that use it: the reason the row is worth reading, in the quiet
+   voice so the name still leads. */
+.bx-confirm__detail { font-size: var(--fs-sm); color: var(--text-tertiary); overflow-wrap: anywhere; }
+
+/* A row with a second line is taller, so it aligns to the top rather than
+   centring a two-line block against a one-line mark. */
+.bx-confirm__row:has(.bx-confirm__detail) { align-items: flex-start; }
+.bx-confirm__row:has(.bx-confirm__detail) .bx-confirm__pill,
+.bx-confirm__row:has(.bx-confirm__detail) .bx-confirm__said { margin-block-start: 2px; }
+
+/* The field's own top margin is gone: `.bx-confirm__gate` now wraps it in both
+   shapes and carries the one gap, so a rule here would stack on top of it. */
+
+@media (prefers-reduced-motion: reduce) {
+  .bx-confirm__open { transition: none; }
+}
+
+/* The footer's buttons share the row equally (owner, 23 Oct 2026: "make the buttons equal width, not hug content, it
+   looks weird"). Two answers of different lengths — Discard and Save — were two different-sized buttons side by side;
+   now each takes half the row, and one alone stays a sensible width rather than spanning it. */
+.bx-modal:has(.bx-confirm--hero) .bx-modal__foot > .bx-btn { flex: 1 1 0; min-width: 0; max-width: 200px; justify-content: center; }
+
+/* The hero's glow breathes (owner, 23 Oct 2026: "add some animation to the gradient as well"): a second wash over the
+   spotlight that swells and settles on a slow loop. A pseudo-element on a plain div, animating opacity and scale, so
+   nothing here can fight Motion; the rings and badge are later siblings and stay above it. Still under reduced motion. */
+.bx-confirm__hero::before {
+  content: ''; position: absolute; inset: -25%; pointer-events: none;
+  background: radial-gradient(circle at 50% 54%, color-mix(in oklab, var(--dlg-glow) 20%, transparent) 0%, transparent 58%);
+  animation: bx-hero-glow 4.8s ease-in-out infinite alternate;
+}
+@keyframes bx-hero-glow { from { opacity: 0.35; scale: 0.9; } to { opacity: 1; scale: 1.1; } }
+@media (prefers-reduced-motion: reduce) { .bx-confirm__hero::before { animation: none; opacity: 0.7; } }
+
+/* DELETE THAT READS AS DELETE (owner, 23 Oct 2026: "in delete use red, change it globally, so the user feels it").
+   A trash can goes red under the pointer and under keyboard focus — an icon button, a labelled neutral or ghost
+   button ("Delete rule"), and a danger menu row, icon and label together. Grey at rest in every one of them: a
+   destructive trigger is neutral until reached for. The danger Button is already red and keeps its own hover. Colour
+   only: the icon micro-motion that came with it (a lift, a tilt, a shake) was taken out the same day ("remove the
+   interactions from the action icons, not good"). */
+.bx-iconbtn svg, .bx-menu__item svg { transition: color var(--dur-fast) var(--ease-standard); }
+.bx-iconbtn:not(:disabled):has(svg.lucide-trash-2):is(:hover, :focus-visible),
+.bx-btn:is(.bx-btn--neutral, .bx-btn--ghost):not(:disabled):not([aria-disabled='true']):has(> svg.lucide-trash-2):is(:hover, :focus-visible) {
+  color: var(--fb-negative-fg); background: var(--fb-negative-bg); border-color: var(--fb-negative-border);
+}
+/* The label goes red on focus as well as hover (`.bx-menu__item.is-danger:focus strong`), and hover moves focus, so
+   the icon follows both: arrowing to Delete shows the same row the pointer does. */
+.bx-menu__item.is-danger:not(:disabled):is(:hover, :focus) svg { color: var(--fb-negative-fg); }
+
+/* READABLE POPUPS (owner, 23 Oct 2026: "make things more readable for all the popups … hierarchy in the type, logos
+   and icons … scannable; right now it feels like just a bold line, where should I focus?"). The title is the one
+   strong line, the sentence under it is quieter and shorter, and what the dialog touches sits in a sunken card of
+   chips the eye can take in at once. */
+.bx-confirm--hero .bx-confirm__title { font-size: var(--fs-xl, 18px); line-height: 1.35; letter-spacing: -0.005em; }
+.bx-confirm__body b, .bx-confirm__body strong { color: var(--text-primary); font-weight: var(--fw-semibold); }
+/* One card for every section the hidden lists had: its heading and short caption (the consequence), its names as the
+   kit's own pills (Badge, neutral — one pill family), and its `more`. The pill caps at the card rather than at a
+   table cell's 14ch, because a policy name clipped to "Developer tool…" no longer says which policy. */
+.bx-confirm__peek {
+  --badge-max: 100%;
+  margin: var(--space-5) auto 0; padding: var(--space-4);
+  display: flex; flex-direction: column; gap: var(--space-4);
+  background: var(--surface-sunken); border-radius: var(--radius-lg);
+}
+.bx-confirm__peekgroup { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); min-width: 0; }
+.bx-confirm__peekhead { margin: 0; font-size: var(--fs-md); font-weight: var(--fw-semibold); color: var(--text-primary); }
+.bx-confirm__peekline { margin: 0; font-size: var(--fs-sm); color: var(--text-secondary); }
+.bx-confirm__chips {
+  list-style: none; margin: 0; padding: 0; max-width: 100%;
+  display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-2);
+}
+.bx-confirm__chips > li { display: inline-flex; min-width: 0; max-width: 100%; }
+.bx-confirm__chips > li.is-more { align-items: center; font-size: var(--pill-fs); color: var(--text-secondary); }
+/* The neutral pill's grey fill all but vanishes on the sunken card, so here it takes the raised surface and a hairline:
+   the same pill, lifted off its ground. */
+.bx-confirm__chips .bx-badge--neutral { background: var(--surface-raised); border-color: var(--border-subtle); }
+/* A pill that opens what it names: the pill itself is the button, with a caret inside it. */
+.bx-badge.bx-confirm__peekopen { cursor: pointer; }
+.bx-badge.bx-confirm__peekopen > svg { flex: none; color: var(--text-tertiary); }
+.bx-badge.bx-confirm__peekopen:hover { border-color: var(--border-strong); color: var(--text-link); }
+.bx-badge.bx-confirm__peekopen:hover > svg { color: var(--text-link); }
+/* A fact line in a confirm's body: a logo or icon, then the words — for the dialogs that name applications. */
+.bx-confirm__fact { display: inline-flex; align-items: center; gap: var(--space-2); vertical-align: bottom; font-weight: var(--fw-semibold); color: var(--text-primary); }
+/* A policy (PolicyFact) or a template (TemplateFact) in a sentence: one tag, the kind on the left (the shield and the word
+   Policy; the layout mark and the word Template) and the name on the right, so it is never mistaken for the sentence's
+   own words.
+
+   A LONG NAME IS CUT, NOT WRAPPED (owner, 27 Oct 2026, of a name that ran to two lines and stretched the tag into a bar
+   the width of the card: "if the name is too big … maybe truncate the content so it doesn't break the design"). The tag
+   has a width of its own — `--fact-max`, raised by any context with room to spare, as `--badge-max` is for the badge —
+   and the name takes what is left of it on one line, ending in an ellipsis; the whole name is the tag's `title`. So the
+   tag is one line high at any length, and a sentence round it breaks where a word would, not inside it. */
+.bx-confirm__fact.bx-confirm__fact--tag {
+  gap: 0; align-items: stretch; vertical-align: middle; max-width: min(100%, var(--fact-max, 22rem)); text-align: start;
+  border: var(--bw-thin) solid var(--border-subtle); border-radius: var(--radius-md);
+  background: var(--surface-sunken); overflow: hidden;
+}
+.bx-confirm__kind {
+  flex: none; display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-inline-end: var(--bw-thin) solid var(--border-subtle);
+  background: var(--surface-inset); color: var(--text-muted);
+  font-size: var(--fs-xs); font-weight: var(--fw-medium);
+}
+.bx-confirm__factname { min-width: 0; padding: var(--space-1) var(--space-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

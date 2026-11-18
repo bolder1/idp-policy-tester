@@ -1,0 +1,166 @@
+import type { NewPolicyStart, Policy, Rule } from './data'
+
+/* Draft mode for policies — the rules both builders share.
+
+   A policy has at most two versions of its rules:
+   - the LIVE rules (`rules`, `fallback`), which decide sign-ins, and
+   - a saved DRAFT (`pendingDraft`), only on a published policy, which the
+     builders open on until it is published or discarded.
+
+   A policy whose status is `draft` has nothing live to protect, so saving a
+   draft writes straight into it and it never carries `pendingDraft`. */
+
+export interface RuleSet {
+  rules: Rule[]
+  fallback?: Rule
+}
+
+const ruleSet = (p: Pick<Policy, 'rules' | 'fallback'>): RuleSet => ({ rules: p.rules, fallback: p.fallback })
+
+/** The policy as a builder should open it: the saved draft if there is one, otherwise the live rules. */
+export function openForEditing(p: Policy): Policy {
+  if (p.provisional) return { ...p, rules: p.provisional.rules }
+  return p.pendingDraft ? { ...p, rules: p.pendingDraft.rules, fallback: p.pendingDraft.fallback } : p
+}
+
+/* --- A new policy, held until it has a rule ---------------------------------------
+
+   Owner, 2 Nov 2026, for the team: New policy made a draft at once, so pressing it and going back left an empty policy,
+   and an admin could pile them up. It takes a name first now (create/NewPolicyDialog.tsx), and a name alone does not
+   close the gap: Create, then Back, would still leave a named empty one. So nothing is kept until a save with a rule.
+
+   While the board is open the policy sits in the store marked `provisional`, because the board reads and renames its
+   policy there. No other screen can be drawn in that time. The store drops it on any way out, in the same paint
+   (`store.tsx`), so no list, picker or application's one slot ever sees it. The rules it started from stay on the mark
+   rather than in `rules`, so they read as unsaved: Save draft wakes up and leaving asks first, as any other edit does.
+   For the back end this is simply no create call until the first save. */
+
+/** A new policy, not kept until its first save with a rule. */
+export function newPolicy(p: Policy, start: NewPolicyStart = { rules: [] }): Policy {
+  return { ...p, provisional: start }
+}
+
+/** The mark comes off a policy as soon as a save gives it a rule, and only a policy holding the mark can keep it. */
+export function keptOrNew(p: Policy, before: Pick<Policy, 'provisional'> | undefined): Policy {
+  if (!p.provisional) return p
+  if (before?.provisional && p.rules.length === 0) return p
+  const { provisional: _gone, ...kept } = p
+  return kept
+}
+
+/** True when there is nothing to save yet: a policy needs a rule. The Global Default decides by its last row alone. */
+export const hasNoRules = (p: Pick<Policy, 'rules' | 'isSystem'>): boolean => p.rules.length === 0 && !p.isSystem
+
+/** What a refused save says. */
+export const NO_RULES_REASON = 'Add a rule first'
+
+/** A name the product gave, not the admin: "Untitled policy", "Untitled post sign-in policy 2". */
+export const isUntitled = (name: string): boolean => /^Untitled( post sign-in)? policy( \d+)?$/.test(name.trim())
+
+/** What a refused save says for a new policy still carrying the product's name. */
+export const UNNAMED_REASON = 'Name the policy first'
+
+/** What was last saved — the draft if there is one, otherwise the live rules. The "unsaved changes" baseline. */
+export function lastSaved(p: Policy): RuleSet {
+  return p.pendingDraft ? { rules: p.pendingDraft.rules, fallback: p.pendingDraft.fallback } : ruleSet(p)
+}
+
+const same = (a: RuleSet, b: RuleSet) => JSON.stringify({ r: a.rules, f: a.fallback }) === JSON.stringify({ r: b.rules, f: b.fallback })
+
+/** The same rules and last row: by reference when it can tell, by content when it can't. */
+export const sameRules = (a: RuleSet, b: RuleSet): boolean => (a.rules === b.rules && a.fallback === b.fallback) || same(a, b)
+
+/** Edits made since the last save or draft. Drives the leave guard, Save draft and the "Unsaved changes" pill. */
+export function hasUnsavedChanges(saved: Policy, draft: RuleSet): boolean {
+  return !same(lastSaved(saved), draft)
+}
+
+/** The draft differs from what is live — something to publish. Drives Review & save. */
+export function differsFromLive(saved: Policy, draft: RuleSet): boolean {
+  return !same(ruleSet(saved), draft)
+}
+
+/* Saving a draft: into the policy while it is still a draft, into
+   `pendingDraft` once it is published. A draft keeps the checks Describe it
+   tried its rules with, when they are passed; a published policy's saved
+   draft holds rules only, and its checks stay as they were stored. */
+export function withSavedDraft(p: Policy, d: RuleSet & { checks?: Policy['checks'] }, who = 'You', when = 'Just now'): Policy {
+  if (p.status === 'draft') {
+    return { ...p, rules: d.rules, fallback: d.fallback, ...('checks' in d ? { checks: d.checks } : null), pendingDraft: undefined, lastModified: when, modifiedBy: who }
+  }
+  /* Saving a draft identical to what is live keeps nothing worth keeping. */
+  if (same(ruleSet(p), d)) return { ...p, pendingDraft: undefined }
+  return { ...p, pendingDraft: { rules: d.rules, fallback: d.fallback, savedAt: when, savedBy: who } }
+}
+
+/** Publishing makes the draft live and ends it. */
+export function published(draft: Policy): Policy {
+  return { ...draft, pendingDraft: undefined }
+}
+
+/* --- Committing and switching on -----------------------------------------------
+
+   One rule for both builders and the list, so the same button leaves the same
+   status wherever it is pressed:
+   - a policy with no applications is unfinished, so it is a draft whatever else
+     happens (the system policy excepted);
+   - a draft that is committed becomes a published policy, switched off unless
+     the admin chose to turn it on;
+   - a published policy keeps its status. The status is read from the SAVED
+     policy, never the builder's copy, because the status can be changed from
+     the bar while an edit is open. */
+
+export type CommitIntent = 'keep-off' | 'turn-on'
+
+const hasApps = (p: Pick<Policy, 'appIds' | 'isSystem'>) => p.isSystem === true || p.appIds.length > 0
+
+/** The policy as Review & save stores it. */
+export function committed(saved: Policy, draft: Policy, intent: CommitIntent = 'keep-off'): Policy {
+  const base = published({ ...draft, status: saved.status })
+  if (!hasApps(base)) return { ...base, status: 'draft' }
+  if (saved.status === 'draft') return { ...base, status: intent === 'turn-on' ? 'active' : 'inactive' }
+  return base
+}
+
+/** Why a policy cannot be switched on, or null when it can. `errors` counts blocking errors on its live rules. */
+export function turnOnBlocker(p: Pick<Policy, 'appIds' | 'isSystem' | 'status' | 'pendingDraft'>, errors: number): string | null {
+  if (p.status === 'draft') return 'Review and save this draft first.'
+  if (!hasApps(p)) return 'Assign an application first.'
+  /* "Live" when a saved draft exists, because that draft may already be fixed. */
+  const rules = p.pendingDraft ? 'its live rules' : 'its rules'
+  if (errors > 0) return errors === 1 ? `Fix the error in ${rules} first.` : `Fix the ${errors} errors in ${rules} first.`
+  return null
+}
+
+/* Why a policy cannot be switched to monitoring, or null when it can.
+
+   Only the one reason that can be read: no application means no sign-in to
+   watch. Rule errors never block it — a monitoring policy enforces nothing, so
+   a broken rule there costs nobody a sign-in, and blocking only where the
+   reason is readable is the rule every Can't dialog follows. */
+export function monitorBlocker(p: Pick<Policy, 'appIds' | 'isSystem'>): string | null {
+  return hasApps(p) ? null : 'Assign an application first.'
+}
+
+/* A draft has nothing live to keep apart, so a policy that becomes a draft (its
+   last application removed) takes its saved draft as its rules. */
+export function asStored(p: Policy): Policy {
+  return p.status === 'draft' && p.pendingDraft
+    ? { ...p, rules: p.pendingDraft.rules, fallback: p.pendingDraft.fallback, pendingDraft: undefined }
+    : p
+}
+
+/** True when `next` differs from `prev` in anything but the audit stamp. */
+export function changedBeyondStamp(prev: Policy, next: Policy): boolean {
+  const strip = ({ lastModified: _m, modifiedBy: _b, ...rest }: Policy) => rest
+  return JSON.stringify(strip(prev)) !== JSON.stringify(strip(next))
+}
+
+/** The toast after a commit, from the status before and after. Shared by both builders so they say the same thing. */
+export function commitToast(before: Policy, after: Policy): string {
+  const name = after.name
+  if (after.status === 'draft') return `${name} saved as a draft`
+  if (after.status === before.status) return `${name} saved`
+  if (after.status === 'inactive') return `${name} saved. It is inactive.`
+  return `${name} saved and turned on`
+}

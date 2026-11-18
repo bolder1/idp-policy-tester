@@ -1,0 +1,101 @@
+/* ---------------------------------------------------------------------------
+   builder-test.css — the decision log (`bdl`).
+
+   Every colour is a token. (The test simulator that shared this file, `bts`,
+   went with its dialog on 16 Sep 2026.)
+   --------------------------------------------------------------------------- */
+
+/* === Decision log ========================================================== */
+
+.bdl { display: flex; flex-direction: column; gap: var(--space-5); }
+
+.bdl__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-5);
+}
+.bdl__export { margin-left: auto; }
+.bdl__export .bx-btn { display: inline-flex; align-items: center; gap: var(--space-3); }
+
+.bdl__range { display: flex; gap: var(--space-3); }
+
+.bdl__seg {
+  display: inline-flex;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  background: var(--surface-inset);
+  border: var(--bw-thin) solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+}
+.bdl__segbtn {
+  position: relative;
+  padding: var(--space-3) var(--space-5);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+.bdl__segbtn.is-on { color: var(--text-primary); font-weight: var(--fw-medium); }
+.bdl__segbg {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--el-low);
+}
+.bdl__seglabel { position: relative; display: inline-flex; align-items: center; gap: var(--space-3); }
+
+.bdl__scroll {
+  max-height: 46vh;
+  overflow: auto;
+  border: var(--bw-thin) solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+}
+
+.bdl__table { width: 100%; border-collapse: collapse; font-size: var(--fs-md); }
+.bdl__table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: var(--table-header-h);
+  padding: 0 var(--space-5);
+  text-align: left;
+  background: var(--surface-sunken);
+  border-bottom: var(--bw-thin) solid var(--border-subtle);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--text-tertiary);
+}
+.bdl__table td {
+  height: var(--table-row-h);
+  padding: 0 var(--space-5);
+  border-bottom: var(--bw-thin) solid var(--border-subtle);
+  color: var(--text-body);
+  vertical-align: middle;
+}
+.bdl__table tr:last-child td { border-bottom: none; }
+.bdl__table tbody tr { transition: background var(--dur-fast) var(--ease-standard); }
+.bdl__table tbody tr:hover { background: var(--surface-sunken); }
+
+.bdl__time { color: var(--text-tertiary); white-space: nowrap; }
+.bdl__user { color: var(--text-primary); }
+.bdl__app { display: inline-flex; align-items: center; gap: var(--space-4); white-space: nowrap; }
+.bdl__rule { color: var(--text-secondary); }
+
+/* The decision column is the kit DecisionChip: the same tinted pill as on a
+   rule card, with no dot. The log's own chip and its dots are gone. */
+
+/* === Reduced motion ========================================================
+   The JS springs are gated by useReducedMotion(); these are the CSS-side
+   transitions, which that hook cannot reach. Duration goes to 1ms rather than
+   0 so transitionend still fires — and it is set here rather than left to the
+   token override, because a transition that no longer moves but still takes
+   200ms is a control that feels broken. */
+@media (prefers-reduced-motion: reduce) {
+  .bdl *,
+  .bdl {
+    transition-duration: 1ms !important;
+    animation: none !important;
+  }
+}

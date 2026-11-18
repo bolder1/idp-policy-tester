@@ -1,0 +1,242 @@
+/* -----------------------------------------------------------------------------
+   Picker — trigger and portalled popup.
+
+   The popup is `position: fixed`, portalled to the app root (`.brand-root`), so
+   nothing in the page can clip it. That is the entire reason this control exists; see picker.tsx.
+   -------------------------------------------------------------------------- */
+
+.bx-picker {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+}
+.bx-picker.is-fill {
+  display: flex;
+  flex: 1;
+}
+
+.bx-picker__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  max-width: 100%;
+  padding: 0 var(--space-3) 0 var(--space-4);
+  background: var(--ctl-bg);
+  border: var(--bw-thin) solid var(--ctl-border);
+  border-radius: var(--ctl-radius);
+  color: var(--text-body);
+  font-family: inherit;
+  font-size: var(--fs-md);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.12s var(--ease-standard), box-shadow 0.12s var(--ease-standard);
+}
+.bx-picker__trigger--sm { height: var(--ctl-height-sm); }
+.bx-picker__trigger--md { height: var(--ctl-height-md); }
+.bx-picker.is-fill .bx-picker__trigger { width: 100%; }
+
+.bx-picker__trigger:hover { border-color: var(--ctl-border-hover); background: var(--ctl-bg-hover); }
+/* Disabled shows the ANSWER, greyed, with the chevron still there to say what
+   kind of control it is. The alternative — swapping it for plain text — put a
+   line of prose where every other row in the form had a field, which is what
+   the agentless enrolment question looked like (16 Sep 2026). */
+.bx-picker__trigger:disabled,
+.bx-picker__trigger:disabled:hover {
+  opacity: var(--disabled-opacity); cursor: not-allowed;
+  background: var(--surface-sunken); border-color: var(--ctl-border);
+}
+.bx-picker__trigger.is-open,
+.bx-picker__trigger:focus-visible {
+  outline: none;
+  border-color: var(--ctl-border-focus);
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 4px var(--focus-halo);
+}
+/* Neutral, not negative. An unset value on a rule somebody is halfway through
+   writing is a lifecycle state, not an alarm — it escalates to negative only
+   when the linter promotes it to a publish blocker. */
+.bx-picker__trigger.is-empty .bx-picker__value { color: var(--text-muted); }
+/* "Type  Device health": the prefix quiet, the value in ink — Claude's
+   "Sort by  Next run". */
+.bx-picker__prefix { flex: none; margin-right: var(--space-2); color: var(--text-tertiary); }
+/* The filter's own mark, before its prefix: the same tertiary ink, so the
+   answer stays the loudest thing on the trigger. */
+.bx-picker__icon { flex: none; margin-right: var(--space-3); color: var(--text-tertiary); }
+.bx-picker__icon + .bx-picker__prefix { margin-left: 0; }
+.bx-picker__trigger:has(.bx-picker__prefix) .bx-picker__value { font-weight: var(--fw-medium); }
+.bx-picker__trigger.is-invalid { border-color: var(--fb-negative-border); }
+
+.bx-picker__value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bx-picker__trigger svg { flex: none; color: var(--text-muted); }
+
+/* --- The popup -------------------------------------------------------------- */
+
+.bx-picker__pop {
+  position: fixed;
+  /* Above `--z-modal`, not below it: this is portalled out of the page, and a menu
+     opened from inside a dialog that renders behind that dialog is a menu you
+     cannot use. Below `--z-tooltip`, so a `Tip` can still explain an option. */
+  /* Kept border-box for the `document.body` fallback of `appRoot()`, which the
+     `.brand-root *` reset does not reach. Without this the 1px border sits OUTSIDE any width the
+     placement code sets — which is how the panel used to gain 2px per scroll
+     tick, since that code fed its own measurement back in. `.brpk` carries the
+     same line for the same reason. */
+  box-sizing: border-box;
+  z-index: var(--z-popover, 500);
+  max-width: min(420px, calc(100vw - 16px));
+  /* The pre-measurement cap only. Once placed, the panel takes the room its
+     side actually has — see `place()`. */
+  max-height: 340px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface-overlay, var(--surface-raised));
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--el-high, var(--el-mid));
+}
+
+.bx-picker__pop *,
+.bx-picker__pop *::before,
+.bx-picker__pop *::after {
+  box-sizing: border-box;
+}
+
+.bx-picker__search {
+  flex: none;
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.bx-picker__search input {
+  width: 100%;
+  height: var(--ctl-height-sm);
+  padding: 0 var(--space-4);
+  background: var(--surface-inset);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: var(--fs-md);
+  color: var(--text-primary);
+}
+.bx-picker__search input:focus-visible { outline: none; border-color: var(--ctl-border-focus); box-shadow: 0 0 0 3px var(--focus-halo); }
+
+.bx-picker__list {
+  flex: 1;
+  margin: 0;
+  padding: var(--space-2);
+  list-style: none;
+  overflow-y: auto;
+}
+
+/* The empty state (picker.tsx): the kit block, compact, in place of the option
+   list. It scrolls rather than clips when the popup is squeezed near a window
+   edge. */
+.bx-picker__empty { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.bx-picker__empty .bempty.is-compact { padding: var(--space-6) var(--space-5); }
+
+.bx-picker__head {
+  padding: var(--space-3) var(--space-4) var(--space-2);
+  color: var(--text-muted);
+}
+
+.bx-picker__opt {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--text-body);
+}
+.bx-picker__opt.is-cursor { background: var(--surface-sunken); }
+.bx-picker__opt.is-on { color: var(--text-primary); }
+.bx-picker__opt.is-off { opacity: 0.45; cursor: not-allowed; }
+.bx-picker__opt svg { flex: none; color: var(--text-muted); }
+/* The tick, in the brand, and it needs the extra selector to get there.
+
+   `.bx-picker__tick` sets `color: var(--accent)` on the wrapper and has done
+   since it was written — but the rule directly above paints every `svg` inside
+   an option `--text-muted`, at equal specificity and later in the file, so the
+   check inherited grey and the chosen row was marked in the same ink as the
+   icons beside it. One selector deeper, and the one glyph in the popup that
+   says "this is the one you are on" says it in the colour this console reserves
+   for exactly that. */
+.bx-picker__opt .bx-picker__tick svg { color: var(--accent); }
+
+/* A logo or avatar, sized by whatever the caller put in it. */
+.bx-picker__art {
+  flex: none;
+  display: flex;
+  align-items: center;
+}
+
+.bx-picker__tick {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  color: var(--accent);
+}
+
+.bx-picker__opttext {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.bx-picker__opttext strong {
+  font-weight: var(--fw-regular);
+  font-size: var(--fs-md);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bx-picker__opt.is-on .bx-picker__opttext strong { font-weight: var(--fw-medium); }
+.bx-picker__opttext em {
+  font-style: normal;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+.bx-picker__footer {
+  flex: none;
+  width: 100%;
+  padding: var(--space-3) var(--space-5);
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-sunken);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+.bx-picker__footer:hover { color: var(--text-primary); background: var(--surface-inset); }
+
+/* --- Skeleton ---------------------------------------------------------------- */
+
+.bx-skel {
+  display: inline-block;
+  background: linear-gradient(
+    90deg,
+    var(--surface-inset) 0%,
+    var(--surface-sunken) 50%,
+    var(--surface-inset) 100%
+  );
+  background-size: 200% 100%;
+  animation: bx-skel 1.2s var(--ease-standard) infinite;
+}
+@keyframes bx-skel {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bx-skel { animation: none; }
+}

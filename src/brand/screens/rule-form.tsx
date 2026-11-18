@@ -1,0 +1,1321 @@
+import { Fragment, useRef, useState } from 'react'
+import {
+  AlertTriangle,
+  Check,
+  Clock,
+  Copy,
+  EllipsisVertical,
+  Gauge,
+  Globe,
+  Info,
+  ListFilter,
+  type LucideIcon,
+  MapPin,
+  MonitorSmartphone,
+  Plus,
+  ShieldAlert,
+  UserCheck,
+  Webhook,
+  X,
+  XCircle,
+} from 'lucide-react'
+
+import { MenuButton, Tip, TipDot, Toggle, type MenuItem } from '../kit'
+import { Picker } from '../picker'
+import { cardJoin, cardLetter, ckey, duplicatedAcrossCards, topJoin } from '../predicate'
+import { predicateParts, whoSentence, type NameLookup } from './predicate-prose'
+import {
+  card,
+  cond,
+  conditionType,
+  splitPick,
+  pruneScopes,
+  type AccessDecision,
+  type Condition,
+  type ConditionCard,
+  type Rule,
+} from '../data'
+import { ConditionList, ConditionPopover, condSummary, valueSource } from './ConditionPopover'
+import { conditionTone } from './board/tones'
+import { useBrand, useNameLookup } from '../store'
+import { RULE_METHODS } from '../methods'
+import type { Diagnostic } from './diagnostics'
+
+/* -----------------------------------------------------------------------------
+   The rule form, and the live preview that answers it.
+
+   Pulled out of v4 the moment v5 needed the same form in three different
+   layouts. Two implementations of a form this long is two places for the factor
+   configuration to drift, and drift in THIS form means two screens disagreeing
+   about what a rule does.
+
+   So: v4 gives the form a permanent middle column, v5 hosts it inside an
+   expanding step or a fixed inspector, and both are rendering these components.
+   The host owns layout, selection and history; this module owns the fields.
+   -------------------------------------------------------------------------- */
+
+const GROUP_ICON: Record<string, LucideIcon> = {
+  Network: Globe,
+  Location: MapPin,
+  Device: MonitorSmartphone,
+  Risk: Gauge,
+  Time: Clock,
+  'Custom attributes': ListFilter,
+  Webhooks: Webhook,
+}
+
+/* `GROUP_LABEL` was here — a second name for four of the nine components,
+   because a rail heading reading "Device" wanted to say "Device profiles". The
+   rail is gone with the dialog, and the four attributes name themselves now:
+   the row IS "Device profile". */
+/* `GROUP_TONE` stood here — a private copy of the board's map, keyed by
+   `Network`, `Location`, `Device`, `Custom attributes` and `Webhooks`.
+
+   The catalogue has not had those groups for some time; it has `Library`,
+   `Time`, `Attributes`, `Risk`, `Group` and `User`. So every lookup returned
+   `undefined` and every condition in this builder fell to neutral — the same
+   silent failure the board's copy had, which is what having two copies buys
+   you. The trail reads from `tones.ts` now, with the board, so a Network zone
+   is one colour on both builders or on neither.
+   */
+
+/* `METHOD_GROUPS` was here, filtering three groups out of the condition pool.
+   It had already stopped doing anything — no catalogue entry has carried those
+   groups for some time — and the pool it filtered is `WHEN_CONDITIONS` now,
+   which is filtered on the model rather than by a name match here. */
+
+/* Two outcomes, not three.
+
+   "Require MFA" was never a third thing that can happen to a sign-in. It is
+   Allow with a condition attached — the person still gets in, they are just
+   asked for more on the way — and standing it beside Deny as a peer made the
+   one genuinely binary decision in the product look like a three-way choice.
+   It also hid a rule: Allow and Require MFA shared every control beneath them,
+   which you could only discover by picking one.
+
+   So: Allow or Deny, and the second factor is a switch inside Allow.
+
+   The MODEL keeps all three values. `2fa` is still a distinct decision — it is
+   what the flow rail tints, what the gauntlet grades and what the review counts
+   — and collapsing it would throw that away to tidy a form. Only the
+   presentation changes. */
+export const OUTCOMES: { id: AccessDecision; label: string; sub: string; icon: LucideIcon }[] = [
+  { id: '1fa', label: 'Allow', sub: 'The sign-in goes through', icon: UserCheck },
+  { id: 'deny', label: 'Deny', sub: 'The sign-in is refused outright', icon: ShieldAlert },
+]
+
+/** Allow covers both allow-flavours; the second-factor switch chooses between them. */
+export const allows = (d: AccessDecision) => d !== 'deny'
+export const DEC_KEY: Record<AccessDecision, string> = { deny: 'deny', '2fa': 'mfa', '1fa': 'allow' }
+
+/* The methods a rule can name. The list lives in methods.ts beside the
+   catalogue it names (`RULE_METHODS`), so a module with no React in it — the
+   Describe it reader — reads the same nine words the pickers offer. */
+export const METHODS = RULE_METHODS
+
+/* `audience` is gone: who a policy governs is a policy-level fact now, so
+   there is no per-rule section to anchor. */
+export const FORM_SECTIONS = [
+  { id: 'identity', label: 'Name' },
+  { id: 'if', label: 'When it applies' },
+  { id: 'then', label: 'What happens' },
+  { id: 'checks', label: 'Checks & impact' },
+] as const
+export type SectionId = (typeof FORM_SECTIONS)[number]['id']
+
+export type RuleState = 'ready' | 'setup' | 'warn'
+
+export function ruleState(diags: Diagnostic[]): RuleState {
+  if (diags.some((d) => d.severity === 'error')) return 'setup'
+  if (diags.some((d) => d.severity === 'warning')) return 'warn'
+  return 'ready'
+}
+
+/* `matchMode` is gone, and so is the segmented "All of these / Any of these"
+   control it drove.
+
+   That control rewrote EVERY joiner in the rule at once, so flipping it on a
+   grouped predicate would silently flatten the brackets somebody had authored.
+
+   Its replacement is per level, not per rule: `ConditionCard.join` and
+   `Predicate.join` both exist and both are settings, changed on the board's
+   editor one level at a time. The sentence that stood here — "a card is
+   all-AND by construction, cards are alternatives by construction, and neither
+   is a setting" — was true when it was written and became false when those two
+   fields landed, and this section went on printing "and", "OR" and "All of
+   these must be true" regardless of what the rule actually held. It reads what
+   the rule holds now. */
+
+/* `seedValues` lived here. It filled a new condition with the first zone, the
+   first profile or the first option in its list, so a freshly added row would
+   not trip the linter's blank-value error.
+
+   That is backwards: it made "add a condition" mean "add a condition that
+   already says something", and it is why the old picker felt like it was
+   choosing a zone rather than choosing what to check. A new row now inserts
+   unset, shows "Needs a value" in neutral, and opens its own value control. */
+
+/* `RuleForm` lived here: the whole rule as one long scrolling form with a
+   sticky identity header and its own section numbering. It existed for v5,
+   which hosted the same form in three different layouts, and v5 is gone. The
+   builder composes the sections itself — a rule holds WhenSection and
+   ThenSection directly — so a component whose only job was to stack them in a
+   fixed order is one more place for the two to drift apart. */
+
+/* --- A form section -----------------------------------------------------------
+
+   The hint used to be a paragraph under every heading. Five of them accounted
+   for a third of the words on the screen and none of them carried data, so they
+   are demoted to a Tip on the heading: still one gesture away, no longer
+   occupying the form.
+
+   `bare` is for hosts that already supply the heading — the step trail names the
+   step it is on, and a second copy of the same title inside it is furniture. */
+
+export function Section({
+  id,
+  n,
+  title,
+  hint,
+  aside,
+  bare,
+  children,
+}: {
+  id: SectionId
+  n?: number
+  title?: string
+  hint?: string
+  aside?: React.ReactNode
+  bare?: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <section className={`bf__sec ${bare ? 'is-bare' : ''}`} id={`sec-${id}`}>
+      {!bare && (
+        <header>
+          {n !== undefined && <span className="bf__secn">{n}</span>}
+          <div>
+            <h2>
+              {title}
+              {hint && <TipDot text={hint} />}
+            </h2>
+          </div>
+          {aside}
+        </header>
+      )}
+      {/* Hosted by the trail. The trail's chip is an abbreviation — "When" — so
+          the panel still says the whole thing once, with the demoted sentence
+          on the dot beside it. */}
+      {bare && title && (
+        <div className="bf__secbar">
+          <h2>
+            {title}
+            {hint && <TipDot text={hint} />}
+          </h2>
+          {aside}
+        </div>
+      )}
+      <div className="bf__secbody">{children}</div>
+    </section>
+  )
+}
+
+/* --- WHEN: the composer ---------------------------------------------------------
+
+   A rule's WHEN is a disjunction of cards: a card holds conditions that are all
+   required, and two cards are alternatives. `(location and IP) or (device and
+   risk)` is two cards, and needs no brackets on screen because the boxes ARE
+   the brackets. Who the rule is for is not a card: it is `rule.who`, edited
+   above the cards, and ANDed with all of them.
+
+   **There is no AND/OR control anywhere.** Inside a card the connective is the
+   lowercase word `and`, rendered as static text at every position; between
+   cards it is an `OR` pill on a rail, also not a control. That is the fix for
+   the old editor, where every row carried a clickable joiner and the model had
+   no precedence — so `A AND B OR C` had no defined meaning and the linter had
+   to warn about it. Every product that ships this well arrived at the same
+   answer: n8n forbids mixed operators outright, Zapier exposes OR only as "add
+   an OR group". A mixed run is now unrepresentable rather than discouraged.
+
+   The asymmetry is deliberate and does the teaching: `and` is punctuation and
+   costs a small plain button inside the card, `or` is a full-width commitment
+   that opens a new box. Nobody has to be told what they mean.
+   -------------------------------------------------------------------------- */
+
+/* One per joiner. This was a lone constant printed under every card, from
+   before a card could be an or-run — so a card the author had switched to OR
+   still told them every condition in it had to be true. */
+const AND_HINT = 'All of these must be true'
+const OR_HINT = 'Any one of these is enough'
+
+/** A card, addressed by id — never by index, because cards move. */
+type CardPatch = (cardId: string, next: ConditionCard | null) => void
+
+export function WhenSection({
+  rule,
+  onPatch,
+  chrome,
+  catalogue,
+  onCatalogue,
+}: {
+  rule: Rule
+  onPatch: (p: Partial<Rule>) => void
+  /* Whether to draw the section heading and the readback around the cards.
+
+     Main wants them: its rule card holds WHEN and THEN as two labelled
+     sections, and the readback is the only place that rule reads as a sentence.
+     The bench does not: its canvas IS the when block, and the verdict header
+     pinned above it already carries the sentence — repeating it there would
+     spend the scarce thing (room in the only scroller) on something already
+     free. */
+  chrome?: boolean
+  /* The catalogue's open state, hoisted.
+
+     The bench renders the catalogue as an overlay pinned to the side of the
+     pane rather than a panel that expands inline, which is what makes opening
+     it cost zero vertical pixels — the inline panel added about 380px and
+     pushed everything below it off the screen. An overlay has to be rendered
+     outside the scroller it overlays, so the bench holds the state. Main's
+     panel is inline, so it keeps its own. */
+  catalogue?: string | null
+  onCatalogue?: (cardId: string | null) => void
+}) {
+  const store = useBrand()
+  const resolve = useNameLookup()
+  const [justAdded, setJustAdded] = useState<string | null>(null)
+  const [ownAdding, setOwnAdding] = useState<string | null>(null)
+  const hoisted = onCatalogue !== undefined
+  const adding = hoisted ? (catalogue ?? null) : ownAdding
+  const setAdding = hoisted ? onCatalogue! : setOwnAdding
+
+  const cards = rule.when.cards
+  /* Who is never drawn here — it has its own field above — but an empty WHEN
+     has to say whose sign-ins it decides. */
+  const who = whoSentence(rule.who, resolve)
+  /* `...rule.when`, not a fresh object.
+
+     This wrote `{ cards: next }`, which drops `when.join` — so the moment
+     anybody touched a condition here, a predicate whose cards were joined by
+     AND silently reverted to OR. Every edit in this section goes through this
+     one function, so the whole section had it, and it was silent: no diff, no
+     warning, and an undo entry that names the edit you meant rather than the
+     joiner you lost.
+
+     The board's editor carries the identical line with the identical fix and a
+     note saying so. This one was missed, which is the argument for the two
+     builders eventually sharing a writer rather than each keeping their own. */
+  const setCards = (next: ConditionCard[]) => onPatch({ when: { ...rule.when, cards: next } })
+
+  /* Removing the last condition removes the card — unless somebody made the
+     card on purpose.
+
+     "An empty card matches everything" is why this rule exists, and it still
+     holds. But a GROUP is a bracket an author asked for, and deleting it the
+     instant it is cleared out means emptying a group to refill it makes the
+     group vanish under you, with no way back but Add group. The board's editor
+     draws that distinction; this one did not, so a group authored there
+     disappeared on the first edit made here.
+
+     A loose run is not something anybody made — it is where ungrouped
+     conditions live — so an empty one still has nothing to represent and goes. */
+  const patchCard: CardPatch = (cardId, next) =>
+    setCards(
+      cards.flatMap((k) => {
+        if (k.id !== cardId) return [k]
+        if (!next) return []
+        if (next.conditions.length > 0) return [next]
+        return next.grouped ? [next] : []
+      }),
+    )
+
+  const addCondition = (cardId: string, typeId: string) => {
+    const t = conditionType(typeId)
+    const c = cond(typeId, t.operators[0], [])
+    setCards(cards.map((k) => (k.id === cardId ? { ...k, conditions: [...k.conditions, c] } : k)))
+    setAdding(null)
+    setJustAdded(c.id)
+  }
+
+  const addCard = (typeId: string) => {
+    const t = conditionType(typeId)
+    const c = cond(typeId, t.operators[0], [])
+    setCards([...cards, card(c)])
+    setAdding(null)
+    setJustAdded(c.id)
+  }
+
+  /* Split: the move people actually reach for. You discover you need an
+     alternative AFTER writing the conditions, not before — Notion's "add to
+     advanced filter" on an existing row exists for the same reason. Forcing an
+     empty group and a retype is the friction that kills the feature. */
+  const splitOut = (cardId: string, conditionId: string) => {
+    const from = cards.find((k) => k.id === cardId)
+    const moving = from?.conditions.find((c) => c.id === conditionId)
+    if (!from || !moving) return
+    const rest = from.conditions.filter((c) => c.id !== conditionId)
+    const kept = rest.length > 0 ? [{ ...from, conditions: rest }] : []
+    setCards([...cards.flatMap((k) => (k.id === cardId ? kept : [k])), card(moving)])
+  }
+
+  const moveCondition = (cardId: string, conditionId: string, toCardId: string) => {
+    const from = cards.find((k) => k.id === cardId)
+    const moving = from?.conditions.find((c) => c.id === conditionId)
+    if (!from || !moving || cardId === toCardId) return
+    setCards(
+      cards.flatMap((k) => {
+        if (k.id === cardId) {
+          const rest = k.conditions.filter((c) => c.id !== conditionId)
+          return rest.length > 0 ? [{ ...k, conditions: rest }] : []
+        }
+        if (k.id === toCardId) return [{ ...k, conditions: [...k.conditions, moving] }]
+        return [k]
+      }),
+    )
+  }
+
+  const mergeUp = (cardId: string) => {
+    const i = cards.findIndex((k) => k.id === cardId)
+    if (i < 1) return
+    const above = cards[i - 1]
+    const mine = cards[i]
+    /* De-duplicated on merge: two alternatives that both required "in zone HQ"
+       would otherwise leave the same condition twice in one card, which the
+       linter reports as a duplicate the moment you look away. */
+    const have = new Set(above.conditions.map(ckey))
+    const merged = { ...above, conditions: [...above.conditions, ...mine.conditions.filter((c) => !have.has(ckey(c)))] }
+    setCards(cards.flatMap((k) => (k.id === above.id ? [merged] : k.id === mine.id ? [] : [k])))
+  }
+
+  const dupes = duplicatedAcrossCards(rule.when)
+
+  const body = (
+    <div className="bf__when">
+      {chrome && cards.length > 0 && (
+        /* The rule read back, always visible and always live — the one place
+           the whole predicate is a sentence rather than a set of controls.
+
+           Not on an empty rule: "This rule matches when any sign-in that
+           reaches it" above an empty-state that says the same thing in more
+           words is the sentence arriving before there is anything to say. */
+        <p className="bf__whenread">
+          <span className="u-label">This rule matches when</span>
+          <Readback rule={rule} resolve={resolve} />
+        </p>
+      )}
+
+        {cards.length === 0 ? (
+          <div className="bf__whenempty">
+            <p>
+              {who
+                ? `This rule has no conditions, so it decides every sign-in from ${who.startsWith('Everyone') ? who.charAt(0).toLowerCase() + who.slice(1) : who} that reaches it.`
+                : 'This rule has no conditions, so it decides every sign-in that reaches it.'}
+            </p>
+            <CatalogueButton
+              open={adding === 'first'}
+              onToggle={() => setAdding(adding === 'first' ? null : 'first')}
+              onPick={addCard}
+              label="Add a condition"
+              variant="solid"
+            />
+          </div>
+        ) : (
+          <ol className="bf__cards">
+            {cards.map((k, ci) => (
+              <Fragment key={k.id}>
+                {ci > 0 && (
+                  /* Not a control here — the board's editor is where a joiner
+                     is changed — but it must SAY the joiner the rule actually
+                     holds. It printed "OR" unconditionally, from before the
+                     trunk had a joiner at all, so a predicate whose
+                     alternatives are ANDed described itself as alternatives. */
+                  <li className="bf__or" aria-hidden>
+                    <span>{topJoin(rule.when)}</span>
+                  </li>
+                )}
+                <CardBlock
+                  card={k}
+                  index={ci}
+                  total={cards.length}
+                  cards={cards}
+                  dupes={dupes}
+                  resolve={resolve}
+                  store={store}
+                  adding={adding === k.id}
+                  onAdding={(v) => setAdding(v ? k.id : null)}
+                  justAdded={justAdded}
+                  onAddCondition={(typeId) => addCondition(k.id, typeId)}
+                  onPatch={patchCard}
+                  onSplit={(cid) => splitOut(k.id, cid)}
+                  onMove={(cid, to) => moveCondition(k.id, cid, to)}
+                  onMergeUp={() => mergeUp(k.id)}
+                />
+              </Fragment>
+            ))}
+          </ol>
+        )}
+
+        {cards.length > 0 && (
+          <CatalogueButton
+            open={adding === 'new'}
+            onToggle={() => setAdding(adding === 'new' ? null : 'new')}
+            onPick={addCard}
+            label="Or match a different set"
+            variant="or"
+          />
+        )}
+
+        {/* The cost of a normal form, named rather than engineered around.
+
+            Two alternatives that both require the same condition mean editing
+            it twice. The honest answer is to say so and suggest two rules — not
+            to add a third container above the cards, which would break the one
+            invariant the linter depends on. */}
+        {dupes.length > 0 && (
+          <p className="bf__dupehint">
+            <Info size={13} strokeWidth={1.9} aria-hidden />
+            <span>
+              {dupes.length === 1 ? 'One condition is' : `${dupes.length} conditions are`} repeated in every
+              alternative. If {dupes.length === 1 ? 'it is' : 'they are'} always required, two rules may read better
+              than one.
+            </span>
+          </p>
+        )}
+    </div>
+  )
+
+  /* The readback is not chrome. It is the only place the whole predicate reads
+     as a sentence rather than as a set of controls, and it survives the heading
+     that used to be bundled with it — the tab above names the half now, and a
+     pane repeating its own tab is a heading for nobody. */
+  return body
+}
+
+/* --- One alternative ------------------------------------------------------------ */
+
+function CardBlock({
+  card: k,
+  index,
+  total,
+  cards,
+  dupes,
+  resolve,
+  store,
+  adding,
+  onAdding,
+  justAdded,
+  onAddCondition,
+  onPatch,
+  onSplit,
+  onMove,
+  onMergeUp,
+}: {
+  card: ConditionCard
+  index: number
+  total: number
+  cards: ConditionCard[]
+  dupes: string[]
+  resolve: NameLookup
+  store: ReturnType<typeof useBrand>
+  adding: boolean
+  onAdding: (v: boolean) => void
+  justAdded: string | null
+  onAddCondition: (typeId: string) => void
+  onPatch: CardPatch
+  onSplit: (conditionId: string) => void
+  onMove: (conditionId: string, toCardId: string) => void
+  onMergeUp: () => void
+}) {
+  const set = (conditions: Condition[]) => onPatch(k.id, { ...k, conditions })
+  /* Pruned, so a zone unticked takes its Match on answer with it. */
+  const patchOne = (id: string, p: Partial<Condition>) =>
+    set(k.conditions.map((c) => (c.id === id ? pruneScopes({ ...c, ...p }) : c)))
+
+  /* A disabled item says why, or it reads as broken. */
+  const menu: MenuItem[] = [
+    { id: 'name', label: k.label ? 'Rename this branch' : 'Name this branch' },
+    {
+      id: 'merge',
+      label: 'Merge into the branch above',
+      disabled: index === 0,
+      hint: index === 0 ? 'This is the first branch' : undefined,
+      divide: true,
+    },
+    {
+      id: 'delete',
+      label: 'Delete this branch',
+      disabled: total === 1,
+      hint: total === 1 ? 'A rule needs at least one branch' : undefined,
+    },
+  ]
+
+  return (
+    <li className="bf__card">
+      <div className="bf__cardhead">
+        {/* Lettered, never numbered. Cards have no evaluation order — rules do —
+            and a number here would imply one. */}
+        <span className="bf__cardn" aria-hidden>
+          {cardLetter(index)}
+        </span>
+        <input
+          className="bf__cardname"
+          aria-label={`Name for branch ${cardLetter(index)}`}
+          placeholder="Branch name"
+          value={k.label ?? ''}
+          onChange={(e) => onPatch(k.id, { ...k, label: e.target.value || undefined })}
+        />
+        <em className="bf__cardcount">{cardJoin(k) === 'and' ? AND_HINT : OR_HINT}</em>
+        <MenuButton
+          label={`Branch ${cardLetter(index)} actions`}
+          iconOnly
+          icon={EllipsisVertical}
+          size="sm"
+          items={menu}
+          onSelect={(id) => {
+            if (id === 'merge') return onMergeUp()
+            if (id === 'delete') return onPatch(k.id, null)
+            if (id === 'name') {
+              const el = document.querySelector<HTMLInputElement>(
+                `[aria-label="Name for branch ${cardLetter(index)}"]`,
+              )
+              el?.focus()
+            }
+          }}
+        />
+      </div>
+
+      {/* The word `and` used to be a 26px row between every pair. It says what
+          the card header already says once — "All of these must be true" — and
+          it said it n-1 more times, at 26px each, in the only scroller on the
+          screen. A card of six conditions spent 130px repeating itself.
+
+          The spine down the left of the list carries it now: one mark for one
+          fact, drawn rather than spelled, and the header keeps the words. */}
+      <ol className="bf__cardconds">
+        {k.conditions.map((c) => (
+          <Fragment key={c.id}>
+            <ConditionRow
+              c={c}
+              cardId={k.id}
+              cards={cards}
+              store={store}
+              resolve={resolve}
+              duplicated={dupes.includes(ckey(c))}
+              autoOpen={justAdded === c.id}
+              onPatch={(p) => patchOne(c.id, p)}
+              onRemove={() => set(k.conditions.filter((x) => x.id !== c.id))}
+              /* `c.scopes` too. Duplicate rebuilds the condition field by field,
+                 so anything not named here is quietly dropped — and a copy of a
+                 zone condition that lost its halves is a copy that asks a wider
+                 question than the one it was made from. */
+              onDuplicate={() =>
+                set([...k.conditions, { ...cond(c.typeId, c.operator, [...c.values]), ...(c.scopes ? { scopes: { ...c.scopes } } : null) }])
+              }
+              onSplit={() => onSplit(c.id)}
+              onMove={(to) => onMove(c.id, to)}
+              canSplit={k.conditions.length > 1}
+            />
+          </Fragment>
+        ))}
+      </ol>
+
+      {/* Inside the card it appends to. A single button in the section footer
+          could not say which alternative it was adding to. */}
+      <CatalogueButton open={adding} onToggle={() => onAdding(!adding)} onPick={onAddCondition} label="Add a condition" />
+    </li>
+  )
+}
+
+/* --- One condition -------------------------------------------------------------- */
+
+function ConditionRow({
+  c,
+  cardId,
+  cards,
+  store,
+  resolve,
+  duplicated,
+  autoOpen,
+  onPatch,
+  onRemove,
+  onDuplicate,
+  onSplit,
+  onMove,
+  canSplit,
+}: {
+  c: Condition
+  cardId: string
+  cards: ConditionCard[]
+  store: ReturnType<typeof useBrand>
+  resolve: NameLookup
+  duplicated: boolean
+  autoOpen: boolean
+  onPatch: (p: Partial<Condition>) => void
+  onRemove: () => void
+  onDuplicate: () => void
+  onSplit: () => void
+  onMove: (toCardId: string) => void
+  canSplit: boolean
+}) {
+  const t = conditionType(c.typeId)
+  const Ico = GROUP_ICON[t.group] ?? ListFilter
+  const unset = c.values.length === 0 || c.values.every((v) => !v.trim())
+  /* One source for the choices, shared with the board — so the pill's summary
+     and the panel's list can never be built from two different lists, which is
+     exactly how this row and the board's came to disagree about what a zone
+     condition could hold. */
+  const { options, names, single, footer, onFooter } = valueSource(t, c.values.filter(Boolean), store, resolve)
+  /* `values.length`, not `options.length`.
+
+     Guarding on the OPTIONS meant that emptying the library stopped every
+     condition naming it from being marked stale — delete your last zone and
+     every zone condition in the tenant quietly looks fine again, at exactly the
+     moment all of them have broken. The question is whether this condition
+     names something that is not there, and a condition with no values does not
+     name anything. */
+  const stale = c.values.filter(Boolean).some((id) => !options.some((o) => o.value === id))
+
+  /* Every condition type, grouped by major component, so changing a row's field
+     never means deleting and re-adding it.
+
+     Sorted into CONDITION_GROUPS order first. The catalogue's own order
+     interleaves components — the two risk scores sit between two device
+     conditions, and Group Attribute sits after the User block — and `Picker`
+     emits a heading whenever the group CHANGES rather than bucketing, so an
+     unsorted list prints "Device, Risk, Device" and "Group, User, Group". The
+     sort belongs here rather than in the Picker: the caller owns the order, so
+     a list somebody deliberately arranged is never silently reshuffled. */
+
+  const menu: MenuItem[] = [
+    { id: 'dup', label: 'Duplicate' },
+    {
+      id: 'split',
+      label: 'Split into a new branch',
+      hint: 'These are required together. Split only if this should be a separate branch.',
+      disabled: !canSplit,
+    },
+    /* Lettered by the branch's place in the FULL list, as its header is. The
+       index used to come from the list with this branch filtered out, so every
+       letter after it was one short and "Move to branch A" moved to B. */
+    ...cards.flatMap((k, i) =>
+      k.id === cardId ? [] : [{ id: `move:${k.id}`, label: `Move to ${k.label?.trim() || `branch ${cardLetter(i)}`}` }],
+    ),
+    { id: 'remove', label: 'Remove', divide: true },
+  ]
+
+  return (
+    <li className={`bf__cond ${unset ? 'is-unset' : ''} is-${conditionTone(t.id, t.group)}`}>
+      <span className="bf__condicon" aria-hidden>
+        <Ico size={13} strokeWidth={1.9} />
+      </span>
+
+      {/* The condition, as ONE control.
+
+          It was three side by side — an attribute picker, an operator picker
+          and a value control — which is three decisions laid out as though they
+          were independent. They are not: the operators come from the attribute
+          and the values come from the operator, so reading a row meant
+          assembling one sentence out of three boxes.
+
+          The same pill and the same panel the board uses, so the two builders
+          cannot drift again. This one had already drifted twice in ways that
+          cost data: a single-select writing `onChange([id])` over a multi-valued
+          array, and a "Manage device profiles" footer pointing at a screen name
+          that matched nothing. */}
+      <ConditionPopover
+        c={c}
+        summary={condSummary(t, c, names)}
+        options={options}
+        names={names}
+        single={single}
+        unset={unset || stale}
+        autoOpen={autoOpen}
+        onRetype={(typeId) => {
+          /* Operators are type-dependent, so carrying the old one over would
+             produce a condition the engine cannot evaluate. Values go too —
+             "Registered" means nothing to a country test. And `scope` goes with
+             them: it belongs to a zone condition and nothing else, and `onPatch`
+             merges — so retyping a scoped zone into a Country left the field
+             behind, invisible on screen and still reaching `ckey`. */
+          const next = conditionType(typeId)
+          const pick = splitPick(typeId)
+          onPatch({ typeId: pick.typeId, operator: next.operators[0], values: [], scopes: undefined, key: pick.key, tz: undefined })
+        }}
+        onOperator={(operator) => onPatch({ operator })}
+        onValues={(values) => onPatch({ values })}
+        /* One zone's half. Nothing stored for both, never the word — absent is
+           the default and every dirty check here is a `JSON.stringify`
+           comparison — and no map once nothing is narrowed. */
+        onScope={(zoneId, sc) => {
+          const rest = Object.fromEntries(Object.entries(c.scopes ?? {}).filter(([id]) => id !== zoneId))
+          const scopes = sc === 'both' ? rest : { ...rest, [zoneId]: sc }
+          onPatch({ scopes: Object.keys(scopes).length > 0 ? scopes : undefined })
+        }}
+        /* `undefined`, not `''`. Every dirty check here is a `JSON.stringify`,
+           so clearing a field has to remove it — an empty string left behind is
+           an edit the save bar reports and the rule does not have. */
+        onKey={(k) => onPatch({ key: k.trim() || undefined })}
+        onTz={(tz) => onPatch({ tz: tz || undefined })}
+        onRemove={onRemove}
+        footer={footer}
+        onFooter={onFooter}
+      />
+
+      <span className="bf__condstate">
+        {unset && <span className="bf__condbadge">Needs a value</span>}
+        {!unset && duplicated && (
+          <Tip text="This exact condition also appears in another branch." placement="top">
+            <span className="bf__conddupe" aria-label="Repeated in another branch">
+              <Copy size={11} strokeWidth={2} aria-hidden />
+            </span>
+          </Tip>
+        )}
+      </span>
+
+      <MenuButton
+        label={`${t.label} actions`}
+        iconOnly
+        icon={EllipsisVertical}
+        size="sm"
+        items={menu}
+        onSelect={(id) => {
+          if (id === 'dup') return onDuplicate()
+          if (id === 'split') return onSplit()
+          if (id === 'remove') return onRemove()
+          if (id.startsWith('move:')) return onMove(id.slice(5))
+        }}
+      />
+    </li>
+  )
+}
+
+/* --- The value -----------------------------------------------------------------
+
+   `ValueControl` stood here — a per-kind control rendering a picker, a chip
+   list, two time fields or a text box, and a second implementation of what the
+   board's editor already did. It is gone with the three-control row it
+   belonged to.
+
+   Worth recording what the duplication actually cost, because it was never
+   tidiness. This copy was single-select over a multi-valued model and wrote
+   `onChange([id])`, so choosing a second zone here DELETED the first; its
+   stale-reference badge only ever inspected `values[0]`, so a zone deleted
+   from the library at index 1 rendered as perfectly valid; and its "Manage
+   device profiles" footer navigated to a screen name matching nothing, which
+   the board's copy of the same ternary had right. Three defects, none of them
+   present in the other implementation of the same control.
+
+   Both builders render `ConditionPopover` now. */
+
+/* --- The readback ---------------------------------------------------------------
+
+   The predicate as elements rather than as a string, so the brackets and the
+   `or` carry the structure visually. It is fed by `predicateParts`, which is
+   the same renderer `predicateSentence` uses — the review dialog promises the
+   reader that the sentence and the rule cannot disagree, and two
+   implementations would be one chance for that to be false. */
+function Readback({ rule, resolve }: { rule: Rule; resolve: NameLookup }) {
+  const parts = predicateParts(rule.when, resolve)
+  if (parts.length === 0) return <em className="bf__readany">any sign-in that reaches it</em>
+
+  return (
+    <span className="bf__readexpr">
+      {parts.map((k, i) => (
+        <Fragment key={k.id}>
+          {i > 0 && <b className="bf__reador">{topJoin(rule.when)}</b>}
+          <span className="bf__readcard">
+            {parts.length > 1 && <i aria-hidden>(</i>}
+            {k.label && <u>{k.label}:</u>}
+            {k.clauses.map((cl, j) => (
+              <Fragment key={cl.id}>
+                {j > 0 && <b className="bf__readand">{k.join}</b>}
+                <span data-node-id={cl.id}>{cl.text}</span>
+              </Fragment>
+            ))}
+            {parts.length > 1 && <i aria-hidden>)</i>}
+          </span>
+        </Fragment>
+      ))}
+    </span>
+  )
+}
+
+/* --- The catalogue -------------------------------------------------------------- */
+
+/* The button, and the list it becomes.
+
+   Zones, device profiles and the values inside them are NOT here — they are
+   values, reached from the row's value control, which is where the brief's
+   "showcase the major option, not what is inside" lands. That separation is
+   the whole shape of the catalogue now: four attributes, two of which are a
+   pointer at a library.
+
+   Open, the button is REPLACED rather than covered. A dialog could sit over
+   the trail because it was its own layer; an inline list cannot, and a list
+   that pushed the page down while leaving a live "Add condition" button above
+   it would offer to do again the thing it is in the middle of doing. */
+function CatalogueButton({
+  open,
+  onToggle,
+  onPick,
+  label,
+  variant = 'plain',
+}: {
+  open: boolean
+  onToggle: () => void
+  onPick: (typeId: string) => void
+  label: string
+  variant?: 'plain' | 'solid' | 'or'
+}) {
+  if (open) {
+    return (
+      <div className={`bf__addwrap is-${variant} is-open`}>
+        <ConditionList
+          label={label}
+          onCancel={onToggle}
+          onPick={(id) => {
+            onPick(id)
+            onToggle()
+          }}
+        />
+      </div>
+    )
+  }
+  return (
+    <div className={`bf__addwrap is-${variant}`}>
+      <button type="button" className={`bf__add is-${variant}`} onClick={onToggle}>
+        <Plus size={13} strokeWidth={2.4} aria-hidden />
+        {label}
+      </button>
+    </div>
+  )
+}
+
+/* --- The catalogue ----------------------------------------------------------
+
+   `ConditionPicker` was here: a 780px modal, a rail of nine components with
+   counts down the left, a search field that spanned every component and
+   ignored the selected one, arrow keys and Enter from the field, and section
+   headings whenever the pane held more than one component.
+
+   Every one of those was earned. The catalogue was twenty-four attributes and
+   the search, the rail and the lead order were what made it findable. It is six
+   attributes now, and a control that solves a problem the list no longer has is
+   a control you have to operate before you can do the thing you came for.
+
+   `ConditionList` in ConditionPopover.tsx replaces it, inline, in both
+   builders — which is the property worth keeping from the dialog. Two pickers
+   over one catalogue drift; one component means the trail and the board cannot
+   disagree about what an attribute is. */
+
+/* --- THEN: the outcome, and everything behind it -------------------------------- */
+
+export function ThenSection({
+  rule,
+  onPatch,
+  bare,
+  n = 4,
+}: {
+  rule: Rule
+  onPatch: (p: Partial<Rule>) => void
+  bare?: boolean
+  n?: number
+}) {
+  const chain = rule.methodChain ?? ['Google Authenticator']
+
+  /* Which allow-flavour this rule was last on, so Deny -> Allow restores "second
+     factor required" instead of silently downgrading the rule to one factor. */
+  const lastAllow = useRef<AccessDecision>(rule.decision === 'deny' ? '1fa' : rule.decision)
+  if (rule.decision !== 'deny') lastAllow.current = rule.decision
+
+  return (
+    <Section id="then" n={n} bare={bare}>
+      <>
+        {/* Two options, and each one owns its consequence.
+
+            They were two tiles side by side with the Allow configuration in a
+            flat list underneath, so nothing said the rows below belonged to the
+            left tile and not the right one — and Deny, which has no
+            configuration at all, got a tinted paragraph that looked like the
+            same kind of thing. Allow's settings are indented under Allow now,
+            Deny's one sentence sits where Allow's settings would be, and the
+            shape says what is true: Deny is Deny.
+
+            A radiogroup, not a pair of `aria-pressed` buttons — it is exactly
+            one choice out of two, and the role brings the roving tabindex and
+            the arrow keys the pair never had. */}
+        <div className="bf__outs" role="radiogroup" aria-label="What happens when this rule matches">
+          {OUTCOMES.map((o, i) => {
+            const on = o.id === 'deny' ? rule.decision === 'deny' : allows(rule.decision)
+            const Ico = o.icon
+            /* Allow keeps the tint of the flavour it is actually on, so this row
+               agrees with the rule's number in the flow rail and with its chip
+               in the policy list. A radio dot has one colour; the spine down the
+               left of the row carries the other two. */
+            const tone = o.id === 'deny' ? 'deny' : DEC_KEY[allows(rule.decision) ? rule.decision : '1fa']
+            return (
+              <div key={o.id} className={`bf__outrow is-${tone} ${on ? 'is-on' : ''}`}>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  tabIndex={on ? 0 : -1}
+                  className="bf__outpick"
+                  onClick={() => onPatch(pickOutcome(o.id, lastAllow.current))}
+                  onKeyDown={(e) => {
+                    const d = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key as 'ArrowRight']
+                    if (!d) return
+                    e.preventDefault()
+                    onPatch(pickOutcome(OUTCOMES[(i + d + OUTCOMES.length) % OUTCOMES.length].id, lastAllow.current))
+                  }}
+                >
+                  <span className="bf__outmark" aria-hidden>
+                    {on && <Check size={15} strokeWidth={2.4} />}
+                  </span>
+                  <Ico size={16} strokeWidth={1.9} aria-hidden />
+                  <span className="bf__outname">
+                    <strong>{o.label}</strong>
+                    <em>{o.sub}</em>
+                  </span>
+                </button>
+
+                {on && o.id === 'deny' && (
+                  <p className="bf__outbody bf__denynote">
+                    No prompt and no alternate path. The ML engine may escalate other decisions on behavioural
+                    signals, but a Deny here is final.
+                  </p>
+                )}
+
+                {on && o.id !== 'deny' && (
+                  <div className="bf__outbody bf__factors">
+                    {/* Pinned above the settings, never inside a disclosure. An
+                        unsatisfiable rule is an error, and an error you have to
+                        open something to see is worse than the flat list this
+                        replaces. */}
+                    {rule.decision === '2fa' && rule.secondFactor === 'specific' && (rule.secondFactorMethods ?? []).length === 0 && (
+                      <p className="bf__factorwarn">
+                        <XCircle size={13} strokeWidth={2} aria-hidden />
+                        Nothing is selected, so there is no method any user could complete. This rule cannot be
+                        satisfied.
+                      </p>
+                    )}
+                    {rule.allowDisable2fa && rule.decision === '2fa' && (
+                      <p className="bf__factorwarn is-warn">
+                        <AlertTriangle size={13} strokeWidth={2} aria-hidden />
+                        This rule requires a second factor and also lets users turn theirs off. Anyone who does is no
+                        longer covered by it.
+                      </p>
+                    )}
+
+              {/* One text per row, and it is the sentence rather than the
+                  field name.
+
+                  Every row used to be three columns — a label naming a form
+                  field ("Second factor"), a control, and a sentence beside the
+                  control saying what the control does. The label was the part
+                  carrying no information: "End users" tells you nothing that
+                  "Let users turn their second factor off" does not. */}
+              <Prop label="Require a second factor" sub={rule.decision === '2fa' ? undefined : 'The first factor alone is enough'}>
+                <Toggle
+                  checked={rule.decision === '2fa'}
+                  onChange={(v) => onPatch({ decision: v ? '2fa' : '1fa' })}
+                  label="Require a second factor"
+                  size="sm"
+                />
+              </Prop>
+
+              <Prop label="First factor">
+                <div className="bf__seg">
+                  {(['Password', 'Any', 'Specific'] as const).map((f) => (
+                    <button key={f} type="button" className={rule.firstFactor === f ? 'is-on' : ''} aria-pressed={rule.firstFactor === f} onClick={() => onPatch({ firstFactor: f })}>
+                      {f}
+                    </button>
+                  ))}
+                </div>
+              </Prop>
+
+              {rule.firstFactor === 'Specific' && (
+                <Prop label="Which first-factor method" indent>
+                  {/* Empty until chosen. It used to show the first method
+                      while the rule stored none, so the card said a method
+                      was chosen and the saved rule had nothing to ask for. */}
+                  <Picker
+                    label="First-factor method"
+                    value={rule.firstFactorMethod ?? null}
+                    placeholder="Choose a method"
+                    invalid={!rule.firstFactorMethod}
+                    options={METHODS.map((m) => ({ value: m, label: m }))}
+                    onChange={(firstFactorMethod) => onPatch({ firstFactorMethod })}
+                  />
+                </Prop>
+              )}
+              {rule.firstFactor === 'Specific' && !rule.firstFactorMethod && (
+                <p className="bf__factorwarn">
+                  <XCircle size={13} strokeWidth={2} aria-hidden />
+                  No first factor method chosen. Choose a method or pick Password.
+                </p>
+              )}
+
+              {rule.decision === '2fa' && (
+                <Prop label="Second-factor method" indent>
+                  <Picker
+                    label="Second factor method"
+                    width="fill"
+                    value={rule.secondFactor}
+                    options={[
+                      { value: 'any', label: 'Any enabled method' },
+                      { value: 'specific', label: 'Specific method(s)' },
+                      { value: 'chain', label: 'Method chain', meta: 'Every step, in order' },
+                      { value: 'preferred', label: 'The user’s preferred method' },
+                    ]}
+                    onChange={(v) => onPatch({ secondFactor: v as Rule['secondFactor'] })}
+                  />
+                </Prop>
+              )}
+
+              {rule.decision === '2fa' && rule.secondFactor === 'specific' && (
+                <Prop label="Methods a user may complete" indent>
+                  <div className="bf__val bf__val--chips" role="group" aria-label="Allowed second-factor methods">
+                    {METHODS.map((m) => {
+                      const on = (rule.secondFactorMethods ?? []).includes(m)
+                      return (
+                        <button
+                          key={m}
+                          type="button"
+                          className={`bf__vchip ${on ? 'is-on' : ''}`}
+                          aria-pressed={on}
+                          onClick={() => {
+                            const cur = rule.secondFactorMethods ?? []
+                            onPatch({ secondFactorMethods: on ? cur.filter((x) => x !== m) : [...cur, m] })
+                          }}
+                        >
+                          {m}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </Prop>
+              )}
+
+              {rule.decision === '2fa' && rule.secondFactor === 'chain' && (
+                <Prop label="Every step, in this order" indent>
+                  <div className="bf__chain">
+                    {chain.map((step, si) => (
+                      <span className="bf__chainstep" key={si}>
+                        <b>{si + 1}</b>
+                        <Picker
+                          label={`Chain step ${si + 1}`}
+                          value={step}
+                          options={['Password', ...METHODS].map((m) => ({ value: m, label: m }))}
+                          onChange={(v) => {
+                            const next = [...chain]
+                            next[si] = v
+                            onPatch({ methodChain: next })
+                          }}
+                        />
+                        <button
+                          type="button"
+                          disabled={chain.length === 1}
+                          aria-label={`Remove step ${si + 1}`}
+                          onClick={() => onPatch({ methodChain: chain.filter((_, n) => n !== si) })}
+                        >
+                          <X size={12} strokeWidth={2.2} />
+                        </button>
+                      </span>
+                    ))}
+                    <button type="button" className="bf__chainadd" onClick={() => onPatch({ methodChain: [...chain, 'miniOrange Push'] })}>
+                      <Plus size={12} strokeWidth={2.4} /> Add step
+                    </button>
+                    <p className="bf__chainsum">{chain.join(' → ')} — every step required, in this order.</p>
+                  </div>
+                </Prop>
+              )}
+
+              {rule.decision === '2fa' && rule.secondFactor === 'preferred' && (
+                <Prop label="If the user has set no preference" indent>
+                  <Picker
+                    label="Fallback method"
+                    value={rule.preferredFallback ?? METHODS[0]}
+                    options={METHODS.map((m) => ({ value: m, label: m }))}
+                    onChange={(preferredFallback) => onPatch({ preferredFallback })}
+                  />
+                </Prop>
+              )}
+
+              {rule.decision === '2fa' && (
+                <Prop label="Skip the second factor on a device that already passed">
+                  <Toggle
+                    checked={rule.rememberMfa}
+                    onChange={(v) => onPatch({ rememberMfa: v })}
+                    label="Skip the second factor on a device that already passed"
+                    size="sm"
+                  />
+                </Prop>
+              )}
+
+              {rule.decision === '2fa' && rule.rememberMfa && (
+                <>
+                  <Prop label="Trust that device for" indent>
+                    <DaysField
+                      key={rule.id}
+                      value={rule.rememberDays ?? 30}
+                      onCommit={(rememberDays) => onPatch({ rememberDays })}
+                    />
+                  </Prop>
+                  <Prop label="Prompt every time anyway, remembered or not" indent>
+                    <Toggle
+                      checked={rule.forceMfaEachLogin ?? false}
+                      onChange={(v) => onPatch({ forceMfaEachLogin: v })}
+                      label="Prompt every time anyway, remembered or not"
+                      size="sm"
+                    />
+                  </Prop>
+                </>
+              )}
+
+              {rule.decision === '2fa' && (
+                <Prop label="Let users switch their own second factor off">
+                  <Toggle
+                    checked={rule.allowDisable2fa}
+                    onChange={(v) => onPatch({ allowDisable2fa: v })}
+                    label="Let users switch their own second factor off"
+                    size="sm"
+                  />
+                </Prop>
+              )}
+
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+
+        {/* Stated, not tucked into a tooltip on a heading that no longer
+            exists. It is the one thing about the outcome that is not visible
+            in the controls: the rule STOPS here. */}
+        <p className="bf__outnote">Evaluation stops here — nothing below this rule runs for anyone it matched.</p>
+      </>
+    </Section>
+  )
+}
+
+/* Choosing an outcome NORMALISES the settings that belong to the other one.
+
+   `decision` used to be patched alone, so a rule that had been Allow with a
+   remembered device kept `rememberMfa: true` after switching to Deny — which
+   PE120 reports as "Authentication settings on a Deny rule", correctly, and
+   which Deny has no control anywhere to clear. The warning was unfixable from
+   the screen, and it stuck to the rule for good. */
+function pickOutcome(id: AccessDecision, lastAllow: AccessDecision): Partial<Rule> {
+  if (id !== 'deny') return { decision: lastAllow ?? '1fa' }
+  return { decision: 'deny', rememberMfa: false, allowDisable2fa: false, secondFactor: 'any' }
+}
+
+/* How many days a device that passed the second factor is trusted.
+
+   Typed as text and committed on blur or Enter, the board's way. It used to
+   write on every keystroke with `Number(v) || 30`, so clearing the field
+   snapped it back to 30 under the cursor, and -5, 2.5 and 9999 were all
+   stored. A whole number from 1 to 365 is kept; anything else puts the stored
+   value back and says what is allowed. */
+const DAYS_MIN = 1
+const DAYS_MAX = 365
+
+function DaysField({ value, onCommit }: { value: number; onCommit: (days: number) => void }) {
+  const [text, setText] = useState(String(value))
+  const [bad, setBad] = useState(false)
+  /* An undo, or the other builder, changes the stored value: show it. */
+  const [seen, setSeen] = useState(value)
+  if (seen !== value) {
+    setSeen(value)
+    setText(String(value))
+    setBad(false)
+  }
+
+  const commit = () => {
+    const n = Number(text)
+    const ok = text.trim() !== '' && Number.isInteger(n) && n >= DAYS_MIN && n <= DAYS_MAX
+    if (!ok) {
+      setText(String(value))
+      setBad(text.trim() !== String(value))
+      return
+    }
+    setBad(false)
+    if (n !== value) onCommit(n)
+  }
+
+  return (
+    <span className="bf__val bf__val--range">
+      <input
+        type="number"
+        inputMode="numeric"
+        min={DAYS_MIN}
+        max={DAYS_MAX}
+        step={1}
+        aria-label="Days to remember"
+        aria-invalid={bad || undefined}
+        value={text}
+        onChange={(e) => {
+          setText(e.target.value)
+          setBad(false)
+        }}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit()
+        }}
+      />
+      <em>days</em>
+      {bad && (
+        <em className="bf__valerr" role="alert">
+          Enter 1–365 days
+        </em>
+      )}
+    </span>
+  )
+}
+
+/* A settings row: what it does on the left, the control that does it on the
+   right, and nothing in between.
+
+   `sub` used to mean "indented and muted" and the label was a field name. The
+   label is the sentence now, so the flag is just `indent` — it says this row
+   only exists because of the one above it. `sub` as a second line is for the
+   one case where the OFF state needs saying, which a switch cannot say alone. */
+function Prop({
+  label,
+  sub,
+  indent,
+  children,
+}: {
+  label: string
+  sub?: string
+  indent?: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <div className={`bf__prop ${indent ? 'is-sub' : ''}`}>
+      <span className="bf__proplabel">
+        {label}
+        {sub && <em>{sub}</em>}
+      </span>
+      <div className="bf__propctl">{children}</div>
+    </div>
+  )
+}
+
+/* `ChecksSection` stood here: the rule's IF and THEN lines, the policy's
+   audience printed as the rule's, and the linter's findings. Nothing rendered
+   it, and it read the audience and the sentence from before a rule had its own
+   Who. The review stage and the rule card's checks strip say the same things. */
+
+/* `PreviewPanel` and `PvAxis` lived here: the standing "what would this do"
+   panel that used to take turns with two others behind an icon in the top
+   right. The tester is docked under the work now — always on, one line, and
+   still the only writer of the preview context every condition is evaluated
+   against — so the panel form of it had no remaining host.
+
+   `PREVIEW_CAVEAT` stays: the docked tester carries the same footnote, and it
+   is the sentence that keeps the whole simulation honest. */
+
+export const PREVIEW_CAVEAT =
+  'Heuristic, not the engine — the context here maps to condition values through a fixed table. The order and the first-match stop are real.'

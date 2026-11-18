@@ -1,0 +1,2439 @@
+/* -----------------------------------------------------------------------------
+   Device profiles — the attribute master, and the two kinds of profile.
+
+   Transcribed from "Adaptive MFA - Device Fingerprint v2.xlsx": the 38
+   attributes on the *Devic Fingerprint* sheet, the weights and bands from
+   *Sheet2*, and the outcome matrix from *Sheet9*.
+
+   Two kinds, and the whole screen turns on which one you pick. They were called
+   "Attribute match" and "Risk score", which named the ARITHMETIC each one runs
+   — and an admin does not arrive wanting an arithmetic. They arrive wanting to
+   keep unpatched Androids out, or to recognise the machine somebody signed in
+   from last week. So the two are named after the QUESTION now:
+
+   · **OS and version.** What must a device be running? A form factor, and a
+     version floor per platform: `Windows ≥ 10`, `Android ≥ 13`. Each one you
+     name is a condition, and they are ANDed. Everything it reads arrives with
+     the request, so there is nothing to install and nothing to decide about
+     collection — which is why this kind never asks the agent question.
+   · **Device attributes.** Is this the same machine as last time? Many weak
+     signals, each carrying a weight, and what changed since last time adds up
+     to a score. It is more expressive and considerably harder to reason about,
+     which is the honest trade. Half of what it can read needs software on the
+     machine, so this kind asks the agent question first — before the attributes,
+     because the answer decides which attributes exist at all.
+
+   An earlier version of this comment said attribute-match let you "set how many
+   may drift before the device stops counting as known". No such control has
+   ever existed here — the only `tolerance` config in the file belongs to `time`,
+   which is a device attribute. What the OS catalogue holds is a set of
+   conditions, not a drift budget, and under its new name the old sentence would
+   have been actively misleading.
+
+   Weights come from the sheet's own table rather than being invented: unique
+   hardware identifiers 30, hardware specifications 20, browser and network 10,
+   software and configuration 5.
+   -------------------------------------------------------------------------- */
+
+import { nameTaken } from './data'
+import { allOf, type CondState } from './predicate'
+import type { ReviewLine } from './review-rows'
+import type { DevicePlatform, FactKey, SignInDevice } from './screens/sign-in-facts'
+
+/* Back, and only for the device catalogue. See DEVICE_ATTRIBUTES below: the two
+   kinds ask different questions and were never well served by one list. */
+/* Seven, and two of them belong to the requirements catalogue rather than the
+   risk one.
+
+   `Platform` and `Client` are not filing for the risk list — a machine's OS is
+   `Hardware` there, because what that list wants to know is how hard a signal
+   is to forge. They exist because the requirements list now asks two questions
+   the risk list never does: what is this device RUNNING, and what miniOrange
+   software is on it. One union serves both catalogues although they file
+   differently: a category only picks a row's family mark and feeds the search. */
+export type AttrCategory = 'Platform' | 'Hardware' | 'Browser' | 'Security' | 'Client' | 'Network' | 'Behaviour'
+
+export type Priority = 'High' | 'Medium' | 'Low'
+
+/* --- What an attribute is tuned WITH --------------------------------------------
+   Three of these are a single control: a number, a dropdown, a list of strings.
+   The fourth is a sentence.
+
+   Some attributes are not usefully described by "how loosely do you match
+   this". "Operating system, matched on major version" is a precision setting;
+   "operating system is not Android 12" is a different question, and the second
+   is the one an admin arrives with. Those attributes need an operator and a
+   value, and the value belongs to the attribute rather than to the control —
+   the versions that mean something for iOS are not the ones that mean
+   something for Windows.
+
+   Values are GROUPED for the same reason. An OS version means nothing without
+   its platform, and thirty version strings in one flat list is a list you
+   scroll rather than read. The group is the type; the values are that type's
+   own. Adding a platform is adding a group. */
+export interface AttrRuleValue {
+  op: string
+  value: string
+}
+
+/** What a profile has stored against one attribute. */
+export type AttrConfigValue = string | number | AttrRuleValue
+
+export const isRuleValue = (v: AttrConfigValue | undefined): v is AttrRuleValue =>
+  typeof v === 'object' && v !== null && 'op' in v
+
+/** How a configurable attribute is tuned. Only some attributes have one. */
+export type AttrConfig =
+  | { kind: 'tolerance'; label: string; value: number; min: number; max: number; unit: string }
+  | { kind: 'choice'; label: string; value: string; options: string[] }
+  | { kind: 'list'; label: string; values: string[]; placeholder: string }
+  | {
+      kind: 'rule'
+      label: string
+      /* Named per attribute rather than shared, because the operators that make
+         sense are not the same everywhere: a version can be "at least", a
+         country cannot. */
+      operators: string[]
+      groups: { label: string; values: string[] }[]
+      value: AttrRuleValue
+    }
+  /* A comparison against one of the platform's released versions.
+
+     This was a free text field, on the argument that a version list is never
+     complete — stale the week after a release, and the number an admin wants is
+     usually the one that just shipped. The argument is real and it lost to a
+     bigger one: a typed version is a typed MISTAKE. "11 " and "Windows 11" and
+     "22h2" all parse as nothing, the field validated none of them, and a policy
+     whose floor is an unparseable string is a policy that silently stops
+     drawing a floor. A closed list cannot produce that state.
+
+     `versions` is the platform's own list, most recent first, because the floor
+     an admin is drawing is nearly always near the top of it. The staleness the
+     old comment worried about is a data edit here rather than a user's problem:
+     a release ships, one line is added to this file, and every profile offering
+     it updates at once. A stored value that is NOT in the list is still shown
+     and still selected — see `AttrControl` — so a fixture or an older profile
+     never has its floor rewritten by a catalogue that moved on.
+
+     Operators are shared across the four version attributes because a version
+     compares the same way whatever platform it belongs to. */
+  | {
+      kind: 'version'
+      label: string
+      value: AttrRuleValue
+      /* The platform this compares, as a word rather than as something to
+         recover from the attribute's name.
+
+         It was derived — `name.replace(/ ?OS version$/, '')` — which turned
+         "iOS version" into "i", because the platform's own name ends in the
+         word being stripped. That is the general failure of parsing a label to
+         get back a fact somebody already knew when they wrote it. The overview
+         names the platforms a profile checks, so this is now read rather than
+         reconstructed. */
+      platform: string
+      /* What may be chosen, most recent first — WHEN there is a list worth
+         offering. Plain version numbers: the marketing name goes in the label
+         beside it where one helps, and a value that has to be parsed back out
+         of "macOS 14 (Sonoma)" is a value that will eventually be parsed wrong.
+
+         Optional, and the two cases are genuinely different rather than one
+         being unfinished.
+
+         An OPERATING SYSTEM has a handful of majors that everybody knows and
+         that change once a year: Windows 10 and 11, iOS 17 and 18. A list there
+         is complete, short, and stops a typed floor — "Windows 11", "11 ",
+         "22h2" — from silently parsing as nothing, which is what a free field
+         allowed and never validated.
+
+         A BROWSER does not. Chrome ships a major every four weeks, so any list
+         is stale within the month and the floor somebody wants is usually the
+         one that shipped after this file was last edited. The same is true of
+         the client apps. Those keep the typed field and its `placeholder`,
+         which is what `AttrControl` falls back to when this is absent. */
+      versions?: { value: string; label?: string }[]
+      /** Real examples, for the attributes that are typed rather than chosen. */
+      placeholder?: string
+      hint: string
+    }
+
+export interface Attribute {
+  id: string
+  /* Only the risk catalogue files its attributes. The five an attribute-match
+     profile can use are a list, not a taxonomy — five things do not need
+     filing. */
+  category?: AttrCategory
+  name: string
+  /** What the attribute is. Sits on a tip, never in the row. */
+  purpose: string
+  priority: Priority
+  /** The sheet's weight, used when the profile scores rather than matches. */
+  weight: number
+  /** Phase 1 attributes are the ones that actually collect today. */
+  phase: 1 | 2
+  /* True when nothing but an installed agent can read this.
+
+     Not a preference — a hard limit on which signals EXIST. A page cannot ask
+     for a TPM identifier or a motherboard serial, so an agentless profile that
+     names one is not misconfigured, it is inert: the value never arrives, so it
+     never mismatches, and the profile is quietly weaker than it reads. */
+  needsAgent?: true
+  /* Collected on every request whether or not a profile asks for it, so a
+     profile cannot turn it off.
+
+     Not a recommendation and not a default — a default is something you can
+     change. These four are what the request itself carries: a form factor, an
+     operating system, a browser and an address. They arrive before any profile
+     is consulted, they cost nothing to read, and a device fingerprint that
+     ignores them is not a weaker fingerprint, it is one throwing away the only
+     signals it is guaranteed to have.
+
+     What a profile still decides about them is how much each one COUNTS. That
+     is the whole of the difference between "always collected" and "always
+     mattering", and it is why these rows are ticked-and-locked rather than
+     hidden: an admin has to be able to see what is being weighed. */
+  always?: true
+  /** Absent when the attribute has nothing to tune. */
+  config?: AttrConfig
+}
+
+/* --- The requirements catalogue, and why it grew from five to thirteen ----------
+   This was thirty-eight in the sheet, then fourteen on the screen, then five,
+   and it is thirteen. The five were one form-factor question and four version
+   questions, and the argument for stopping there was that a device profile is
+   asked two things: what KIND of device is this, and what is it RUNNING.
+
+   That argument was right and the list was still short of it, in a way this
+   file already said out loud. The note above `seedProfiles` names three
+   requirements that had nowhere to live — screen lock, browser floors, and
+   posture generally — records that the rules needing them were shipped with
+   those clauses simply dropped, and says the fix is a catalogue change with its
+   own argument. This is that change, and the argument is that "what is it
+   running" was being read too narrowly. An operating system is one answer. A
+   browser is another, and on a web SSO it is the thing actually rendering the
+   session. Whether the OS is still the one the vendor shipped is a third, and
+   it is the one that decides whether the other two can be believed at all.
+
+   So the list is four groups rather than one flat five, and it is filed now —
+   five rows do not need a taxonomy and thirteen do:
+
+     Platform  what the device is and what OS it runs
+     Browser   a version floor per family, which is the allowlist that was cut
+     Security  integrity and screen lock — the posture checks with no home
+     Client    the miniOrange app and agent, by version
+
+   Still no `needsAgent` on anything here, and that is a deliberate answer to an
+   obvious objection: only the miniOrange client can report a jailbreak or a
+   screen lock, so surely those need an agent? They do — and in a REQUIREMENTS
+   catalogue that is not a reason to hide the row, it is the requirement itself.
+   A handset with no client cannot show a screen lock is set, so it fails "a
+   screen lock is set", exactly as a handset on Android 12 fails "≥ 13". The
+   risk catalogue is the one where a signal that never arrives is dangerous —
+   there it silently never mismatches, and the profile is quietly weaker than it
+   reads. Here an absent signal is a failed condition, which is the whole point.
+
+   The consequence, said plainly: `asksReach('os')` stays false, an OS profile
+   is still never asked the agent question, and this list is still offered
+   whole. What changes is that it is now longer than the small-catalogue path
+   allows, so it arrives with a search field (and, until 16 Sep 2026, a
+   category filter) — which at thirteen rows is the right control and at five
+   was not. */
+/* The comparisons a version supports — a symbol, and the words for it.
+
+   Stored as an id and shown as a SYMBOL, which is the shape Figma's conditional
+   row uses and the right one here. A version comparison is an expression, and
+   an expression reads as one line when its operator is one glyph: `Windows OS
+   version  ≥  10` is a sentence, where "Windows OS version · is at least ·
+   10" is three controls that happen to be adjacent. The words are not lost —
+   they are how the menu names each symbol, so nobody has to know what ≥ means
+   before choosing it.
+
+   Both directions and both edges, because a policy is written either way round:
+   ≥ 14 draws a floor and < 14 names what to challenge, and those are not the
+   same rule with the sign flipped — one says who may in, the other who gets
+   stopped. = and ≠ pin an exact build, which is what a rollback or a known-bad
+   release needs. */
+export interface VersionOp {
+  id: string
+  label: string
+  symbol: string
+}
+
+export const VERSION_OPS: VersionOp[] = [
+  { id: 'gte', label: 'Greater than or equal to', symbol: '≥' },
+  { id: 'gt', label: 'Greater than', symbol: '>' },
+  { id: 'lte', label: 'Less than or equal to', symbol: '≤' },
+  { id: 'lt', label: 'Less than', symbol: '<' },
+  { id: 'eq', label: 'Equal to', symbol: '=' },
+  { id: 'ne', label: 'Not equal to', symbol: '≠' },
+]
+
+/** Falls back rather than rendering an empty token: an operator that went out
+    of the list should read as the nearest thing, not as a blank chip. */
+export const versionOp = (id: string): VersionOp =>
+  VERSION_OPS.find((o) => o.id === id) ?? VERSION_OPS[0]
+
+export const OS_ATTRIBUTES: Attribute[] = [
+  {
+    id: 'device-type', category: 'Platform', name: 'Device type',
+    purpose: 'The form factor the request came from. A laptop and a phone are not the same risk, and some apps have no business being opened on one of them.',
+    priority: 'Low', weight: 5, phase: 1,
+    /* Three, and no "Desktop". The distinction that pays is portable versus
+       not, and a desktop and a laptop answer that the same way for every rule
+       anyone writes here — splitting them adds an option and no decision. */
+    config: {
+      kind: 'choice',
+      label: 'Device type',
+      value: 'Laptop',
+      options: ['Mobile', 'Tablet', 'Laptop'],
+    },
+  },
+  {
+    id: 'os-windows', category: 'Platform', name: 'Windows OS version',
+    purpose: 'The Windows build the request came from. Compare it to draw a floor under what may sign in.',
+    priority: 'High', weight: 20, phase: 1,
+    config: {
+      kind: 'version',
+      platform: 'Windows',
+      label: 'Windows version',
+      value: { op: 'gte', value: '10' },
+      /* Windows names its releases twice — the major version and the annual
+         feature update — and an admin drawing a floor means one or the other.
+         Both are here, the feature updates labelled with the build they are,
+         because "22H2" is what the update is called and 10.0.19045 is what the
+         device reports. */
+      versions: [
+        { value: '11', label: 'Windows 11' },
+        { value: '10.0.22631', label: 'Windows 11 · 23H2' },
+        { value: '10.0.22621', label: 'Windows 11 · 22H2' },
+        { value: '10', label: 'Windows 10' },
+        { value: '10.0.19045', label: 'Windows 10 · 22H2' },
+        { value: '10.0.19044', label: 'Windows 10 · 21H2' },
+        { value: '8.1', label: 'Windows 8.1' },
+      ],
+      hint: 'The floor, not the exact build — a device reporting anything at or above this passes.',
+    },
+  },
+  {
+    id: 'os-android', category: 'Platform', name: 'Android OS version',
+    purpose: 'The Android version the request came from. Compare it to keep unpatched handsets out.',
+    priority: 'High', weight: 20, phase: 1,
+    config: {
+      kind: 'version',
+      platform: 'Android',
+      label: 'Android version',
+      value: { op: 'gte', value: '13' },
+      /* Whole numbers, which is how Android ships: there is no 14.1 to draw a
+         floor under. */
+      versions: [
+        { value: '16', label: 'Android 16' },
+        { value: '15', label: 'Android 15' },
+        { value: '14', label: 'Android 14' },
+        { value: '13', label: 'Android 13' },
+        { value: '12', label: 'Android 12' },
+        { value: '11', label: 'Android 11' },
+        { value: '10', label: 'Android 10' },
+      ],
+      hint: 'The floor, not the exact release — a handset at or above this passes.',
+    },
+  },
+  {
+    id: 'os-ios', category: 'Platform', name: 'iOS version',
+    purpose: 'The iOS version the request came from. Compare it to keep unpatched phones out.',
+    priority: 'High', weight: 20, phase: 1,
+    config: {
+      kind: 'version',
+      platform: 'iOS',
+      label: 'iOS version',
+      value: { op: 'gte', value: '17' },
+      /* Majors only. iOS ships a point release most months, and a list carrying
+         every 18.x would be forty rows deep to express a floor nobody draws at
+         that precision. */
+      versions: [
+        { value: '26', label: 'iOS 26' },
+        { value: '18', label: 'iOS 18' },
+        { value: '17', label: 'iOS 17' },
+        { value: '16', label: 'iOS 16' },
+        { value: '15', label: 'iOS 15' },
+      ],
+      hint: 'The floor, not the exact release — a phone at or above this passes.',
+    },
+  },
+  {
+    id: 'os-macos', category: 'Platform', name: 'macOS version',
+    purpose: 'The macOS version the request came from. Compare it to draw a floor under what may sign in.',
+    priority: 'High', weight: 20, phase: 1,
+    config: {
+      kind: 'version',
+      platform: 'macOS',
+      label: 'macOS version',
+      value: { op: 'gte', value: '14' },
+      /* Labelled with the release name as well as the number, because macOS is
+         the one platform where people say the name — "we are on Sonoma" — and
+         the number is what the device reports. Both, so neither has to be
+         translated in somebody's head. */
+      versions: [
+        { value: '26', label: 'macOS 26 · Tahoe' },
+        { value: '15', label: 'macOS 15 · Sequoia' },
+        { value: '14', label: 'macOS 14 · Sonoma' },
+        { value: '13', label: 'macOS 13 · Ventura' },
+        { value: '12', label: 'macOS 12 · Monterey' },
+      ],
+      hint: 'The floor, not the exact release — a Mac at or above this passes.',
+    },
+  },
+
+  /* --- Browser: the allowlist that was cut, in the shape that works ----------
+
+     Four, one per family, and it is the OS argument again: a version
+     comparison only means something inside a product. "≥ 120" is a floor for
+     Chrome and a floor for Edge and they are not the same number in the same
+     week, so asking it of "the browser" is not a question.
+
+     Deliberately a floor rather than a list of permitted names, which is what
+     the cut condition was. A tenant enforcing browser hygiene is not saying
+     "Chrome only" — it is saying "not the Chrome from eighteen months ago",
+     and a name allowlist cannot express that at all. It is also the cheapest
+     control in this catalogue: the browser states its version on every
+     request, with nothing installed and nothing to enrol.
+
+     A family a profile says nothing about is unconstrained. That is the same
+     rule the OS floors follow, and it is what makes these safe to add: a
+     profile naming a Chrome floor does not thereby ban Firefox. */
+  {
+    id: 'browser-chrome', category: 'Browser', name: 'Chrome version',
+    purpose: 'The Chrome build the request came from. Chrome ships a major version roughly every four weeks, so a floor here decays into a patch-level control on its own.',
+    priority: 'Medium', weight: 10, phase: 1,
+    config: {
+      kind: 'version',
+      platform: 'Chrome',
+      label: 'Chrome version',
+      value: { op: 'gte', value: '120' },
+      placeholder: '120, 131, 131.0.6778.86',
+      hint: 'The major number is usually what you mean — 120, 131.',
+    },
+  },
+  {
+    id: 'browser-edge', category: 'Browser', name: 'Edge version',
+    purpose: 'The Edge build the request came from. Numbered alongside Chrome since it moved to Chromium, and still worth stating separately — a managed Windows estate updates it on its own schedule.',
+    priority: 'Medium', weight: 10, phase: 1,
+    config: {
+      kind: 'version',
+      platform: 'Edge',
+      label: 'Edge version',
+      value: { op: 'gte', value: '120' },
+      placeholder: '120, 131, 131.0.2903.70',
+      hint: 'The major number — 120, 131.',
+    },
+  },
+  {
+    id: 'browser-firefox', category: 'Browser', name: 'Firefox version',
+    purpose: 'The Firefox build the request came from. Its own release train and its own numbers, which is why it is not folded in with the Chromium pair.',
+    priority: 'Medium', weight: 10, phase: 1,
+    config: {
+      kind: 'version',
+      platform: 'Firefox',
+      label: 'Firefox version',
+      value: { op: 'gte', value: '128' },
+      placeholder: '128, 133, 133.0.3',
+      hint: 'The major number — 128, 133. ESR builds report their own.',
+    },
+  },
+  {
+    id: 'browser-safari', category: 'Browser', name: 'Safari version',
+    purpose: 'The Safari build the request came from. Tied to the OS release rather than shipped on its own, so a floor here and a macOS floor usually move together.',
+    priority: 'Medium', weight: 10, phase: 1,
+    config: {
+      kind: 'version',
+      platform: 'Safari',
+      label: 'Safari version',
+      value: { op: 'gte', value: '17' },
+      placeholder: '17, 18, 18.1.1',
+      hint: 'Major, or major and minor — 17, 18.1.',
+    },
+  },
+
+  /* --- Security: the two posture checks that had nowhere to live -------------
+
+     Both are stated as a REQUIREMENT rather than as a detection with an
+     outcome attached, and that is the difference between this catalogue and
+     the risk one. The risk list's `root` carries "When detected → Deny /
+     Challenge / Flag only", which puts the decision inside the library object:
+     a rule saying "matches profile X" cannot then say what happens, because X
+     already said. Here the profile states a condition and the RULE decides —
+     which is the division of labour every other condition in this product
+     follows, and the reason a policy can now answer a rooted handset with a
+     flag on one app and a deny on another. */
+  {
+    id: 'integrity', category: 'Security', name: 'Device integrity',
+    purpose: 'Whether the operating system is still the one the vendor shipped. A rooted, jailbroken or tampered device can report whatever it likes about every other check in this profile, so this is the row that decides whether the rest mean anything.',
+    priority: 'High', weight: 30, phase: 1,
+    /* `phase: 1` — this collects today, and the contrast with the risk
+       catalogue's `root` is the point rather than an inconsistency.
+
+       That row is `phase: 2` and `needsAgent`, because the collector it names
+       is the Windows desktop agent, which does not inspect handsets. This one
+       is read by the miniOrange Authenticator on the device itself, which
+       attests its own integrity as part of doing its job. Same fact, two
+       collectors, and only one of them exists on a phone. */
+    /* A ladder rather than three tick boxes, and the ladder is ordered: each
+       option is the one above it plus one more class of device. Three
+       independent switches would let somebody build "tampered is fine but
+       rooted is not", which is not a posture anybody holds — tampering is the
+       broader fact and rooting is one way to achieve it.
+
+       The last rung was "Not rooted, tampered, or running in an emulator":
+       308px, the one answer the device profile list's 260px control column
+       could not hold, and the only one with a serial comma (15 Sep 2026). Same
+       three facts in the ladder's own words. */
+    config: {
+      kind: 'choice',
+      label: 'Require',
+      value: 'Not rooted or jailbroken',
+      options: [
+        'Not rooted or jailbroken',
+        'Not rooted, jailbroken or tampered',
+        'Not rooted, tampered or emulated',
+      ],
+    },
+  },
+  {
+    id: 'screen-lock', category: 'Security', name: 'Screen lock',
+    purpose: 'Whether the device locks itself when it is put down. A handset with no passcode is not a device that might be stolen — it is a signed-in session that anybody who picks it up inherits.',
+    priority: 'High', weight: 20, phase: 1,
+    config: {
+      kind: 'choice',
+      label: 'Require',
+      value: 'A screen lock is set',
+      options: ['A screen lock is set', 'PIN, passcode or password', 'Biometric unlock'],
+    },
+  },
+
+  /* --- Security, added 10 Nov 2026 (owner: "find the relevant options we can give inside the current list") ---------
+
+     Five rows, each one a check BOTH Okta's device assurance and Duo's device health offer (docs/research/competitors,
+     30 Sep 2026): encryption, firewall, security software, Secure Boot and TPM, Android patch level. The sixth of the six
+     was not a row — Screen lock was already here, and now sits under the desktop device types too (Duo's "system password
+     set", Okta's macOS lock screen).
+
+     `phase: 2` on all five, and that is the honest mark. Nothing in the repo shows what the miniOrange Authenticator or
+     Agent can read on a desktop (device-compliance-report.md, open question 8). Like the other requirements an absent
+     signal is a failed condition, so the row is safe to offer; the phase says it is not collected yet. */
+  {
+    id: 'disk-encryption', category: 'Security', name: 'Disk encryption',
+    purpose: 'Whether the drive is encrypted — BitLocker on Windows, FileVault on macOS, the platform’s own on Linux and Android. A lost laptop with an encrypted disk is a hardware loss; without one, it is a data loss.',
+    priority: 'High', weight: 20, phase: 2,
+  },
+  {
+    id: 'firewall', category: 'Security', name: 'Firewall',
+    purpose: 'Whether the operating system’s firewall is switched on.',
+    priority: 'Medium', weight: 10, phase: 2,
+  },
+  {
+    id: 'security-software', category: 'Security', name: 'Antivirus or EDR running',
+    purpose: 'Whether security software is installed and running. Any recognised product passes.',
+    priority: 'Medium', weight: 10, phase: 2,
+  },
+  {
+    id: 'secure-boot', category: 'Security', name: 'Secure Boot and TPM',
+    purpose: 'Whether the machine starts only software the vendor signed, and holds its keys in a hardware chip. The check that the operating system under every other row has not been swapped.',
+    priority: 'Medium', weight: 20, phase: 2,
+    config: {
+      kind: 'choice',
+      label: 'Require',
+      value: 'Secure Boot on and TPM 2.0',
+      options: ['Secure Boot on', 'TPM 2.0 present', 'Secure Boot on and TPM 2.0'],
+    },
+  },
+  {
+    id: 'security-patch', category: 'Security', name: 'Android security patch',
+    purpose: 'How recently the handset installed a security patch. A version floor lets a device sit on an old patch for years; this asks how long it has been.',
+    priority: 'Medium', weight: 10, phase: 2,
+    config: {
+      kind: 'choice',
+      label: 'Patched within',
+      value: '90 days',
+      options: ['30 days', '60 days', '90 days'],
+    },
+  },
+
+  /* --- Client: the miniOrange software, by version ---------------------------
+
+     Two rows, not one, and the reason is the reason there are four OS rows.
+     The app and the agent are separate products on separate release trains,
+     and "≥ 6.4" is a sentence about one of them. A single "miniOrange version"
+     floor would be a number that means one thing on a phone and another on a
+     laptop, which is the shape this catalogue has refused everywhere else.
+
+     Worth stating plainly because it is easy to read this as bureaucracy: a
+     version floor on the client is not housekeeping, it is what makes the
+     other controls enforceable. Number matching, verified push and the
+     integrity checks above each arrived in a release. A tenant that has
+     switched them on has switched them on for the handsets that can do them,
+     and has no way to say so — until it can require the release. */
+  {
+    id: 'mo-authenticator', category: 'Client', name: 'miniOrange Authenticator version',
+    purpose: 'The version of the authenticator app on the handset. Number matching, verified push and the integrity signals above each shipped in a release — a floor here is what turns them from settings into requirements.',
+    /* The app reports its own version on every request it takes part in, which
+       is as close to free as a signal gets. */
+    priority: 'High', weight: 20, phase: 1,
+    config: {
+      kind: 'version',
+      platform: 'miniOrange Authenticator',
+      label: 'Authenticator version',
+      value: { op: 'gte', value: '6.4' },
+      placeholder: '6.4, 6.4.1',
+      hint: 'Major and minor — 6.4 — unless a specific build is what you mean.',
+    },
+  },
+  {
+    id: 'mo-agent', category: 'Client', name: 'miniOrange Agent version',
+    purpose: 'The version of the desktop agent. Separate from the app because they are separate products, and a floor meant for one must not be readable as a floor on the other.',
+    priority: 'Medium', weight: 20, phase: 1,
+    config: {
+      kind: 'version',
+      platform: 'miniOrange Agent',
+      label: 'Agent version',
+      value: { op: 'gte', value: '4.2' },
+      placeholder: '4.2, 4.2.7',
+      hint: 'The version the console reports for the agent — 4.2, 4.2.7.',
+    },
+  },
+]
+
+/* --- The risk catalogue, and why it is a different list ------------------------
+   Attribute match and risk score ask different questions, and one list served
+   neither well.
+
+   MATCH asks "may this device sign in", and the answer is a small set of
+   conditions an admin states outright: what kind of device, and what it is
+   running. Five things, no taxonomy — filing five items is filing for its own
+   sake.
+
+   RISK asks "is this the same device as last time", and that is a scoring
+   problem: it wants MANY weak signals, because the score is the sum and no
+   single signal carries it. Thirty-eight of them do need a filing scheme, which
+   is what the five categories are — Hardware, Browser, Security, Network,
+   Behaviour, in descending order of how hard they are to forge.
+
+   The sheet's own weights, unchanged: unique hardware identifiers 30, hardware
+   specifications 20, browser and network 10, software and configuration 5.
+
+   This list was deleted when the master narrowed to five and is restored from
+   `ba0e53d^` rather than retyped, so the weights and the purposes are the
+   sheet's own rather than a paraphrase of them. */
+export const DEVICE_ATTRIBUTES: Attribute[] = [
+  // --- Hardware -------------------------------------------------------------
+  /* No config, and it is the only row in either catalogue to have lost one.
+
+     It carried `Treat a change as → Significant / Minor / Ignore`, which is the
+     weight question asked a second time in different words: Significant and
+     Minor ARE High and Low, and Ignore is unticking the row. A device row now
+     shows its weight and, where it has one, its precision — and this was the
+     one attribute where those two controls would have been the same control
+     printed twice with disagreeing vocabularies.
+
+     It also settles something worse. `device-type` is the one id in both
+     catalogues, and the merged lookup that used to resolve it always returned
+     the OS copy — so a device profile asking for this row's configuration got
+     `Device type → Laptop / Mobile / Tablet`, which is a CONDITION, on a
+     profile that has no conditions. `attrOf(mode, id)` resolves by kind now,
+     and with the config gone the two rows differ only in what they are for. */
+  {
+    id: 'device-type', category: 'Hardware', name: 'Device type',
+    purpose: 'Desktop, laptop, mobile or tablet. Different form factors carry different risk.',
+    priority: 'Low', weight: 5, phase: 1,
+    always: true,
+  },
+  {
+    id: 'manufacturer', category: 'Hardware', name: 'Manufacturer and model',
+    purpose: 'Apple, Samsung, Dell. Identifies hardware families with known weaknesses.',
+    priority: 'Medium', weight: 20, phase: 1, needsAgent: true,
+  },
+  {
+    id: 'mac', category: 'Hardware', name: 'MAC address',
+    purpose: 'The network adapter address. Strong, but changes when the adapter does.',
+    priority: 'High', weight: 30, phase: 1, needsAgent: true,
+  },
+  {
+    id: 'os', category: 'Hardware', name: 'Operating system and version',
+    purpose: 'An unpatched OS is a reason to ask for more, independent of whether the device is known.',
+    priority: 'High', weight: 20, phase: 1,
+    always: true,
+    config: { kind: 'choice', label: 'Match on', value: 'Major version', options: ['Exact build', 'Major version', 'Name only'] },
+  },
+  {
+    id: 'os-install', category: 'Hardware', name: 'OS installation ID',
+    purpose: 'Identifies one installation. Survives hardware changes, dies on a reinstall.',
+    priority: 'High', weight: 30, phase: 1, needsAgent: true,
+  },
+  {
+    id: 'tpm', category: 'Hardware', name: 'TPM ID',
+    purpose: 'The Trusted Platform Module identifier. The strongest signal available, where a TPM exists.',
+    priority: 'High', weight: 30, phase: 1, needsAgent: true,
+  },
+  {
+    id: 'cpu', category: 'Hardware', name: 'Processor',
+    purpose: 'CPU and GPU model. Stable for the life of the machine.',
+    priority: 'Medium', weight: 20, phase: 1, needsAgent: true,
+  },
+  {
+    id: 'screen', category: 'Hardware', name: 'Screen resolution',
+    purpose: 'Changes when a monitor is plugged in, so it is weak on its own.',
+    priority: 'Low', weight: 5, phase: 2,
+  },
+  {
+    id: 'ram', category: 'Hardware', name: 'Memory and storage',
+    purpose: 'Capacity, not serials. Changes on an upgrade.',
+    priority: 'Medium', weight: 20, phase: 1, needsAgent: true,
+  },
+  {
+    id: 'battery', category: 'Hardware', name: 'Battery status',
+    purpose: 'Present or absent, and health. Distinguishes a laptop from a desktop.',
+    priority: 'Low', weight: 5, phase: 2, needsAgent: true,
+  },
+  {
+    id: 'motherboard', category: 'Hardware', name: 'Motherboard serial',
+    purpose: 'Unique to the board. Effectively the machine itself.',
+    priority: 'High', weight: 30, phase: 1, needsAgent: true,
+  },
+  {
+    id: 'bios', category: 'Hardware', name: 'BIOS UUID',
+    purpose: 'A unique firmware identifier, set at manufacture.',
+    priority: 'High', weight: 30, phase: 1, needsAgent: true,
+  },
+  {
+    id: 'disk', category: 'Hardware', name: 'Hard disk serial',
+    purpose: 'Unique to the drive. Changes if the drive is replaced or cloned.',
+    priority: 'High', weight: 30, phase: 1, needsAgent: true,
+  },
+  {
+    id: 'ram-serial', category: 'Hardware', name: 'RAM serials',
+    purpose: 'Module serial numbers. Strong, but changes on any memory upgrade.',
+    priority: 'Medium', weight: 5, phase: 1, needsAgent: true,
+  },
+  {
+    id: 'machine-sid', category: 'Hardware', name: 'Machine SID',
+    purpose: 'The Windows security identifier for the machine.',
+    priority: 'High', weight: 30, phase: 1, needsAgent: true,
+  },
+
+  // --- Browser --------------------------------------------------------------
+  {
+    id: 'browser', category: 'Browser', name: 'Browser and version',
+    purpose: 'Changes on every browser update, so it is noisy unless matched loosely.',
+    priority: 'Medium', weight: 10, phase: 1,
+    always: true,
+    config: { kind: 'choice', label: 'Match on', value: 'Family only', options: ['Exact version', 'Major version', 'Family only'] },
+  },
+  {
+    id: 'user-agent', category: 'Browser', name: 'User agent',
+    purpose: 'The full UA string. Trivially spoofed, and included for completeness.',
+    priority: 'Low', weight: 10, phase: 1,
+  },
+  {
+    id: 'plugins', category: 'Browser', name: 'Plugins and extensions',
+    purpose: 'A distinctive set, and one the user changes without warning.',
+    priority: 'Low', weight: 10, phase: 2,
+  },
+  {
+    id: 'locale', category: 'Browser', name: 'Language and locale',
+    purpose: 'Stable for most people, and a strong tell when it moves.',
+    priority: 'Medium', weight: 5, phase: 1,
+  },
+  {
+    id: 'canvas', category: 'Browser', name: 'Canvas fingerprint',
+    purpose: 'A rendering signature derived from the GPU and font stack.',
+    priority: 'Medium', weight: 10, phase: 1,
+  },
+
+  // --- Security -------------------------------------------------------------
+  {
+    id: 'root', category: 'Security', name: 'Root or jailbreak',
+    purpose: 'A rooted device cannot be trusted to report anything else honestly.',
+    priority: 'High', weight: 30, phase: 2, needsAgent: true,
+    config: { kind: 'choice', label: 'When detected', value: 'Deny', options: ['Deny', 'Challenge', 'Flag only'] },
+  },
+  {
+    id: 'vm', category: 'Security', name: 'Virtual machine or emulator',
+    purpose: 'Detects a device that is not physical. Legitimate in engineering, suspicious elsewhere.',
+    priority: 'High', weight: 30, phase: 1, needsAgent: true,
+    config: { kind: 'choice', label: 'When detected', value: 'Challenge', options: ['Deny', 'Challenge', 'Flag only'] },
+  },
+  {
+    id: 'secure-boot', category: 'Security', name: 'Secure Boot and certificates',
+    purpose: 'Firmware integrity. Off is not proof of anything, but it is worth knowing.',
+    priority: 'High', weight: 20, phase: 1, needsAgent: true,
+  },
+  {
+    id: 'app-integrity', category: 'Security', name: 'Application integrity',
+    purpose: 'Whether the client has been tampered with since it was installed.',
+    priority: 'Medium', weight: 20, phase: 2, needsAgent: true,
+  },
+
+  // --- Network --------------------------------------------------------------
+  {
+    id: 'hostname', category: 'Network', name: 'Host name and user name',
+    purpose: 'Set by the owner, so it is meaningful on managed estates and noise elsewhere.',
+    priority: 'Low', weight: 5, phase: 2, needsAgent: true,
+  },
+  {
+    id: 'ip', category: 'Network', name: 'IP address',
+    purpose: 'Public and private. Changes constantly on mobile networks.',
+    priority: 'Medium', weight: 10, phase: 1,
+    always: true,
+    config: { kind: 'choice', label: 'Match on', value: 'Subnet', options: ['Exact address', 'Subnet', 'Country only'] },
+  },
+  {
+    id: 'isp', category: 'Network', name: 'ISP and carrier',
+    purpose: 'Stable for a fixed line, and a good proxy for "somewhere else" on mobile.',
+    priority: 'Medium', weight: 10, phase: 1,
+  },
+  {
+    id: 'geo', category: 'Network', name: 'Geolocation',
+    purpose: 'Country, region, city. The signal behind impossible-travel checks.',
+    priority: 'High', weight: 10, phase: 1,
+    config: { kind: 'choice', label: 'Match on', value: 'Country', options: ['City', 'Region', 'Country'] },
+  },
+  {
+    id: 'vpn', category: 'Network', name: 'Proxy or VPN',
+    purpose: 'A VPN hides every other network signal, which is why it is worth its own row.',
+    priority: 'High', weight: 5, phase: 1,
+    config: { kind: 'choice', label: 'When detected', value: 'Challenge', options: ['Deny', 'Challenge', 'Flag only'] },
+  },
+  {
+    id: 'conn', category: 'Network', name: 'Connection type',
+    purpose: 'Cellular, Wi-Fi or Ethernet. Changes as somebody walks out of the building.',
+    priority: 'Medium', weight: 10, phase: 1,
+  },
+  {
+    id: 'domain', category: 'Network', name: 'Domain membership',
+    purpose: 'Whether the machine is joined to your directory. Binary, and decisive when true.',
+    priority: 'High', weight: 20, phase: 1, needsAgent: true,
+  },
+
+  // --- Behaviour ------------------------------------------------------------
+  {
+    id: 'typing', category: 'Behaviour', name: 'Typing dynamics',
+    purpose: 'Keystroke speed and intervals. Needs a baseline before it says anything.',
+    priority: 'Low', weight: 5, phase: 2,
+  },
+  {
+    id: 'mouse', category: 'Behaviour', name: 'Mouse and scroll patterns',
+    purpose: 'Movement signatures. Same caveat: useless until there is history.',
+    priority: 'Low', weight: 5, phase: 2,
+  },
+  {
+    id: 'login-freq', category: 'Behaviour', name: 'Login frequency',
+    purpose: 'How often this person signs in, and from where.',
+    priority: 'High', weight: 10, phase: 2,
+  },
+  {
+    id: 'session', category: 'Behaviour', name: 'Session duration and navigation',
+    purpose: 'How long sessions run and where they go.',
+    priority: 'Medium', weight: 5, phase: 2,
+  },
+  {
+    id: 'time', category: 'Behaviour', name: 'Time of access',
+    purpose: 'Sign-ins outside the usual window are the cheapest anomaly to detect.',
+    priority: 'High', weight: 10, phase: 2,
+    config: { kind: 'tolerance', label: 'Hours either side of normal', value: 3, min: 0, max: 12, unit: 'hours' },
+  },
+  {
+    id: 'resource', category: 'Behaviour', name: 'Resource being accessed',
+    purpose: 'Which app. A finance system at 3am is a different question from a wiki.',
+    priority: 'High', weight: 10, phase: 2,
+  },
+  {
+    id: 'role', category: 'Behaviour', name: 'Role and privileges',
+    purpose: 'What the account can do if the sign-in is not who it claims to be.',
+    priority: 'High', weight: 20, phase: 2,
+  },
+]
+
+/* `OS_CATEGORIES`, `DEVICE_CATEGORIES` and `categoriesFor` stood here — each
+   catalogue's filing scheme, for the picker's category dropdown. The dropdown
+   went (16 Sep 2026) and they had no other caller. A row's `category` still
+   matters: it picks the row's family mark (`CAT_ICON`) and the search matches
+   it. */
+
+/* Which catalogue a profile draws from. The two are disjoint in intent and
+   overlap in one id — `device-type` is a sensible signal either way — so this
+   is a function of the KIND rather than a merged list with a flag on each row.
+
+   A `Record` rather than the ternary it replaced. `mode === 'risk' ? … : …` was
+   else-shaped: a mode added without a catalogue, or an id typed wrong, silently
+   returned the other list rather than failing. A total map cannot be
+   incomplete, and adding a third kind without a catalogue is a compile error. */
+export const CATALOGUE: Record<ProfileMode, Attribute[]> = {
+  os: OS_ATTRIBUTES,
+  device: DEVICE_ATTRIBUTES,
+}
+
+export const attributesFor = (mode: ProfileMode): Attribute[] => CATALOGUE[mode]
+
+/* One attribute, resolved BY KIND — and it replaces `byId`.
+
+   `byId` searched a merged list built as `[...OS, ...DEVICE.filter(not in OS)]`,
+   which de-duplicated on `device-type` by keeping the OS copy. So every device
+   profile that asked what `device-type` was got the OS catalogue's answer: a
+   different purpose, a different category, and until a moment ago a different
+   config entirely. Nothing noticed because nothing rendered a device row's
+   configuration — and the whole point of this pass is that now something does.
+
+   Nothing that calls this lacks a mode. That is the argument for the shape:
+   an id alone was never enough to identify an attribute, and pretending it was
+   is what let the wrong row through. */
+export const attrOf = (mode: ProfileMode, id: string): Attribute | undefined =>
+  CATALOGUE[mode].find((a) => a.id === id)
+
+/* Both lists, WITH the duplicate, and only for the transcription receipt.
+
+   `ATTRIBUTES` de-duplicated, which is exactly why the uniqueness assertion in
+   the test passed while one of the two `device-type` rows was unreachable. The
+   test now asserts uniqueness per catalogue, which is the property that
+   actually matters, and this list is what the weight and naming checks sweep. */
+export const ALL_ATTRIBUTES: Attribute[] = [...OS_ATTRIBUTES, ...DEVICE_ATTRIBUTES]
+
+/* --- Profiles ---------------------------------------------------------------- */
+
+/* --- The two kinds ------------------------------------------------------------
+
+   `'match'` and `'risk'` before, which named the arithmetic. They are named
+   after the question now, and the ids moved with the labels rather than being
+   left behind — leaving `mode === 'risk'` to mean "device attributes" is how a
+   codebase ends up with two vocabularies for one thing, which is precisely the
+   state this file was in: the create dialog said "Attribute based" and every
+   other surface said "Attribute match", for the same profile, on the same day.
+
+   The tint is a FIELD here rather than the id interpolated into a class name.
+   `.bfp2__modechip.is-${p.mode}` meant a mode rename had to be mirrored in the
+   stylesheet, and a class that matches nothing renders an untinted chip — no
+   error, no failing test, just a chip that quietly stops saying anything. The
+   chip emits the tint, so this can never happen again. */
+export type ProfileMode = 'os' | 'device'
+
+export interface ModeMeta {
+  id: ProfileMode
+  label: string
+  /** One line under the name, where the choice is made. The blurb is the `?`. */
+  summary: string
+  blurb: string
+  /** The feedback ramp this kind wears, named for the ramp and not for itself. */
+  tint: 'info' | 'accent'
+}
+
+/* Named for the question each kind answers, 13 Sep 2026.
+
+   "OS and version" named five of the thirteen checks in its own catalogue and
+   left out integrity, screen lock and the miniOrange clients. "Device
+   attributes" named the inputs of the other kind rather than its purpose, which
+   is recognising a machine it has seen before. Device health is the manager's
+   word and the IdP market's (Duo, JumpCloud); a trusted device is miniOrange's
+   own term for a device it recognises.
+
+   The blurbs are read on a `?` now, not printed under the choice. */
+export const MODES: ModeMeta[] = [
+  {
+    id: 'os',
+    label: 'Device health',
+    summary: 'OS, browser, integrity, screen lock and app version',
+    blurb:
+      'Checks a device must pass to sign in — OS and browser version, integrity, screen lock and miniOrange app version. Integrity and screen lock are reported by the miniOrange app; a device without it fails those checks.',
+    tint: 'info',
+  },
+  {
+    id: 'device',
+    label: 'Trusted device',
+    summary: 'Recognises machines it has seen, by prioritised signals',
+    blurb:
+      'Recognises a machine it has seen before. Each signal has a priority, what changed since last time adds up to a score, and the score picks the outcome.',
+    tint: 'accent',
+  },
+]
+
+export const MODE_META: Record<ProfileMode, ModeMeta> = Object.fromEntries(
+  MODES.map((m) => [m.id, m]),
+) as Record<ProfileMode, ModeMeta>
+
+/* The noun for a thing this kind holds. A health profile's rows are CHECKS a
+   device has to pass; a trusted-device profile's rows are SIGNALS it watches.
+   Both were once called "attributes", which is true of the catalogue and wrong
+   about what the profile does with them — and "check" is the word every IdP
+   peer uses for the first (Okta, Duo, Cloudflare). */
+export const ITEM_NOUN: Record<ProfileMode, { one: string; many: string; verb: string }> = {
+  os: { one: 'check', many: 'checks', verb: 'checks' },
+  device: { one: 'signal', many: 'signals', verb: 'watches' },
+}
+
+export const countLabel = (mode: ProfileMode, n: number) =>
+  `${n} ${n === 1 ? ITEM_NOUN[mode].one : ITEM_NOUN[mode].many}`
+
+/* The two ways a device can be identified, and the console's own split.
+
+   Agentless is what a browser and the request itself give up. Agent-based adds
+   everything only software running on the machine can read — the TPM, the disk,
+   whether Secure Boot is on. Higher assurance, and it has a prerequisite an
+   admin has to satisfy before any of it works.
+
+   This is asked at CREATION now, and only of a device-attributes profile. It
+   used to be the first row of a panel on the detail page, which put it after
+   the attributes it governs: you chose eighteen signals and then discovered,
+   on a different surface, that half of them never arrive. A question whose
+   answer decides what the next question can even offer belongs before it.
+
+   An OS-and-version profile is never asked, because for that catalogue there is
+   nothing to decide — see `offeredAttributes`. It still carries the field, and
+   carries `'agentless'`, because that is what the five OS attributes actually
+   need: they arrive with the request. Nothing reads it on an OS profile. */
+export type ProfileReach = 'agentless' | 'agent' | 'authenticator'
+
+export interface ReachMeta {
+  id: ProfileReach
+  label: string
+  /** One line under the name, where the choice is made. The blurb is the `?`. */
+  summary: string
+  blurb: string
+  /* A short pill beside the name. "Windows only" rode here on the agent-based
+     choice until 23 Sep 2026, when the owner took it off ("remove this tag"):
+     the prerequisites callout under the choice says it in full, and the pill
+     was the same fact twice on one tile. Nothing carries a tag now; the field
+     stays for the next one that earns it. */
+  tag?: string
+  note?: string
+}
+
+export const REACHES: ReachMeta[] = [
+  {
+    id: 'agentless',
+    label: 'Agentless',
+    summary: 'Browser, network and location — nothing to install',
+    blurb:
+      'Browser, network and geolocation signals establish device identity. Nothing to install.',
+  },
+  {
+    id: 'agent',
+    label: 'Agent-based',
+    summary: 'Adds hardware identifiers: TPM, motherboard, disk',
+    blurb:
+      'An installed agent adds hardware identifiers — TPM, motherboard, disk — for high-assurance access.',
+    note: 'Users without the agent cannot sign in.',
+  },
+  /* V1 (owner, 10 Nov 2026): added as an option only. What the app reads and
+     enforces for a trusted device is still to be specified, so for now it
+     offers what the agentless reach offers. */
+  {
+    id: 'authenticator',
+    label: 'Authenticator app',
+    summary: 'Signals read by the miniOrange Authenticator on the handset',
+    blurb: 'The miniOrange Authenticator app on the user’s phone establishes device identity.',
+  },
+]
+
+export const REACH_META: Record<ProfileReach, ReachMeta> = Object.fromEntries(
+  REACHES.map((r) => [r.id, r]),
+) as Record<ProfileReach, ReachMeta>
+
+export const reachLabel = (r: ProfileReach) => REACH_META[r].label
+
+/* What this kind, at this reach, may actually collect — and its complement.
+
+   `reach` is nullable because the wizard has not asked yet on the step before
+   it asks, and `null` reads as "no agent", which is the conservative half.
+
+   The reason the OS kind never asks the question is here rather than in a
+   comment: nothing in `OS_ATTRIBUTES` carries `needsAgent`, so
+   `offeredAttributes('os', anything)` is all five. Asking would be asking a
+   question with no consequence attached to either answer. */
+export const offeredAttributes = (mode: ProfileMode, reach: ProfileReach | null): Attribute[] =>
+  CATALOGUE[mode].filter((a) => !(a.needsAgent && reach !== 'agent'))
+
+export const blockedAttributes = (mode: ProfileMode, reach: ProfileReach | null): Attribute[] =>
+  CATALOGUE[mode].filter((a) => a.needsAgent && reach !== 'agent')
+
+/* The signals a profile of this kind cannot switch off.
+
+   Only the device kind has any. An OS-and-version profile is a set of
+   conditions somebody states outright — there is no baseline to it, and a
+   profile that required something nobody asked for would be a rule with a
+   clause the author never wrote. */
+export const alwaysOn = (mode: ProfileMode): Attribute[] => CATALOGUE[mode].filter((a) => a.always)
+
+/** `enabled`, with the unswitchable ones present whether they were listed or not. */
+export const withAlwaysOn = (mode: ProfileMode, enabled: string[]): string[] => {
+  const base = alwaysOn(mode).map((a) => a.id)
+  return [...base, ...enabled.filter((id) => !base.includes(id))]
+}
+
+/** Whether this kind of profile is ever asked the agent question. */
+export const asksReach = (mode: ProfileMode) => blockedAttributes(mode, 'agentless').length > 0
+
+/* How a device gets onto a person's list in the first place. The console's two,
+   and they are a BRANCH rather than a menu: choosing a roster removes the
+   device allowance entirely and replaces it with an upload. */
+export type Registration = 'self' | 'pre-approved'
+
+/* The live console's own words for the two, in the console's sentence case
+   (owner, 21 Sep 2026: "rename it based on our product"). */
+export const REGISTRATION_LABEL: Record<Registration, string> = {
+  self: 'Self registration by user',
+  'pre-approved': 'Pre-approved trusted devices only',
+}
+
+/** An uploaded roster of approved devices. Keyed on MAC, so it needs an agent. */
+export interface Roster {
+  fileName: string
+  rows: number
+  uploadedAt: string
+}
+
+/** How many devices a new profile allows. The console ships 1, which denies
+    anybody with a laptop and a desktop on the day it goes live. */
+export const DEFAULT_MAX_DEVICES = 3
+
+export interface FingerprintProfile {
+  id: string
+  name: string
+  mode: ProfileMode
+  /** Attribute ids that are switched on. */
+  enabled: string[]
+  /** Per-attribute overrides of the master's config default. */
+  config: Record<string, AttrConfigValue>
+  /** Risk mode: per-attribute weight overrides, as one of three tiers. */
+  weights: Record<string, number>
+
+  /* --- Device restriction ----------------------------------------------------
+     Which signals this profile may draw on at all, and what happens the first
+     time a device is seen. The attributes above decide whether this is the SAME
+     device; these decide whether it is allowed to become a known one. */
+
+  /** Decides whether half the master is even collectable. */
+  reach: ProfileReach
+  /** How a device gets onto a person's list. */
+  registration: Registration
+  /** How many one person may register. Null when a roster replaces the limit. */
+  maxDevices: number | null
+  /** Pre-approved only. */
+  roster: Roster | null
+  /** First sight of a device enrols it silently rather than challenging. */
+  autoRegister: boolean
+  /** Sign-in from a mobile device is refused. The console's "Enable mobile
+      device restriction". */
+  restrictMobile: boolean
+  /* Whether anybody has answered these questions yet.
+
+     Not derivable from the values: every field above has a working default, so
+     a profile nobody has opened is indistinguishable from one deliberately set
+     to exactly those defaults. The difference matters because the section shows
+     an empty state until it is true, and "agentless, self-service, 3 devices"
+     presented as a configuration nobody chose is a claim the screen cannot
+     support. */
+  restrictionSet: boolean
+
+  /** Device health only: what a denied user is told, and any time to fix it. Absent reads as the defaults. */
+  remediation?: Remediation
+
+  usedIn: number
+  /** Made by a move from an old device limit: `waiting` until a policy using it is approved, then `added`. */
+  fromOld?: 'waiting' | 'added'
+}
+
+/* --- Remediation: the step after a health check fails ---------------------------
+   Device health only (owner, 10 Nov 2026). A device that fails a check is denied;
+   remediation says whether the sign-in page shows the user how to fix it, and
+   whether they get time to do so first. Words follow the console reference:
+   "Hide / Display remediation instructions", then a Grace period of No, a due
+   date, or a number of days counted from the first failed attempt. */
+export type GraceKind = 'none' | 'date' | 'days'
+
+export interface Remediation {
+  /** Show remediation instructions to a user who fails a check. */
+  show: boolean
+  grace: GraceKind
+  /** yyyy-mm-dd, when grace is 'date'. */
+  dueDate: string
+  /** Whole days, when grace is 'days'. A string while typing. */
+  days: string
+}
+
+export const DEFAULT_REMEDIATION: Remediation = { show: false, grace: 'none', dueDate: '', days: '' }
+
+export const GRACE_LABEL: Record<GraceKind, string> = {
+  none: 'No',
+  date: 'Yes, by a due date',
+  days: 'Yes, after a number of days',
+}
+
+export const remediationOf = (p: Pick<FingerprintProfile, 'remediation'>): Remediation => p.remediation ?? DEFAULT_REMEDIATION
+
+/* A grace period only exists while instructions are shown, and only the field
+   for the chosen kind is kept. */
+export const tidyRemediation = (r: Remediation): Remediation =>
+  !r.show
+    ? DEFAULT_REMEDIATION
+    : { show: true, grace: r.grace, dueDate: r.grace === 'date' ? r.dueDate : '', days: r.grace === 'days' ? r.days : '' }
+
+export const isWholeDays = (v: string) => /^[1-9]\d{0,3}$/.test(v.trim())
+
+/** Why the remediation answers cannot be saved, or null. */
+export function remediationIssue(p: Pick<FingerprintProfile, 'mode' | 'remediation'>): string | null {
+  if (p.mode !== 'os') return null
+  const r = remediationOf(p)
+  if (!r.show) return null
+  if (r.grace === 'date' && !/^\d{4}-\d{2}-\d{2}$/.test(r.dueDate)) return 'Select a due date.'
+  if (r.grace === 'days' && !isWholeDays(r.days)) return 'Enter the number of days.'
+  return null
+}
+
+/** The remediation as a review cell reads it: "Hidden", "Shown", "Shown, 14 days to fix". */
+export function remediationLabel(r: Remediation): string {
+  if (!r.show) return 'Hidden'
+  if (r.grace === 'date') return r.dueDate ? `Shown, fix by ${r.dueDate}` : 'Shown'
+  if (r.grace === 'days') return r.days ? `Shown, ${r.days} ${r.days.trim() === '1' ? 'day' : 'days'} to fix` : 'Shown'
+  return 'Shown'
+}
+
+/* --- Coherence, as functions rather than as care -------------------------------
+
+   Four things the screen used to get right by remembering to. Each one is a
+   state the model could previously express and nobody could see.
+   -------------------------------------------------------------------------- */
+
+/* Values for attributes the profile no longer enables.
+
+   `enabled` and `config` were written by different hands: dropping a row wrote
+   `enabled` and left `config['os-windows'] = { op: 'gte', value: '10' }` behind
+   forever. Invisible — no surface renders a value for a row that is not there —
+   and it came back the moment somebody re-ticked the attribute, restoring a
+   setting nobody had re-approved and nobody had been shown.
+
+   It mattered less when the only way to set a value was to open the profile and
+   type it. The wizard writes values now, so a profile can be created, have a
+   row removed, and be handed to somebody else still carrying it. */
+export function pruneValues<P extends FingerprintProfile>(p: P): P {
+  const live = new Set(p.enabled)
+  const keep = <T,>(rec: Record<string, T>) =>
+    Object.fromEntries(Object.entries(rec).filter(([id]) => live.has(id)))
+  const pruned = { ...p, config: keep(p.config), weights: keep(p.weights) }
+  return p.remediation ? { ...pruned, remediation: tidyRemediation(p.remediation) } : pruned
+}
+
+/* The one writer for reach, wherever it is written.
+
+   It filters `enabled`, prunes what that orphans, and forces the registration
+   branch agentless cannot support — a roster is matched on MAC address, and MAC
+   is one of the eighteen things only an agent can read, so an agentless roster
+   matches nothing at all.
+
+   It lived inline in the restriction drawer as `setReach`, which is where the
+   pruning was missing: switching to agentless dropped the attributes and kept
+   their settings. */
+export function withReach(p: FingerprintProfile, reach: ProfileReach): FingerprintProfile {
+  const offered = offeredAttributes(p.mode, reach)
+  return pruneValues({
+    ...p,
+    reach,
+    enabled: p.enabled.filter((id) => offered.some((a) => a.id === id)),
+    registration: reach !== 'agent' ? 'self' : p.registration,
+    maxDevices: reach !== 'agent' ? (p.maxDevices ?? DEFAULT_MAX_DEVICES) : p.maxDevices,
+    roster: reach !== 'agent' ? null : p.roster,
+  })
+}
+
+/* A stored value as the string a row prints.
+
+   The overview states every configured value, and it states them as text rather
+   than as the control that set them — a page describing a profile should not be
+   a second copy of the editor. One function so the pill and the control cannot
+   disagree about what is stored, and it falls back to the master's own default
+   for exactly the reason `AttrControl` does: an untouched attribute IS at its
+   default, and printing nothing would say it was unset. */
+export function valueLabel(a: Attribute, v: AttrConfigValue | undefined): string {
+  const c = a.config
+  if (!c) return ''
+  if (c.kind === 'tolerance') return `${typeof v === 'number' ? v : c.value} ${c.unit}`
+  if (c.kind === 'choice') return typeof v === 'string' ? v : c.value
+  if (c.kind === 'list') return `${c.values.length} entries`
+  const r = isRuleValue(v) ? v : c.value
+  /* The symbol, not the id — `≥ 10`, which is how the row draws it. A `rule`
+     stores its operator as the word already, so it prints itself. */
+  return c.kind === 'version' ? `${versionOp(r.op).symbol} ${r.value}` : `${r.op} ${r.value}`
+}
+
+/* Which platforms an OS profile actually names.
+
+   The sharpest thing the overview says, and the screen could not say it before.
+   An OS profile holding only `device-type` checks no platform at all — a Mac
+   signing in passes every condition on it — and the old subtitle printed that
+   state as "Attribute match · 1 attribute", which reads like a configured
+   profile. */
+/* `category === 'Platform'`, not "every version attribute".
+
+   It was the latter, and that was the same statement while the only version
+   rows were the four operating systems. There are ten now — four browsers and
+   two miniOrange clients joined them — and a subtitle reading "Windows, Chrome,
+   miniOrange Authenticator" would be calling three different kinds of thing a
+   platform. The sentence this feeds is about which operating systems a profile
+   pins; the other floors are counted with everything else. */
+export const platformsNamed = (p: FingerprintProfile): string[] =>
+  CATALOGUE[p.mode]
+    .filter((a) => a.category === 'Platform' && a.config?.kind === 'version' && p.enabled.includes(a.id))
+    .map((a) => (a.config as { platform: string }).platform)
+
+/* A roster keyed on an address the profile never reads.
+
+   The roster is matched on MAC. `fp-kiosk` shipped holding a roster of 24
+   machines and watching only `device-type`, so the roster matched nothing and
+   the screen said so nowhere. */
+/* Structural, not the whole profile, and for the same reason `enforces` in
+   data.ts takes `{ status }`: this reads exactly two fields, and the enrolment
+   form that asks the question holds those two before a profile exists to put
+   them on. Demanding the full record there would mean building a fake one. */
+export const rosterNeedsMac = (p: Pick<FingerprintProfile, 'registration' | 'enabled'>): boolean =>
+  p.registration === 'pre-approved' && !p.enabled.includes('mac')
+
+/* --- What stops a profile from saving -------------------------------------------
+   One answer for the create wizard, the profile page's save bar and the leave
+   dialog, so the three never disagree about what a finished profile is. The
+   first problem only, in the order the page reads. */
+
+/** Longest profile name the inputs accept. */
+export const PROFILE_NAME_MAX = 80
+
+/** What a profile holds: always-on first, then what was ticked, at this reach. */
+export const chosenAttributes = (p: Pick<FingerprintProfile, 'mode' | 'reach' | 'enabled'>): Attribute[] => {
+  const on = offeredAttributes(p.mode, p.reach).filter((a) => a.always || p.enabled.includes(a.id))
+  return [...on.filter((a) => a.always), ...on.filter((a) => !a.always)]
+}
+
+/** Blank or already used by another profile. */
+export function nameIssue(name: string, otherNames: Iterable<string>): string | null {
+  if (!name.trim()) return 'Enter a profile name.'
+  if (nameTaken(name, otherNames)) return 'A profile with this name already exists.'
+  return null
+}
+
+const VERSION_TEXT = /^\d+(\.\d+)*$/
+
+/** Whether a typed version reads as one: "131", "6.4.1". */
+export const isVersionText = (value: string) => VERSION_TEXT.test(value.trim())
+
+/** The first version check whose value is blank or not a version. */
+export function invalidVersion(p: Pick<FingerprintProfile, 'mode' | 'reach' | 'enabled' | 'config'>): Attribute | undefined {
+  return chosenAttributes(p).find((a) => {
+    if (a.config?.kind !== 'version') return false
+    const v = p.config[a.id]
+    return !isVersionText((isRuleValue(v) ? v : a.config.value).value)
+  })
+}
+
+export function profileIssue(p: FingerprintProfile, otherNames: Iterable<string>): string | null {
+  const named = nameIssue(p.name, otherNames)
+  if (named) return named
+  if (chosenAttributes(p).length === 0) return p.mode === 'os' ? 'Add at least one check.' : 'Add at least one signal.'
+  const bad = invalidVersion(p)
+  if (bad?.config?.kind === 'version') return `Enter a version for ${bad.config.platform}.`
+  const fix = remediationIssue(p)
+  if (fix) return fix
+  if (p.registration === 'pre-approved') {
+    if (!p.roster) return 'Upload a device roster.'
+    if (rosterNeedsMac(p)) return 'Add MAC address to match the roster.'
+  }
+  return null
+}
+
+/* A new profile before anybody has answered anything but its name and type.
+
+   The id is left blank for the caller, which knows what ids are taken and which
+   ones a policy rule still names. `enabled` holds the always-on signals from the
+   start: stored without them, the profile page drew those rows on while the
+   change summary, scoring and pruning all read them as off. Agentless and
+   self-service are the defaults the page shows, and `restrictionSet` is false
+   because nobody has chosen them yet (15 Sep 2026). */
+export function blankProfile(name: string, mode: ProfileMode): FingerprintProfile {
+  return {
+    id: '',
+    name,
+    mode,
+    enabled: withAlwaysOn(mode, []),
+    config: {},
+    weights: {},
+    reach: 'agentless',
+    registration: 'self',
+    maxDevices: DEFAULT_MAX_DEVICES,
+    roster: null,
+    autoRegister: false,
+    restrictMobile: false,
+    restrictionSet: false,
+    usedIn: 0,
+  }
+}
+
+/* --- A roster from an uploaded file ------------------------------------------- */
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+/** "15 Sep 2026", the format the seeded rosters use. */
+export const dayLabel = (d: Date) => `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`
+
+const MAC = /([0-9a-f]{2}[:-]){5}[0-9a-f]{2}/i
+
+/** One device per non-empty line. A first line naming columns rather than a device is skipped. */
+export function rosterFromCsv(fileName: string, text: string, now: Date): Roster {
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+  const header = lines.length > 0 && !MAC.test(lines[0]) && /mac|name|email/i.test(lines[0])
+  return { fileName, rows: lines.length - (header ? 1 : 0), uploadedAt: dayLabel(now) }
+}
+
+/* --- What changed, for the save bar and Review changes ------------------------- */
+
+/* A shared review row (review-rows.ts). Beyond its words a row says where it
+   files and what kind of change it is, because Review changes groups by the
+   page's own sections (17 Sep 2026):
+
+     Name                  no section, so it leads under GENERAL_GROUP, which is
+                           "Basic details" (1 Oct 2026) — the setup rows'
+                           section, so it joins them in one. Only on a new
+                           profile now: a stored one's rename saves itself
+                           (rename-now.ts) and the draft's name follows
+     the setup rows        "Basic details", always changed — '' to '3' devices
+                           per person is a setting moving, not something added
+     a check or signal     "Checks" / "Signals", the noun the label already
+                           uses, added / removed / changed, with the
+                           attribute's name as the item */
+export type ProfileChange = ReviewLine
+
+const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+
+/* What one check is set to, in the words a review cell has room for. A signal's
+   value is its tier alone — "High", not "High priority": the section is
+   Signals and a changed row is already labelled "X priority", so the word on
+   every line was the same word eight times (owner, 21 Sep 2026). */
+function itemValue(p: FingerprintProfile, a: Attribute): string {
+  if (p.mode === 'device') return tierOf(p.weights[a.id] ?? a.weight)
+  return a.config ? valueLabel(a, p.config[a.id]) : 'On'
+}
+
+/** Every change from the saved profile to the draft, one row each. */
+export function profileReview(before: FingerprintProfile, after: FingerprintProfile): ProfileChange[] {
+  const rows: ProfileChange[] = []
+  /* `more` is the filing (group, kind, item). Spread only when given, so the
+     Name row stays the bare three words it always was. */
+  const push = (label: string, b: string, a: string, more: Omit<ProfileChange, 'label' | 'before' | 'after'> = {}) => {
+    if (b !== a) rows.push({ label, before: b, after: a, ...more })
+  }
+  const setup = { group: 'Basic details', kind: 'changed' } as const
+  /* No Name row (owner, 18 Nov 2026): the name is given in the create flow and a rename saves itself (rename-now.ts),
+     so the review never files it under Basic details. */
+  /* Setting up basic details is a change of its own (15 Sep 2026). A press on the
+     Basic details tab can confirm every default as it stands — the one way a profile nobody
+     answered becomes one somebody did — and with no row for it the page would
+     count that draft as clean, show no footer, and never save the answer. Only
+     where the questions are asked: a health profile has none. */
+  if (asksReach(after.mode)) {
+    const setUp = (p: FingerprintProfile) => (p.restrictionSet ? 'Set up' : 'Not set up')
+    push('Basic details', setUp(before), setUp(after), setup)
+    push('Device restriction type', reachLabel(before.reach), reachLabel(after.reach), setup)
+  }
+  /* In the form's order: method, then the allowance or the roster that
+     replaces it, then the two switches. */
+  const onOff = (v: boolean) => (v ? 'On' : 'Off')
+  push('Device registration method', REGISTRATION_LABEL[before.registration], REGISTRATION_LABEL[after.registration], setup)
+  push('Allowed device registrations', before.maxDevices === null ? '' : String(before.maxDevices), after.maxDevices === null ? '' : String(after.maxDevices), setup)
+  const rosterText = (r: Roster | null) => (r ? `${r.fileName}, ${r.rows} devices` : '')
+  push('Approved device roster', rosterText(before.roster), rosterText(after.roster), setup)
+  push('Mobile device restriction', onOff(before.restrictMobile), onOff(after.restrictMobile), setup)
+  push('Device auto-registration', onOff(before.autoRegister), onOff(after.autoRegister), setup)
+
+  if (after.mode === 'os') {
+    push('Remediation instructions', remediationLabel(remediationOf(before)), remediationLabel(remediationOf(after)), {
+      group: 'Remediation',
+      kind: 'changed',
+    })
+  }
+
+  /* The section is the same noun the label leads with, so "Signals: added TPM
+     ID" files as "TPM ID" under Signals. */
+  const noun = capital(ITEM_NOUN[after.mode].many)
+  /* Signals an agent-only reach could read are not listed as removed when the reach itself is what changed: that is
+     one Basic details row, "Device restriction type", and the admin has already confirmed what it takes with it (owner,
+     23 Oct 2026: "no need to add this in review as well … just add it as a basic details change"). */
+  const was = chosenAttributes(before).filter((a) => !goneWithReach(before, after, a))
+  const now = chosenAttributes(after)
+  for (const a of now) {
+    if (!was.some((x) => x.id === a.id)) {
+      rows.push({ label: `${noun}: added ${a.name}`, before: '', after: itemValue(after, a), group: noun, kind: 'added', item: a.name })
+    }
+  }
+  for (const a of was) {
+    if (!now.some((x) => x.id === a.id)) {
+      rows.push({ label: `${noun}: removed ${a.name}`, before: itemValue(before, a), after: '', group: noun, kind: 'removed', item: a.name })
+    }
+  }
+  for (const a of now) {
+    if (!was.some((x) => x.id === a.id)) continue
+    const label = after.mode === 'device' ? `${a.name} priority` : a.name
+    push(label, itemValue(before, a), itemValue(after, a), { group: noun, kind: 'changed', item: label })
+  }
+  return rows
+}
+
+/** The save bar's short list: what kinds of thing changed. */
+/** An agent-only signal that stops being read because the reach moved to agentless: it goes with the switch, not on its own. */
+const goneWithReach = (before: FingerprintProfile, after: FingerprintProfile, a: Attribute): boolean =>
+  before.reach !== after.reach && after.reach !== 'agent' && !!a.needsAgent
+
+export function profileChangeParts(before: FingerprintProfile, after: FingerprintProfile): string[] {
+  const parts: string[] = []
+  if (before.name !== after.name) parts.push('Name')
+  if (before.reach !== after.reach) parts.push('Device restriction type')
+  const enrol = ['registration', 'maxDevices', 'roster', 'restrictMobile', 'autoRegister'] as const
+  if (enrol.some((k) => JSON.stringify(before[k]) !== JSON.stringify(after[k]))) parts.push('Device registration')
+  /* Named only when nothing it covers is already named: "Device restriction type"
+     beside "Basic details" says one change twice in a two-item footer. */
+  const basicNamed = parts.includes('Device restriction type') || parts.includes('Device registration')
+  if (asksReach(after.mode) && before.restrictionSet !== after.restrictionSet && !basicNamed) parts.push('Basic details')
+  if (after.mode === 'os' && JSON.stringify(remediationOf(before)) !== JSON.stringify(remediationOf(after))) parts.push('Remediation')
+  const was = chosenAttributes(before).filter((a) => !goneWithReach(before, after, a)).map((a) => a.id)
+  const now = chosenAttributes(after)
+  const added = now.filter((a) => !was.includes(a.id)).length
+  const removed = was.filter((id) => !now.some((a) => a.id === id)).length
+  if (added > 0) parts.push(`${countLabel(after.mode, added)} added`)
+  if (removed > 0) parts.push(`${countLabel(after.mode, removed)} removed`)
+  const tuned = now.some(
+    (a) => was.includes(a.id) && itemValue(before, a) !== itemValue(after, a),
+  )
+  if (tuned) parts.push(after.mode === 'device' ? 'Priorities changed' : 'Values changed')
+  return parts
+}
+
+/* The steps a profile takes to create, and what each is called.
+
+   Words, not numerals. Three is few enough to name every step rather than count
+   them, which is the difference between a progress bar and a table of contents
+   — and the last one is named after what that kind actually holds, so the
+   ladder says "Requirements" on one and "Attributes" on the other.
+
+   The DEVICES step is the device kind's alone, and this is the second time
+   that boundary has moved, so it is worth writing down where it settled.
+
+   That step holds two questions: what the collector can read, and how machines
+   enrol. The first is the device kind's by construction — nothing in the OS
+   catalogue carries `needsAgent`, so the question has no consequence there. The
+   second applies to both, which is why it was briefly asked of both, giving the
+   OS kind a middle step of three rows and a caveat explaining why one of them
+   was unavailable. That is a step that exists to be short: it interrupts a
+   two-question flow to ask something with no dependency on either side of it.
+
+   So enrolment is asked HERE only where it has a neighbour to depend on — a
+   roster needs MAC, MAC needs an agent — and an OS profile answers it from the
+   detail page's one Edit instead. `restrictionSet` records the difference
+   honestly: false on a new OS profile, because nobody asked. */
+export const stepsFor = (mode: ProfileMode, v1 = false): string[] => {
+  /* The last step is named by the kind's own noun on BOTH shapes. The device
+     shape spelled "Attributes" out by hand, which was right only until the noun
+     changed. */
+  const items = ITEM_NOUN[mode].many.replace(/^./, (c) => c.toUpperCase())
+  return asksReach(mode) ? ['Profile', 'Devices', items] : v1 ? ['Profile', items, 'Remediation'] : ['Profile', items]
+}
+
+/* --- The three weights a risk profile can give an attribute ---------------------
+   The master carries four (5, 10, 20, 30) because the sheet does. A profile
+   picks from three, because a person setting thirty-eight of these is choosing
+   how much something matters, and "how much" has never usefully had four
+   answers — the fourth is the one that makes the other three ambiguous.
+
+   The master weight still seeds it: an attribute the sheet scores at 5 or 10
+   arrives as Low, 20 as Medium, 30 as High, so the defaults are the sheet's
+   even though the vocabulary is not. */
+export const TIER_WEIGHT: Record<Priority, number> = { High: 30, Medium: 20, Low: 10 }
+
+export const tierOf = (weight: number): Priority =>
+  weight >= 30 ? 'High' : weight >= 20 ? 'Medium' : 'Low'
+
+/* A profile's kind, in the words a picker row has space for.
+
+   Typed on `ProfileMode`, not on an inline union. The old signature spelled the
+   two ids out again — `{ mode: 'match' | 'risk' }` — so the ids and the thing
+   that labels them could drift apart without TypeScript noticing, which is one
+   of the two ways two vocabularies got in here.
+
+   The other way was that this function and the create dialog's `MODES` held
+   DIFFERENT strings for the same kind. There is one list now and this reads
+   from it. */
+export const modeLabel = (p: { mode: ProfileMode }) => MODE_META[p.mode].label
+
+/* `byId` stood here. See `attrOf` above: an id alone never identified an
+   attribute, because `device-type` is in both catalogues and the merged list
+   this searched always answered with the OS copy. */
+
+/* The score a profile would produce if `changed` attributes came back
+   different. Weights are the profile's overrides falling back to the master,
+   and the total is capped at 100 because the bands are expressed on that
+   scale — an uncapped total makes "71 and above" meaningless. */
+export function scoreOf(p: FingerprintProfile, changed: string[]): number {
+  const live = changed.filter((id) => p.enabled.includes(id))
+  /* `attrOf(p.mode, …)`, not a merged lookup. Scoring is a device-attributes
+     thing and the weight it must use is the device catalogue's — `device-type`
+     weighs 5 in both, but the next id to appear in both need not. */
+  const raw = live.reduce((sum, id) => sum + (p.weights[id] ?? attrOf(p.mode, id)?.weight ?? 0), 0)
+  return Math.min(100, raw)
+}
+
+/* `bandOf`, `ceilingOf` and `unreachableBands` lived here and went with the
+   thresholds they read. The profile page no longer offers an Allow-below /
+   Challenge-below pair to set, so there is nothing left for them to check, and
+   a reachability warning about numbers nobody can edit is a warning with no
+   action attached to it.
+
+   `scoreOf` above stays. It is what a risk profile computes, and the
+   per-attribute tiers are only meaningful because something adds them up. */
+export const seedProfiles: FingerprintProfile[] = [
+  {
+    id: 'fp-corp',
+    name: 'Corporate managed',
+    mode: 'os',
+    /* A managed Windows fleet: the form factor it should be, and a floor
+       under the build. */
+    enabled: ['device-type', 'os-windows'],
+    config: {
+      'device-type': 'Laptop',
+      'os-windows': { op: 'gte', value: '10' },
+    },
+    weights: {},
+    /* Agentless, and the comment here used to say the opposite — "every signal
+       it names is one only an agent can read" — about a profile naming a form
+       factor and a Windows build, neither of which needs one. An OS profile is
+       always agentless; that is why it is never asked. */
+    reach: 'agentless',
+    registration: 'self',
+    maxDevices: 3,
+    roster: null,
+    autoRegister: false,
+    restrictMobile: false,
+    restrictionSet: true,
+    usedIn: 3,
+  },
+  {
+    id: 'fp-byod',
+    name: 'BYOD phones and tablets',
+    /* This was `mode: 'risk'` holding `os-android` and `os-ios`, and neither id
+       exists in the device catalogue. It was not a risk profile that had drifted
+       — it was an OS profile filed under the wrong kind since the two lists
+       split: all three of its attributes and both of its version comparisons
+       live only in `OS_ATTRIBUTES`. The picker counted "3 of 38 selected" with
+       one row ticked, and "Clear all" deleted two entries nothing had drawn.
+
+       Converting it preserves every stored value, which is the tell that this
+       is a correction rather than a change. The name goes with it: it never
+       scored anything. */
+    mode: 'os',
+    enabled: ['device-type', 'os-android', 'os-ios'],
+    config: {
+      'device-type': 'Mobile',
+      'os-android': { op: 'gte', value: '13' },
+      'os-ios': { op: 'gte', value: '17' },
+    },
+    weights: {},
+    reach: 'agentless',
+    registration: 'self',
+    maxDevices: 5,
+    roster: null,
+    autoRegister: true,
+    restrictMobile: false,
+    restrictionSet: true,
+    usedIn: 5,
+  },
+  {
+    id: 'fp-kiosk',
+    name: 'Shared kiosk',
+    /* Also re-filed, and for a harder reason than `fp-byod`.
+
+       It is a roster profile — 24 named machines, nobody else — and a roster is
+       matched on MAC address. It watched `device-type` and nothing else, so the
+       roster matched nothing: the one setting the whole profile exists for was
+       inert, and no surface said so. A roster needs MAC, MAC needs an agent, and
+       an agent-based profile that recognises specific machines is a device
+       profile. `rosterNeedsMac` now names that state wherever it occurs. */
+    mode: 'device',
+    /* The four always-collected signals lead, because they are what every
+       device profile starts from — the roster's MAC and the machine SID are
+       what this one adds. */
+    enabled: ['device-type', 'os', 'browser', 'ip', 'mac', 'machine-sid'],
+    config: {},
+    weights: {},
+    reach: 'agent',
+    registration: 'pre-approved',
+    maxDevices: null,
+    roster: { fileName: 'kiosks-floor-3.csv', rows: 24, uploadedAt: '12 Aug 2026' },
+    autoRegister: false,
+    restrictMobile: false,
+    restrictionSet: true,
+    usedIn: 1,
+  },
+  {
+    id: 'fp-unmanaged',
+    name: 'Unmanaged access',
+    /* The store held no agentless device profile, so the answer that gates half
+       the catalogue was never demonstrated by anything an admin could open — and
+       neither was a device row carrying both a weight and a precision setting.
+       This is that profile: the four every request carries, plus four more a
+       browser gives up for free — and four of the eight tuned.
+
+       `restrictionSet: false` on purpose. The enrolment empty state is a real
+       state of the product and this is the only way to reach it without creating
+       something. */
+    mode: 'device',
+    enabled: ['device-type', 'os', 'browser', 'ip', 'geo', 'canvas', 'locale', 'vpn'],
+    config: {
+      browser: 'Family only',
+      ip: 'Subnet',
+      geo: 'Country',
+      vpn: 'Challenge',
+    },
+    weights: {},
+    reach: 'agentless',
+    registration: 'self',
+    maxDevices: DEFAULT_MAX_DEVICES,
+    roster: null,
+    autoRegister: false,
+    restrictMobile: false,
+    restrictionSet: false,
+    usedIn: 0,
+  },
+  /* --- The profiles the rules used to spell out inline -----------------------
+
+     Five, and every one of them exists because a condition that used to say the
+     thing directly no longer can. `os is Windows`, `mdm is Enrolled`, `mac is
+     00:1B:44:…` and `posture passes Disk encryption` are gone from the
+     condition catalogue; a rule reaches the device through a profile now, so
+     the profiles have to be able to say what those rules said.
+
+     THREE OF THEM CANNOT, AND THIS IS THE HONEST PLACE TO SAY SO.
+
+     There is no MDM attribute in either catalogue. There is no disk-encryption,
+     screen-lock, antivirus or firewall attribute — the Security category is
+     `root`, `vm`, `secure-boot` and `app-integrity`, which are integrity
+     signals rather than posture checks. And `browser` is a match-PRECISION
+     choice ("Exact version" / "Major version" / "Family only"), not a browser
+     allowlist. So:
+
+       · `fp-managed` uses `domain` — directory-joined — as a stand-in for MDM
+         enrolment. Those are not the same fact. A domain-joined laptop with no
+         MDM agent satisfies this profile and did not satisfy the condition it
+         replaces. The name says "MDM-managed" because that is what the rules
+         using it mean; the attribute list is the closest this model can get.
+       · Posture checks have no stand-in at all. `fp-patched` carries the one
+         posture check with a real home — "OS up to date" is an OS floor, which
+         is exactly what an OS profile is — and disk encryption and screen lock
+         are simply dropped from the rules that named them.
+       · Browser allowlists are dropped.
+
+     Recorded rather than smoothed over, because a profile whose name promises
+     more than its attributes deliver is the failure mode this consolidation was
+     supposed to remove, and here it is reintroduced in one place under its own
+     name. Adding `mdm` and a posture group to `DEVICE_ATTRIBUTES` is the fix;
+     it is a separate change with its own catalogue argument.
+
+     `usedIn: 0` on all five. They are referenced by seeded policies the moment
+     this lands, so the number is wrong the way every other `usedIn` in this
+     file is wrong — stated, not derived. The Device profiles screen counts the
+     truth. */
+  {
+    id: 'fp-managed',
+    name: 'MDM-managed corporate device',
+    mode: 'device',
+    /* The four always-collected, plus the two that come closest to "this
+       machine is under management": directory membership and a verified boot
+       chain. */
+    enabled: ['device-type', 'os', 'browser', 'ip', 'domain', 'secure-boot'],
+    config: {},
+    weights: {},
+    reach: 'agent',
+    registration: 'self',
+    maxDevices: 3,
+    roster: null,
+    autoRegister: false,
+    /* A corporate laptop profile: the agent is Windows-only, so a phone is
+       refused rather than challenged. */
+    restrictMobile: true,
+    restrictionSet: true,
+    usedIn: 0,
+  },
+  {
+    id: 'fp-apple',
+    name: 'Managed Apple · iOS 17, macOS 14',
+    mode: 'os',
+    enabled: ['os-ios', 'os-macos'],
+    config: {
+      'os-ios': { op: 'gte', value: '17' },
+      'os-macos': { op: 'gte', value: '14' },
+    },
+    weights: {},
+    reach: 'agentless',
+    registration: 'self',
+    maxDevices: 3,
+    roster: null,
+    autoRegister: false,
+    restrictMobile: false,
+    restrictionSet: true,
+    usedIn: 0,
+  },
+  {
+    id: 'fp-win-android',
+    name: 'Managed Android and Windows',
+    mode: 'os',
+    enabled: ['os-android', 'os-windows'],
+    config: {
+      'os-android': { op: 'gte', value: '13' },
+      'os-windows': { op: 'gte', value: '10' },
+    },
+    weights: {},
+    reach: 'agentless',
+    registration: 'self',
+    maxDevices: 3,
+    roster: null,
+    autoRegister: false,
+    restrictMobile: false,
+    restrictionSet: true,
+    usedIn: 0,
+  },
+  /* The three MAC addresses that used to sit in the trading-floor rule are
+     three rows of a roster now. Worth knowing what that costs: they were
+     readable in the rule and they are not readable anywhere in this prototype —
+     no surface renders a roster's contents. `mac` is enabled so
+     `rosterNeedsMac` is satisfied; a roster profile that does not read MAC is
+     the exact inert state that function exists to name. */
+  {
+    id: 'fp-floor',
+    name: 'Trading floor terminals',
+    mode: 'device',
+    enabled: ['device-type', 'os', 'browser', 'ip', 'mac'],
+    config: {},
+    weights: {},
+    reach: 'agent',
+    registration: 'pre-approved',
+    maxDevices: null,
+    roster: { fileName: 'floor-terminals.csv', rows: 3, uploadedAt: '12 Aug 2026' },
+    autoRegister: false,
+    restrictMobile: false,
+    restrictionSet: true,
+    usedIn: 0,
+  },
+  /* Every platform named, each with a floor. An OS profile checks the platforms
+     it names and leaves the rest alone, so naming all four is "whatever you are
+     on, be current" — which is what "OS up to date" meant. */
+  {
+    id: 'fp-patched',
+    name: 'Current OS builds',
+    mode: 'os',
+    enabled: ['os-windows', 'os-macos', 'os-ios', 'os-android'],
+    config: {
+      'os-windows': { op: 'gte', value: '11' },
+      'os-macos': { op: 'gte', value: '15' },
+      'os-ios': { op: 'gte', value: '18' },
+      'os-android': { op: 'gte', value: '14' },
+    },
+    weights: {},
+    reach: 'agentless',
+    registration: 'self',
+    maxDevices: 3,
+    roster: null,
+    autoRegister: false,
+    restrictMobile: false,
+    restrictionSet: true,
+    usedIn: 0,
+  },
+
+  /* --- The profiles the new requirements exist for --------------------------
+
+     Five, and they are deliberately NARROW. Each one names as few requirements
+     as it can and still be worth referencing, because a rule composes profiles
+     — `matches A and matches B` — and the alternative is a handful of fat
+     profiles that overlap, so that changing an OS floor for one policy silently
+     moves it for four others. `fp-compliant` is the exception and says so.
+
+     The floor VALUES are one release behind current, on purpose. A demo estate
+     where every device passes every requirement demonstrates nothing: the point
+     of an adaptive policy is the population that sits between "fine" and
+     "refused", and these floors are set so that population exists. */
+
+  {
+    id: 'fp-os-floor',
+    name: 'Minimum supported OS',
+    /* The FLOOR, as distinct from `fp-patched`, which is the current builds.
+       Two profiles rather than one because the interesting population is
+       between them: a device that satisfies this and fails that is behind but
+       supported, which is the only state a "warn" outcome has anything to say
+       about. With one profile a policy can only sort devices into two piles,
+       and the whole argument for the third outcome is that two is not enough. */
+    mode: 'os',
+    enabled: ['os-windows', 'os-macos', 'os-ios', 'os-android'],
+    config: {
+      'os-windows': { op: 'gte', value: '10' },
+      'os-macos': { op: 'gte', value: '13' },
+      'os-ios': { op: 'gte', value: '16' },
+      'os-android': { op: 'gte', value: '12' },
+    },
+    weights: {},
+    reach: 'agentless',
+    registration: 'self',
+    maxDevices: DEFAULT_MAX_DEVICES,
+    roster: null,
+    autoRegister: false,
+    restrictMobile: false,
+    restrictionSet: true,
+    usedIn: 0,
+  },
+
+  {
+    id: 'fp-mobile',
+    name: 'Any phone or tablet',
+    /* One requirement and no floor of any kind, which makes it look pointless
+       until you need to say "on a handset" in a rule.
+
+       A screen-lock policy is the case. "Does not match `fp-mobile-locked`" is
+       true of every laptop in the tenant, because a laptop is not a locked
+       handset — so a rule written with that condition alone denies the entire
+       desktop estate. Pairing it with this profile is what narrows the
+       statement to the population it was written about. A profile that names a
+       form factor and nothing else is the honest way to say "when this is a
+       phone". */
+    mode: 'os',
+    enabled: ['device-type'],
+    config: { 'device-type': 'Mobile' },
+    weights: {},
+    reach: 'agentless',
+    registration: 'self',
+    maxDevices: DEFAULT_MAX_DEVICES,
+    roster: null,
+    autoRegister: false,
+    restrictMobile: false,
+    restrictionSet: true,
+    usedIn: 0,
+  },
+
+  {
+    id: 'fp-integrity',
+    name: 'Untampered device',
+    /* One requirement, and the narrowest profile here. It is separate from
+       every other posture check because it is the one that decides whether the
+       others can be believed: a rooted handset reports a screen lock it does
+       not have. A rule that wants both states both, in that order, and the
+       order is visible on the card. */
+    mode: 'os',
+    enabled: ['integrity'],
+    config: { integrity: 'Not rooted, jailbroken or tampered' },
+    weights: {},
+    reach: 'agentless',
+    registration: 'self',
+    maxDevices: DEFAULT_MAX_DEVICES,
+    roster: null,
+    autoRegister: false,
+    restrictMobile: false,
+    restrictionSet: true,
+    usedIn: 0,
+  },
+
+  {
+    id: 'fp-mobile-locked',
+    name: 'Phones and tablets with a screen lock',
+    /* The form factor is part of the requirement rather than incidental to it.
+       "A screen lock is set" is a condition a laptop answers differently and
+       mostly trivially; the case this exists for is the handset somebody
+       carries, and pinning the device type is what stops the profile reading as
+       a claim about the whole estate. */
+    mode: 'os',
+    enabled: ['device-type', 'screen-lock'],
+    config: { 'device-type': 'Mobile', 'screen-lock': 'PIN, passcode or password' },
+    weights: {},
+    reach: 'agentless',
+    registration: 'self',
+    maxDevices: DEFAULT_MAX_DEVICES,
+    roster: null,
+    autoRegister: false,
+    restrictMobile: false,
+    restrictionSet: true,
+    usedIn: 0,
+  },
+
+  {
+    id: 'fp-client-current',
+    name: 'Current miniOrange client',
+    /* Both products, one profile, and this is the one place the two-row split
+       in the catalogue pays visibly: the app floor and the agent floor are
+       different numbers, and a tenant that pinned "6.4" across both would be
+       pinning a version the agent has never had. */
+    mode: 'os',
+    enabled: ['mo-authenticator', 'mo-agent'],
+    config: {
+      'mo-authenticator': { op: 'gte', value: '6.4' },
+      'mo-agent': { op: 'gte', value: '4.2' },
+    },
+    weights: {},
+    reach: 'agentless',
+    registration: 'self',
+    maxDevices: DEFAULT_MAX_DEVICES,
+    roster: null,
+    autoRegister: false,
+    restrictMobile: false,
+    restrictionSet: true,
+    usedIn: 0,
+  },
+
+  {
+    id: 'fp-browser-current',
+    name: 'Supported browser versions',
+    /* Four floors, one per family, and a family this profile says nothing about
+       is unconstrained — which is the property that makes a browser floor safe
+       to apply broadly. This is not "Chrome only"; it is "not the Chrome from
+       eighteen months ago", which is the control a tenant actually wants and
+       the one the cut condition could never express. */
+    mode: 'os',
+    enabled: ['browser-chrome', 'browser-edge', 'browser-firefox', 'browser-safari'],
+    config: {
+      'browser-chrome': { op: 'gte', value: '126' },
+      'browser-edge': { op: 'gte', value: '126' },
+      'browser-firefox': { op: 'gte', value: '128' },
+      'browser-safari': { op: 'gte', value: '17' },
+    },
+    weights: {},
+    reach: 'agentless',
+    registration: 'self',
+    maxDevices: DEFAULT_MAX_DEVICES,
+    roster: null,
+    autoRegister: false,
+    restrictMobile: false,
+    restrictionSet: true,
+    usedIn: 0,
+  },
+
+  {
+    id: 'fp-compliant',
+    name: 'Fully compliant device',
+    /* The fat one, and the exception to the rule above it.
+
+       It exists because "device compliance" is a thing tenants ask for as one
+       word — OS current, not tampered, locked, running a client that can be
+       trusted — and a rule that spelled all four out would carry four
+       conditions saying one thing. Referencing this says the one thing.
+
+       The cost is real and is the cost of every composite: raising the Android
+       floor here moves it for every policy pointing at this profile, and a
+       policy that wanted three of the four legs cannot use it. Those policies
+       compose the narrow profiles above instead, which is why both shapes
+       exist. */
+    mode: 'os',
+    enabled: ['os-windows', 'os-macos', 'os-ios', 'os-android', 'integrity', 'screen-lock', 'mo-authenticator'],
+    config: {
+      'os-windows': { op: 'gte', value: '11' },
+      'os-macos': { op: 'gte', value: '15' },
+      'os-ios': { op: 'gte', value: '18' },
+      'os-android': { op: 'gte', value: '14' },
+      integrity: 'Not rooted, jailbroken or tampered',
+      'screen-lock': 'A screen lock is set',
+      'mo-authenticator': { op: 'gte', value: '6.4' },
+    },
+    weights: {},
+    reach: 'agentless',
+    registration: 'self',
+    maxDevices: DEFAULT_MAX_DEVICES,
+    roster: null,
+    autoRegister: false,
+    restrictMobile: false,
+    restrictionSet: true,
+    usedIn: 0,
+  },
+]
+
+/* --- A device, measured against a profile ----------------------------------------
+
+   Everything above says what a profile asks for. This says what a sign-in's
+   device comes to against it, and it is what the evaluator reads: row by row
+   for a device-health profile, and "is this a machine the person has
+   registered, or may register" for a trusted-device one.
+
+   It used to be one boolean. The evaluator graded every device profile on
+   whether the chip said the device was "recognised", so an Android 12 handset
+   passed "Android ≥ 13" as long as somebody had seen it before, and no OS
+   floor, integrity rung, screen lock, browser floor, client version, agent or
+   device limit was ever read. A profile is only as good as the reading of it,
+   and that reading made every profile in the tenant the same profile.
+
+   Three values all the way up, with the evaluator's two standing rules:
+
+   · NOT STATED is not STATED ABSENT. A device that says nothing about its
+     screen lock is undecided on that row; a device that REPORTS no screen lock
+     (`null`) has failed "a screen lock is set". The Security comment above
+     says it outright — "an absent signal is a failed condition, which is the
+     whole point" — and merging the two is how "we did not ask" becomes "they
+     passed".
+   · A row that does not constrain this device is NOT APPLICABLE, and that
+     counts as a pass. An Android floor says nothing about an iPhone, and the
+     browser comment above makes the same rule for families: "a family a
+     profile says nothing about is unconstrained". It is why a profile naming
+     all four OS floors reads "whatever you are on, be current".
+
+   A profile is the AND of its rows. Not applicable passes; one failing row
+   fails the profile; otherwise one undecided row leaves it undecided, with the
+   facts that would settle it named.
+   -------------------------------------------------------------------------- */
+
+/** One row of a device profile, as a sign-in's device measured up to it. */
+export interface ProfileCheck {
+  /** The attribute id ('os-android', 'integrity'…) or 'agent' | 'registration' | 'limit' | 'mobile'. */
+  id: string
+  /** The catalogue's name ("Android OS version"), or "Device Agent", "Registration", "Device limit", "Mobile devices". */
+  label: string
+  status: CondState | 'not applicable'
+  /** What the device showed: "12", "not installed", "not stated". */
+  actual: string
+  /** What the profile asks for: "≥ 13", "at most 2". */
+  required: string
+}
+
+export interface ProfileMatch {
+  status: CondState
+  /** One per row: catalogue order for device health, check order for a trusted device. */
+  checks: ProfileCheck[]
+  /** The facts that would settle an 'unknown'; [] when decided. */
+  missing: FactKey[]
+  /** A failed health check on a profile that shows remediation: what the user is told, e.g. "Shown, 14 days to fix". */
+  remediation?: string
+}
+
+/* Which rows a laptop is asked, and which a phone is.
+
+   The catalogue reads integrity, screen lock and the Authenticator version off
+   the miniOrange Authenticator ON THE HANDSET — `integrity` above says so:
+   "read by the miniOrange Authenticator on the device itself … only one of
+   them exists on a phone". So there are two honest readings of a profile that
+   names them, and the product does not say which it means:
+
+     handset       those three rows are not applicable on Windows, macOS and
+                   Linux, and the desktop agent's version is not applicable on
+                   iOS and Android. This is what the showcase's own profile
+                   states ("phones and laptops both qualify"), so it is the
+                   default.
+     every-device  every row is asked of every device. A laptop reports no
+                   integrity, so it fails any profile that names integrity —
+                   the Security comment above, read literally.
+
+   Both are pinned by a test, and the choice is the owner's (spec D1). */
+export interface MatchOptions {
+  clientRows: 'handset' | 'every-device'
+}
+
+export const DEFAULT_MATCH: MatchOptions = { clientRows: 'handset' }
+
+/* Windows names its releases twice, and a floor is written in either: "11" in
+   the catalogue's list, 10.0.22631 on the device. The marketing names are read
+   as the first build that carried them, so 10.0.22631 is at least "11" and
+   10.0.19045 is not. Any other dotted string is compared as written. */
+const WINDOWS_RELEASE: Record<string, string> = { '11': '10.0.22000', '10': '10.0.0', '8.1': '6.3.9600' }
+
+/** Dotted numbers, zero-padded: -1, 0 or 1 as `a` is below, at or above `b`. Null when either is not a version. */
+export function compareVersions(a: string, b: string, platform?: DevicePlatform): -1 | 0 | 1 | null {
+  if (!isVersionText(a) || !isVersionText(b)) return null
+  const parts = (v: string) => {
+    const t = v.trim()
+    return (platform === 'windows' ? (WINDOWS_RELEASE[t] ?? t) : t).split('.').map(Number)
+  }
+  const x = parts(a)
+  const y = parts(b)
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0)
+    if (d !== 0) return d > 0 ? 1 : -1
+  }
+  return 0
+}
+
+/** Whether a comparison satisfies a stored operator. An unknown id reads as ≥, as `versionOp` does. */
+function meets(cmp: -1 | 0 | 1, op: string): boolean {
+  switch (versionOp(op).id) {
+    case 'gt':
+      return cmp > 0
+    case 'lte':
+      return cmp <= 0
+    case 'lt':
+      return cmp < 0
+    case 'eq':
+      return cmp === 0
+    case 'ne':
+      return cmp !== 0
+    default:
+      return cmp >= 0
+  }
+}
+
+type BrowserFamilyId = NonNullable<SignInDevice['browser']>['family']
+type ScreenLockId = NonNullable<SignInDevice['screenLock']>
+
+const PLATFORM_WORD: Record<DevicePlatform, string> = {
+  windows: 'Windows',
+  macos: 'macOS',
+  ios: 'iOS',
+  android: 'Android',
+  linux: 'Linux',
+  other: 'another platform',
+}
+const BROWSER_WORD: Record<BrowserFamilyId, string> = { chrome: 'Chrome', edge: 'Edge', firefox: 'Firefox', safari: 'Safari', other: 'another browser' }
+const LOCK_WORD: Record<ScreenLockId, string> = { none: 'no screen lock', pattern: 'a pattern', pin: 'a PIN or passcode', biometric: 'biometric unlock' }
+
+const OS_PLATFORM: Record<string, DevicePlatform> = { 'os-windows': 'windows', 'os-macos': 'macos', 'os-ios': 'ios', 'os-android': 'android' }
+const BROWSER_FAMILY: Record<string, BrowserFamilyId> = {
+  'browser-chrome': 'chrome',
+  'browser-edge': 'edge',
+  'browser-firefox': 'firefox',
+  'browser-safari': 'safari',
+}
+
+const DESKTOP: readonly DevicePlatform[] = ['windows', 'macos', 'linux']
+const HANDSET: readonly DevicePlatform[] = ['ios', 'android']
+
+/* The integrity ladder, rung by rung, as the facts each rung refuses. The
+   options are ordered, each one the one above plus a class of device, so the
+   stored option's POSITION is the rung. Rooted and jailbroken are one fact:
+   the second is what iOS calls the first. */
+const INTEGRITY_REFUSES: readonly (readonly ('rooted' | 'tampered' | 'emulated')[])[] = [
+  ['rooted'],
+  ['rooted', 'tampered'],
+  ['rooted', 'tampered', 'emulated'],
+]
+
+/* The screen-lock options, as the locks each accepts. Biometric unlock counts
+   as a PIN, because on iOS and Android a biometric always has a passcode
+   behind it; a pattern is a screen lock and not a PIN. Neither is documented
+   by the product (spec D3). */
+const LOCK_ACCEPTS: readonly (readonly ScreenLockId[])[] = [['pattern', 'pin', 'biometric'], ['pin', 'biometric'], ['biometric']]
+
+const NOT_STATED = 'not stated'
+
+type Graded = { check: ProfileCheck; missing: FactKey[] }
+
+const dedupe = (keys: readonly FactKey[]): FactKey[] => [...new Set(keys)]
+
+/* The rule an enabled version row must meet: the profile's own, else the
+   master's default — the same fallback `valueLabel` prints by, so the value a
+   row is graded against is the value the overview shows. */
+function versionRule(p: FingerprintProfile, a: Attribute): AttrRuleValue | null {
+  if (a.config?.kind !== 'version') return null
+  const v = p.config[a.id]
+  return isRuleValue(v) ? v : a.config.value
+}
+
+function choiceIndex(p: FingerprintProfile, a: Attribute): number {
+  if (a.config?.kind !== 'choice') return -1
+  const v = p.config[a.id]
+  return a.config.options.indexOf(typeof v === 'string' ? v : a.config.value)
+}
+
+/* One row of a device-health profile against one device. */
+function gradeHealthRow(p: FingerprintProfile, a: Attribute, d: SignInDevice, o: MatchOptions): Graded {
+  const required = valueLabel(a, p.config[a.id])
+  const row = (status: ProfileCheck['status'], actual: string, missing: FactKey[] = []): Graded => ({
+    check: { id: a.id, label: a.name, status, actual, required },
+    missing: status === 'unknown' ? missing : [],
+  })
+  const platform = d.platform
+
+  /* A version the device reported, against the row's operator and value. A
+     reported version that is not one is undecided and waits on a readable
+     one; a stored value that is not one cannot be compared at all. */
+  const versus = (have: string, key: FactKey, on?: DevicePlatform): Graded => {
+    const r = versionRule(p, a)
+    const cmp = r ? compareVersions(have, r.value, on) : null
+    if (!r || cmp === null) return row('unknown', have, isVersionText(have) ? [] : [key])
+    return row(meets(cmp, r.op) ? 'pass' : 'fail', have)
+  }
+
+  /* A row one kind of device reads (see `MatchOptions`). On the other kind it
+     is not applicable. With no platform stated a pass still passes — it would
+     on either kind — but a fail is only a fail on the kind that reads the row,
+     so it waits on the platform. */
+  const readOn = (kind: 'handset' | 'desktop', grade: () => Graded): Graded => {
+    if (o.clientRows === 'every-device') return grade()
+    const elsewhere = kind === 'handset' ? DESKTOP : HANDSET
+    if (platform !== undefined && elsewhere.includes(platform)) return row('not applicable', PLATFORM_WORD[platform])
+    const g = grade()
+    if (platform !== undefined || g.check.status === 'pass') return g
+    return { check: { ...g.check, status: 'unknown' }, missing: dedupe([...g.missing, 'device.platform']) }
+  }
+
+  /* The form factor, stated or read off a desktop platform. A phone and a
+     tablet run the same platforms, so an Android or iOS device with no stated
+     form factor cannot answer "Mobile". */
+  if (a.id === 'device-type') {
+    const want = a.config?.kind === 'choice' ? a.config.options[choiceIndex(p, a)] : undefined
+    const have = d.formFactor ?? (platform !== undefined && DESKTOP.includes(platform) ? 'Laptop' : undefined)
+    if (have === undefined) return row('unknown', NOT_STATED, ['device.formFactor'])
+    return row(want === undefined ? 'unknown' : have === want ? 'pass' : 'fail', have)
+  }
+
+  /* A floor constrains the platform it names and nothing else. */
+  const os = OS_PLATFORM[a.id]
+  if (os) {
+    if (platform === undefined) return row('unknown', NOT_STATED, ['device.platform', ...(d.osVersion === undefined ? (['device.osVersion'] as const) : [])])
+    if (platform !== os) return row('not applicable', PLATFORM_WORD[platform])
+    if (d.osVersion === undefined) return row('unknown', NOT_STATED, ['device.osVersion'])
+    return versus(d.osVersion, 'device.osVersion', platform)
+  }
+
+  const family = BROWSER_FAMILY[a.id]
+  if (family) {
+    if (d.browser === undefined) return row('unknown', NOT_STATED, ['device.browser'])
+    if (d.browser.family !== family) return row('not applicable', BROWSER_WORD[d.browser.family])
+    return versus(d.browser.version, 'device.browser')
+  }
+
+  switch (a.id) {
+    case 'integrity':
+      return readOn('handset', () => {
+        const i = d.integrity
+        if (i === undefined) return row('unknown', NOT_STATED, ['device.integrity'])
+        if (i === null) return row('fail', 'not reported')
+        const found = (['rooted', 'tampered', 'emulated'] as const).filter((k) => i[k])
+        const actual = found.length === 0 ? 'intact' : found.join(', ')
+        const refuses = INTEGRITY_REFUSES[choiceIndex(p, a)]
+        if (!refuses) return row('unknown', actual)
+        return row(refuses.some((k) => i[k]) ? 'fail' : 'pass', actual)
+      })
+    case 'screen-lock':
+      return readOn('handset', () => {
+        const l = d.screenLock
+        if (l === undefined) return row('unknown', NOT_STATED, ['device.screenLock'])
+        if (l === null) return row('fail', 'not reported')
+        const accepts = LOCK_ACCEPTS[choiceIndex(p, a)]
+        if (!accepts) return row('unknown', LOCK_WORD[l])
+        return row(accepts.includes(l) ? 'pass' : 'fail', LOCK_WORD[l])
+      })
+    case 'mo-authenticator':
+      return readOn('handset', () => {
+        const v = d.authenticatorVersion
+        if (v === null) return row('fail', 'not installed')
+        /* '' is installed with no version stated — as undecided as no fact at all. */
+        if (v === undefined || v.trim() === '') return row('unknown', NOT_STATED, ['device.authenticatorVersion'])
+        return versus(v, 'device.authenticatorVersion')
+      })
+    case 'mo-agent':
+      return readOn('desktop', () => {
+        if (d.agentInstalled === false || d.agentVersion === null) return row('fail', 'not installed')
+        if (d.agentVersion === undefined) return row('unknown', NOT_STATED, ['device.agent'])
+        return versus(d.agentVersion, 'device.agent')
+      })
+  }
+  /* A row this grader has no reading for. Nothing in a sign-in answers it, so
+     it is undecided and no fact would settle it. */
+  return row('unknown', NOT_STATED)
+}
+
+function settle(graded: Graded[]): ProfileMatch {
+  const status = allOf(graded.map((g) => (g.check.status === 'not applicable' ? 'pass' : g.check.status)))
+  return { status, checks: graded.map((g) => g.check), missing: status === 'unknown' ? dedupe(graded.flatMap((g) => g.missing)) : [] }
+}
+
+/* A device against a device-health profile: every enabled row, in catalogue
+   order, ANDed. Registration, the device limit, mobile restriction and reach
+   are never read — an OS profile has no enrolment at all. With no device
+   stated, every row is undecided. */
+export function healthMatches(p: FingerprintProfile, d: SignInDevice | undefined, o: MatchOptions = DEFAULT_MATCH): ProfileMatch {
+  const device: SignInDevice = d ?? { source: 'stated' }
+  const m = settle(OS_ATTRIBUTES.filter((a) => p.enabled.includes(a.id)).map((a) => gradeHealthRow(p, a, device, o)))
+  const r = remediationOf(p)
+  return m.status === 'fail' && r.show ? { ...m, remediation: remediationLabel(r) } : m
+}
+
+/* A device against a trusted-device profile.
+
+   Recognition is a SUPPLIED fact — `registeredToPerson` — and not a score.
+   The profile's signals carry priorities, but no threshold turns a score into
+   "recognised": the bands were deleted with the controls that set them, and
+   `scoreOf` has no caller. So what this checks is what the console's device
+   restriction panel states outright (spec D5):
+
+     agent         an agent-based profile needs the Device Agent, which runs on
+                   Windows only
+     mobile        "Enable mobile device restriction" refuses phones and tablets
+     registration  the device is registered to this person — or it is not yet,
+                   and the profile registers a new device on first sight
+     limit         a device not yet registered would be one more than the
+                   person already has; at the limit, it is refused
+
+   Registration and the limit are per person, so without one they wait on the
+   person. */
+export function trustedMatches(p: FingerprintProfile, d: SignInDevice | undefined, personKnown: boolean): ProfileMatch {
+  const dev: SignInDevice = d ?? { source: 'stated' }
+  const platform = dev.platform
+  const graded: Graded[] = []
+  const add = (id: string, label: string, status: ProfileCheck['status'], actual: string, required: string, missing: FactKey[] = []) =>
+    graded.push({ check: { id, label, status, actual, required }, missing: status === 'unknown' ? missing : [] })
+
+  if (p.reach === 'agent') {
+    const required = 'Installed, on Windows'
+    if (platform !== undefined && platform !== 'windows') add('agent', 'Device Agent', 'fail', PLATFORM_WORD[platform], required)
+    else if (dev.agentInstalled === true) add('agent', 'Device Agent', 'pass', 'installed', required)
+    else if (dev.agentInstalled === false) add('agent', 'Device Agent', 'fail', 'not installed', required)
+    else add('agent', 'Device Agent', 'unknown', NOT_STATED, required, ['device.agent'])
+  }
+
+  if (p.restrictMobile) {
+    const required = 'Not a phone or tablet'
+    const said = dev.formFactor ?? (platform !== undefined ? PLATFORM_WORD[platform] : NOT_STATED)
+    const handset = (platform !== undefined && HANDSET.includes(platform)) || dev.formFactor === 'Mobile' || dev.formFactor === 'Tablet'
+    const desktop = (platform !== undefined && DESKTOP.includes(platform)) || dev.formFactor === 'Laptop'
+    if (handset) add('mobile', 'Mobile devices', 'fail', said, required)
+    else if (desktop) add('mobile', 'Mobile devices', 'pass', said, required)
+    else add('mobile', 'Mobile devices', 'unknown', said, required, ['device.formFactor'])
+  }
+
+  const registrationRequired =
+    p.registration === 'pre-approved'
+      ? 'On the pre-approved list'
+      : p.autoRegister
+        ? 'Registered, or registered at this sign-in'
+        : 'Registered to this person'
+  if (!personKnown) add('registration', 'Registration', 'unknown', NOT_STATED, registrationRequired, ['person'])
+  else if (dev.registeredToPerson === true) add('registration', 'Registration', 'pass', 'registered to this person', registrationRequired)
+  else if (dev.registeredToPerson === false)
+    add('registration', 'Registration', p.registration === 'self' && p.autoRegister ? 'pass' : 'fail', 'not registered', registrationRequired)
+  else add('registration', 'Registration', 'unknown', NOT_STATED, registrationRequired, ['device.registration'])
+
+  if (p.maxDevices !== null && dev.registeredToPerson !== true) {
+    const required = `at most ${p.maxDevices}`
+    if (!personKnown) add('limit', 'Device limit', 'unknown', NOT_STATED, required, ['person'])
+    else if (dev.registeredCount === undefined) add('limit', 'Device limit', 'unknown', NOT_STATED, required, ['device.registeredCount'])
+    else add('limit', 'Device limit', dev.registeredCount >= p.maxDevices ? 'fail' : 'pass', `${dev.registeredCount} already registered`, required)
+  }
+
+  return settle(graded)
+}
+
+/* A device against any profile, by the profile's kind. `personKnown` matters
+   only to a trusted-device profile; absent, the device facts are taken to be
+   about a known person, which is what `registeredToPerson` already says. */
+export function profileMatches(
+  p: FingerprintProfile,
+  d: SignInDevice | undefined,
+  o: Partial<MatchOptions> & { personKnown?: boolean } = {},
+): ProfileMatch {
+  return p.mode === 'device'
+    ? trustedMatches(p, d, o.personKnown ?? true)
+    : healthMatches(p, d, { clientRows: o.clientRows ?? DEFAULT_MATCH.clientRows })
+}
+
+/* The one row a trace should name for this verdict: the first failing row, or
+   the first undecided one. A health profile names them in catalogue order. A
+   trusted-device profile names the limit before the agent, the agent before
+   registration, and registration before mobile — so a third device on a
+   two-device profile reads as the limit, which is the fact the person can act
+   on, rather than as "not registered", which every new device is. */
+const TRUSTED_BLAME = ['limit', 'agent', 'registration', 'mobile']
+
+export function decidingCheck(p: Pick<FingerprintProfile, 'mode'>, m: ProfileMatch): ProfileCheck | null {
+  if (m.status === 'pass') return null
+  const rows = m.checks.filter((c) => c.status === m.status)
+  if (p.mode === 'device') rows.sort((a, b) => TRUSTED_BLAME.indexOf(a.id) - TRUSTED_BLAME.indexOf(b.id))
+  return rows[0] ?? null
+}

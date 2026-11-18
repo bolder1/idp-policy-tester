@@ -1,0 +1,1611 @@
+import { Fragment, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode, type Ref } from 'react'
+import { ENROL_OPTIONS } from './device-profile-phase'
+import {
+  Activity,
+  AlertTriangle,
+  Check,
+  CirclePlus,
+  Cpu,
+  FileSpreadsheet,
+  Lock,
+  Minus,
+  Monitor,
+  Network,
+  PanelTop,
+  Plus,
+  ShieldCheck,
+  ShieldOff,
+  Smartphone,
+  Terminal,
+  Trash2,
+  Upload,
+} from 'lucide-react'
+
+import { Badge, Button, IconButton, MenuButton, Note, NumberStepper, SearchBox, Tip, TipDot, TipMark } from '../kit'
+import { AgentPrerequisites } from './agent-download'
+import { TierPick } from '../tier-pick'
+import { Picker } from '../picker'
+import { useShows } from './board/builder-version'
+import {
+  DEFAULT_MAX_DEVICES,
+  REGISTRATION_LABEL,
+  TIER_WEIGHT,
+  VERSION_OPS,
+  blockedAttributes,
+  ITEM_NOUN,
+  countLabel,
+  isRuleValue,
+  isVersionText,
+  offeredAttributes,
+  rosterFromCsv,
+  rosterNeedsMac,
+  tierOf,
+  versionOp,
+  type AttrCategory,
+  type Attribute,
+  type AttrConfigValue,
+  type AttrRuleValue,
+  type FingerprintProfile,
+  type ProfileMode,
+  type ProfileReach,
+  type Registration,
+  type Roster,
+} from '../fingerprint'
+import { EmptyState, NoMatches } from '../empty'
+import { BrandMark } from '../logos/BrandMark'
+import { CHECK_BRAND } from '../logos/check-brands'
+import type { ProfileNote } from './profile-notes'
+import { DEVICE_GROUPS, LIST_COLUMNS, deviceGroupsOf, inDeviceGroup, checkName, versionError, type Choice, type DeviceGroup } from './device-profile-choices'
+import {
+  CATEGORY_FILTER_MIN,
+  agentNote,
+  categoriesOf,
+  filterAttributes,
+  shownSelection,
+  toggleAllShown,
+  toggleRun,
+} from './device-profile-wizard-model'
+
+/* -----------------------------------------------------------------------------
+   Device profiles · the parts a profile is drawn from.
+
+   Moved out of `DeviceFingerprintV2.tsx` unchanged (15 Sep 2026), when three
+   create flows arrived that draw the same things the profile page does: the
+   type and reach tiles, the catalogue picker, the check list with each check's
+   value, the enrolment form, and the two side panels. One module that the
+   page, the wizard and the name-first dialog all import, rather than a wizard
+   importing the screen that imports it.
+
+   Components only. The plain helpers these read — the tile choices, a check's
+   name and its version error — are in `device-profile-choices.ts`, because a
+   .tsx that exports anything but components loses fast refresh.
+   -------------------------------------------------------------------------- */
+
+/* The mark on an attribute row is its CATEGORY's, not its own.
+
+   `ATTR_ICON` stood here — a hand-picked glyph for fourteen of the fifty-one
+   attributes, with everything else falling back to a shield. On the profile
+   page, which shows at most fourteen chosen rows, that was defensible. On the
+   picker it would have been twenty-four identical shields in a column of
+   thirty-eight, and a column of identical marks is noise with a cost.
+
+   A category mark is the better answer for a reason beyond arithmetic. The
+   group headings that used to file this list are gone — they were furniture
+   around three-word rows — and their one real job was saying which family a row
+   belongs to. This column does that job in 16px, on every row, at every width,
+   with no heading and no scroll position to lose. The name already says WHICH
+   member; the mark says which family.
+
+   `CAT_META` before it carried an icon AND a tint per category, and the tint is
+   what was wrong: five hues down a flat list is a list wearing its filing scheme
+   as decoration, which is the thing 60/30/10 forbids. The glyph was never the
+   problem, so the glyph comes back on its own. */
+const CAT_ICON: Record<AttrCategory, typeof Cpu> = {
+  Platform: Monitor,
+  Hardware: Cpu,
+  Browser: PanelTop,
+  Security: ShieldCheck,
+  Network: Network,
+  Client: Smartphone,
+  Behaviour: Activity,
+}
+
+/* A category is optional on the type, so the shield stays as the floor — it is
+   reached by nothing in either catalogue today. */
+const markFor = (a: Attribute) => (a.category ? CAT_ICON[a.category] : ShieldCheck) ?? ShieldCheck
+
+/* A check's mark, wherever a check is drawn on this page: the brand's own logo
+   when the check is about a brand (see `CHECK_BRAND`), the category glyph when
+   it is not. `is-brand` lets a monochrome logo (Apple) take the text colour
+   rather than the muted grey a filing glyph wears. */
+export function CheckMark({ attr }: { attr: Attribute }) {
+  const brand = CHECK_BRAND[attr.id]
+  const Mark = markFor(attr)
+  return (
+    <span className={`bfp2__pickico${brand ? ' is-brand' : ''}`} aria-hidden>
+      {brand ? <BrandMark brand={brand} size={15} /> : <Mark size={15} strokeWidth={1.7} />}
+    </span>
+  )
+}
+
+/* `AttrFilter` — a search and a row of category pills, shared by the picker and
+   the profile page — stood here.
+
+   It was built for thirty-eight. The master is fourteen: one screen, no groups,
+   nothing to narrow. A filter over a list you can already see whole is a
+   control that can only ever tell you what you were already looking at, and the
+   pills were five of them.
+
+   The picker keeps a plain search, because a modal that opens on a scroller is
+   still worth being able to jump around in. The profile page has none — it
+   holds at most fourteen rows and usually fewer. */
+
+/* `CAT_META` and `metaOf` stood here — a tint and an icon per category, for
+   the rail that filed thirty-eight attributes into five columns of one.
+
+   The rail became a dropdown and then went (16 Sep 2026); the list is flat, so there is no per-category
+   surface left to tint: a `<option>` cannot carry a colour that means anything,
+   and a flat list tinted five ways is a list wearing its filing scheme as
+   decoration. The tints themselves live on in `--cat-*` for the one thing that
+   still uses them — a selected row takes its category's colour rather than the
+   brand, so a search returning hits from four families reads as four families.
+
+*/
+
+/* `config`, `weights`, `onValue`, `onWeight` and `settings` were threaded
+   through here to reach the settings block under each ticked row.
+
+   That block is gone from both callers, so the whole chain went with it.
+   `settings` was already a flag for "off while creating, on once the profile
+   exists" — the answer is now "off everywhere", which is the flag having become
+   a constant, and a constant is not a prop.
+
+   Nothing is lost by not asking: an untouched attribute keeps the weight and
+   the precision the catalogue gives it. This step says WHAT is watched; the
+   profile's own attributes list says what each one is set to. */
+export function AttrStep({
+  mode,
+  reach,
+  picked,
+  setPicked,
+  onBack,
+}: {
+  mode: ProfileMode
+  /** Null before the question has been asked; reads as "no agent", the safe half. */
+  reach: ProfileReach | null
+  picked: string[]
+  setPicked: (ids: string[]) => void
+  /* Absent on the detail page, where there is no step to go back to. */
+  onBack?: () => void
+}) {
+  const [q, setQ] = useState('')
+  /* The category filter came back on 18 Sep 2026 for the list that needed it
+     (owner: "add categories using the filter… we had an option earlier, try
+     reverting it"). It is multi-select and starts empty, meaning every family.
+     "Selected only" did NOT come back: it rode in the same control and hid the
+     rows a press was about to make. */
+  const [cats, setCats] = useState<AttrCategory[]>([])
+  /* V1: the device type chosen in the rail; null is all of them. */
+  const [group, setGroup] = useState<DeviceGroup | null>(null)
+
+  /* Where the last press landed, so the next one can shift-select a run.
+
+     A catalogue this long is picked in runs — "all of Hardware except the two
+     serials", "the four browsers" — and thirty-eight individual presses is the
+     part of this panel that is actually slow. The anchor is an id rather than
+     an index: the list reorders under searching, and an index into a list that
+     moved selects the wrong rows. */
+  const anchor = useRef<string | null>(null)
+
+  const offered = offeredAttributes(mode, reach)
+  /* V1: a health list is filed in a rail on the left, so the dropdown steps aside. */
+  const rail = useShows('deviceUpdate') && mode === 'os'
+  /* The families this catalogue holds, not the whole enum, and only where the
+     list is long enough to need narrowing. */
+  const categories = !rail && offered.length >= CATEGORY_FILTER_MIN ? categoriesOf(offered) : []
+
+  /* Counted against what is OFFERED, never against the whole catalogue. "6 of
+     38 selected" on an agentless profile names a denominator eighteen of whose
+     rows are not on the screen and cannot be reached from it. */
+  const chosen = offered.filter((a) => a.always || picked.includes(a.id)).length
+
+  /* One list, no groups and no headings. The catalogue is written in family
+     order, so related rows still arrive together, and the family mark on each
+     row says which one it is. The always-collected rows are lifted to the
+     front (see `filterAttributes`): a locked row between two tickable ones
+     reads as one you failed to untick. */
+  const ordered = filterAttributes(offered, q, cats).filter((a) => !rail || !group || inDeviceGroup(a.id, group))
+
+  /* The rows an agent would unlock, under the same search as the list, so the
+     note below never names signals the search has nothing to do with. */
+  const blockedShown = filterAttributes(blockedAttributes(mode, reach), q, cats)
+
+  /* One press, or a shift-press over a run — see `toggleRun`. No press removes
+     the control it was made on any more: without "Selected only" the rows stay
+     put, and Select all is always on the bar. */
+  const toggle = (id: string, span: boolean) => {
+    const next = toggleRun(picked, ordered, anchor.current, id, span)
+    anchor.current = id
+    setPicked(next)
+  }
+
+  return (
+    <div className={`bfp2__pick${rail ? ' has-rail' : ''}`}>
+      {rail && <CategoryRail groups={deviceGroupsOf(offered.map((a) => a.id))} group={group} onGroup={setGroup} />}
+      <PickBar
+        mode={mode}
+        q={q}
+        onQuery={setQ}
+        shown={ordered}
+        picked={picked}
+        chosen={chosen}
+        onPick={setPicked}
+        categories={categories}
+        cats={cats}
+        onCats={setCats}
+      />
+
+      {/* --- One list, one check to a line ------------------------------------
+
+          Nothing is boxed and nothing is grouped. A row is a tick, a mark, a
+          name and — where there is something to say — a pill. No fill, no
+          border, no divider, no heading above it.
+
+          One column at every width: a second column in 560px is two cells of
+          260, and the pill on a long name was the first thing to give — "Not
+          collected yet" read as "Not collected y…", which is the one word on
+          the row that changes the decision. */}
+      <div className="bfp2__picklist">
+        {ordered.length === 0 ? (
+          /* A search that only matches what an agent would unlock says so, and
+             offers the way to change it where there is one. */
+          <NoMatches
+            compact
+            noun={ITEM_NOUN[mode].many}
+            query={q}
+            onClear={() => setQ('')}
+            blurb={q.trim() && blockedShown.length > 0 ? agentNote(blockedShown) : undefined}
+            secondary={
+              q.trim() && blockedShown.length > 0 && onBack ? (
+                <Button variant="secondary" onClick={onBack}>
+                  Change what it reads
+                </Button>
+              ) : undefined
+            }
+          />
+        ) : (
+          ordered.map((a) => (
+            <AttrPickRow
+              key={a.id}
+              attr={a}
+              on={a.always || picked.includes(a.id)}
+              onToggle={(span) => toggle(a.id, span)}
+            />
+          ))
+        )}
+      </div>
+
+      {/* Named, not counted: the names are what tell you whether the ones you
+          are missing are ones you wanted. Not under an empty list, which says
+          it already. */}
+      {ordered.length > 0 && blockedShown.length > 0 && (
+        <p className="bfp2__locked">
+          <Lock size={12} strokeWidth={2} aria-hidden />
+          <span>{agentNote(blockedShown)}</span>
+          {onBack && (
+            <button type="button" className="bfp2__clear" onClick={onBack}>
+              Change what it reads
+            </button>
+          )}
+        </p>
+      )}
+    </div>
+  )
+}
+
+/* --- The bar over a check list ------------------------------------------------------
+
+   Shared by the catalogue drawer (`AttrStep`) and the wizard's inline list, so
+   the two lists that choose checks work the same way. One line: the search,
+   then Select all at the far end.
+
+   The "N selected" count that stood at the far end went (owner, 16 Sep 2026:
+   "not needed"), and Select all took its place. The ticks in the list already
+   say what is chosen; the number is kept for screen readers only, in the
+   button's name.
+
+   Select all and Clear all are ONE control (owner, 16 Sep 2026), in place of
+   "Clear the rest". It reaches the rows on screen — under a search, the rows
+   that match — and never the always-on ones, which are not a choice. While
+   every one of those is ticked it reads Clear all and clears them; otherwise it
+   reads Select all and ticks them. Its box is the list's own tick — empty, a
+   dash for some, full for all.
+
+   A button rather than a checkbox: its name says what a press does next, and a
+   checkbox whose name changed with its state would announce "Clear all,
+   checked". The hidden count after its words is the state for a screen reader
+   ("Select all, 4 selected"). */
+export function PickBar({
+  mode,
+  q,
+  onQuery,
+  searchRef,
+  shown,
+  picked,
+  chosen,
+  onPick,
+  categories = [],
+  cats = [],
+  onCats,
+}: {
+  mode: ProfileMode
+  q: string
+  onQuery: (next: string) => void
+  searchRef?: Ref<HTMLInputElement>
+  /** The rows on screen, in order: what Select all reaches. */
+  shown: Attribute[]
+  picked: string[]
+  /** How many are ticked, always-on rows included, since they are ticked too.
+      Read out with the button, not shown. */
+  chosen: number
+  onPick: (next: string[]) => void
+  /** The families this catalogue holds. Two or more draws the filter. */
+  categories?: AttrCategory[]
+  /** The families being shown. Empty is all of them. */
+  cats?: AttrCategory[]
+  onCats?: (next: AttrCategory[]) => void
+}) {
+  const state = shownSelection(picked, shown)
+  const noun = ITEM_NOUN[mode].many
+  /* Drawn when the caller offers families to narrow by — see
+     `CATEGORY_FILTER_MIN` for which lists are long enough to be worth it. */
+  const filters = onCats && categories.length > 1
+  return (
+    <div className="bfp2__pickbar">
+      <SearchBox
+        value={q}
+        onChange={onQuery}
+        placeholder={`Search ${noun}…`}
+        label={`Search ${noun}`}
+        inputRef={searchRef}
+      />
+      {filters && (
+        <span className={`bfp2__pickfilter${cats.length > 0 ? ' is-set' : ''}`}>
+          {/* One category at a time (owner, 18 Sep 2026: "make it single
+              selector"). It was multi-select, which let you build a set no
+              row's own chip could explain — "2 categories" on the trigger and
+              nothing on the list saying which two. One name says what you are
+              looking at, and "All categories" is how you stop.
+
+              The state stays a LIST, because `filterAttributes` takes one and
+              a filter that holds one thing is a list of one. */}
+          <Picker
+            label={`Filter ${noun} by category`}
+            size="sm"
+            prefix="Category"
+            value={cats[0] ?? ALL_CATS}
+            summary={cats[0] ?? 'All'}
+            options={[
+              { value: ALL_CATS, label: 'All categories' },
+              ...categories.map((c) => ({ value: c, label: c, art: <CategoryMark category={c} /> })),
+            ]}
+            onChange={(c) => onCats(c === ALL_CATS ? [] : [c as AttrCategory])}
+          />
+        </span>
+      )}
+      <button
+        type="button"
+        className={`bfp2__selectall${state === 'some' || state === 'all' ? ' is-on' : ''}`}
+        disabled={state === 'empty'}
+        onClick={() => onPick(toggleAllShown(picked, shown))}
+      >
+        <span className="bx-tick" aria-hidden>
+          {state === 'some' ? <Minus size={11} strokeWidth={3.2} /> : <Check size={11} strokeWidth={3.2} />}
+        </span>
+        {state === 'all' ? 'Clear all' : 'Select all'}
+        <span className="u-sr-only">, {chosen} selected</span>
+      </button>
+    </div>
+  )
+}
+
+/* The categories of a health list, down the left (V1; owner, 10 Nov 2026: "categories on the left side").
+   One at a time, with All first. Selection is the blue-grey of the pick tiles, never orange. */
+const GROUP_MARK: Record<DeviceGroup, ReactNode> = {
+  windows: <BrandMark brand="windows" size={14} />,
+  macos: <BrandMark brand="apple" size={14} />,
+  linux: <Terminal size={14} strokeWidth={1.8} aria-hidden />,
+  ios: <BrandMark brand="apple" size={14} />,
+  android: <BrandMark brand="android" size={14} />,
+  any: <Monitor size={14} strokeWidth={1.8} aria-hidden />,
+}
+
+/** The device types down the left of a health list. `group` is null for All. */
+export function CategoryRail({
+  groups,
+  group,
+  onGroup,
+}: {
+  groups: DeviceGroup[]
+  group: DeviceGroup | null
+  onGroup: (next: DeviceGroup | null) => void
+}) {
+  const items: { id: string; label: string; mark: ReactNode }[] = [
+    { id: ALL_CATS, label: 'All', mark: <ShieldCheck size={14} strokeWidth={1.8} aria-hidden /> },
+    ...DEVICE_GROUPS.filter((g) => groups.includes(g.id)).map((g) => ({ id: g.id, label: g.label, mark: GROUP_MARK[g.id] })),
+  ]
+  const current = group ?? ALL_CATS
+  return (
+    <nav className="bfp2__rail" aria-label="Device types">
+      {items.map((i) => (
+        <button
+          key={i.id}
+          type="button"
+          className={`bfp2__railitem${current === i.id ? ' is-on' : ''}`}
+          aria-pressed={current === i.id}
+          onClick={() => onGroup(i.id === ALL_CATS ? null : (i.id as DeviceGroup))}
+        >
+          {i.mark}
+          <span>{i.label}</span>
+        </button>
+      ))}
+    </nav>
+  )
+}
+
+/* No category chosen, as an option the list can actually hold. */
+const ALL_CATS = '__all__'
+
+/* The family's mark, as the rows carry it — so the filter's options and the
+   list agree on what a category looks like. */
+function CategoryMark({ category }: { category: AttrCategory }) {
+  const Mark = CAT_ICON[category] ?? ShieldCheck
+  return <Mark size={14} strokeWidth={1.8} aria-hidden />
+}
+
+/* --- Pick one: a tile per answer --------------------------------------------------
+
+   Three places on this screen ask for one answer out of two — what kind of
+   profile, and (twice) what its collector can read.
+
+   They were cards with a paragraph each, which was most of a screen. Then they
+   were bare rows — a mark, an icon and a name — which went too far the other
+   way: two names floating in 760px said nothing about what either choice does,
+   and the right-hand one started in the middle of nowhere.
+
+   So each answer is a tile that fills its half: the icon, the name, ONE line of
+   what it is (with a count where there is one), and the `?` for the rest. The
+   line is what lets you choose without opening a tooltip; the tooltip is for the
+   consequence you check once. Tiles are equal height and the pair reads as a
+   pair.
+
+   It behaves as a radio group: one tab stop, the arrow keys move the answer.
+   `Choice`, `kindChoices` and `reachChoices` are in `device-profile-choices.ts`. */
+export function ChoiceTiles<T extends string>({
+  options,
+  value,
+  onPick,
+  pending,
+  legend,
+  labelledBy,
+}: {
+  options: Choice<T>[]
+  value: T | null
+  onPick: (id: T) => void
+  /** A switch waiting on confirmation: marked, not yet the answer. */
+  pending?: T | null
+  legend?: string
+  labelledBy?: string
+}) {
+  const baseId = useId()
+  const refs = useRef<Record<string, HTMLButtonElement | null>>({})
+  /* The tab stop is the answer, or the first tile while there is none. */
+  const stop = value ?? options[0]?.id
+
+  const onKeyDown = (e: KeyboardEvent, at: number) => {
+    const step = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0
+    if (!step) return
+    e.preventDefault()
+    const next = options[(at + step + options.length) % options.length]
+    refs.current[next.id]?.focus()
+    onPick(next.id)
+  }
+
+  return (
+    <fieldset className="bfp2__choices" aria-labelledby={labelledBy}>
+      {legend && <legend>{legend}</legend>}
+      {options.map((o, i) => {
+        const on = value === o.id
+        const Ico = o.icon
+        const descId = `${baseId}-${o.id}`
+        return (
+          <Fragment key={o.id}>
+            <button
+              ref={(el) => {
+                refs.current[o.id] = el
+              }}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              aria-describedby={descId}
+              tabIndex={o.id === stop ? 0 : -1}
+              className={`bfp2__answer bfp2__choice${on ? ' is-on' : ''}${pending === o.id ? ' is-pending' : ''}`}
+              onClick={() => onPick(o.id)}
+              onKeyDown={(e) => onKeyDown(e, i)}
+            >
+              <span className="bfp2__answerbody">
+                <span className="bfp2__answerhead">
+                  <span className="bfp2__answerico" aria-hidden>
+                    <Ico size={16} strokeWidth={1.8} />
+                  </span>
+                  <span className="bfp2__answername">{o.label}</span>
+                  <TipMark text={o.tip} />
+                  {o.tag && <Badge>{o.tag}</Badge>}
+                  {o.meta && <span className="bfp2__answermeta">{o.meta}</span>}
+                </span>
+                <span className="bfp2__answerline">{o.summary}</span>
+              </span>
+            </button>
+            <span id={descId} hidden>
+              {o.tip}
+            </span>
+          </Fragment>
+        )
+      })}
+    </fieldset>
+  )
+}
+
+/* One row in the catalogue: a tick, a name, and what the attribute is for.
+
+   --- The row is the button now -------------------------------------------------
+
+   It used to be a `<div>` holding a SHRUNKEN `<button>` plus a `TipDot`
+   sibling, with `::after` stretching the toggle's hit area back across the row
+   and a `z-index` on the mark so the row would not swallow its press. Every
+   line of that was machinery to keep one real `<button>` out of another, and
+   the only reason a second button was on the row at all is that the attribute's
+   purpose had nowhere to live except behind a `?`.
+
+   The purpose is ON the row now, so the mark goes, and all of it goes with the
+   mark: the shrunken toggle, the `::after`, the `z-index`, the `margin-top: 11px`
+   optical nudge, and `.bfp2__pickmain`. One element, one press — and thirteen
+   to thirty-eight fewer tab stops, which is the same objection this file
+   already records against putting a focusable dot on every row of a list.
+
+   What survives of the mark is `TipMark`, which renders a `<span>` rather than
+   a button and is therefore legal inside this one. It is `display: none` at
+   every width where the sentence is on the row, and returns only below the
+   width where the sentence has nowhere to live. */
+/* Six props went with the settings block: `mode`, `config`, `weights`,
+   `settings`, `onValue` and `onWeight`. A row chooses; it does not configure,
+   so it needs the attribute, whether it is on, and a way to say otherwise. */
+function AttrPickRow({
+  attr,
+  on,
+  onToggle,
+}: {
+  attr: Attribute
+  on: boolean
+  /** The shift key: extend the last press to this row. See `toggle`. */
+  onToggle: (span: boolean) => void
+}) {
+  /* Everything the row says, and it is three things at most.
+
+     A pass at this put the attribute's whole `purpose` sentence in a third lane
+     across the width the cards used to waste. At thirteen rows it read well. At
+     thirty-eight it was a wall of grey prose, and the panel's job is not to be
+     read — it is to be ticked. The sentence is back on its mark, where it costs
+     nothing until somebody wants it. The width that bought is not spent on a
+     second column either — see the list in `AttrStep` — so the pill sits right
+     after the name, the way it does on the profile page's own check list.
+
+     `Not collected yet` came off the rows on 23 Sep 2026 (owner: "remove this
+     tag"). The catalogue still marks those attributes `phase: 2`, and the
+     profile's own page still says what a profile reads; the pill repeated it on
+     every list a signal appeared in. */
+  /* "Always on" is not a pill here any more. The check list swapped it for a
+     lock at the end of the line (owner, 15 Sep 2026), and the create flows put
+     this list and that one on consecutive steps, where one row wore two marks
+     for one fact (15 Sep 2026). The lock is below, on the always-on row. */
+  const state = null
+
+  /* An always-collected row is not a disabled button. It is not a button.
+
+     `disabled` was right while the mark was a sibling OUTSIDE the toggle: there
+     was nothing to announce and nothing to explain on press, and the sentence
+     stayed reachable on a control of its own. The row IS the button now and the
+     mark is inside it — and a disabled button suppresses the pointer events its
+     descendants need, so a locked row's `?` would have gone quietly dead.
+
+     There is no decision on this row, so there is no control: a `<div>`, a real
+     `TipDot` that keeps a keyboard path to the sentence, and no dead entry in
+     the tab order. Its lock says why at the end of the line, as the check
+     list's does where a Remove would be. */
+  if (attr.always) {
+    return (
+      <div className="bfp2__pickrow is-fixed is-on">
+        <span className="bx-tick" aria-hidden>
+          <Check size={11} strokeWidth={3.2} />
+        </span>
+        <CheckMark attr={attr} />
+        <span className="bfp2__pickname">
+          <span className="bfp2__pickword">{attr.name}</span>
+          <TipDot label={attr.name} text={attr.purpose} />
+        </span>
+        {state}
+        {/* The lock stood here — a button whose only job was to say "always on"
+            (owner, 23 Sep 2026: "remove lock icon, not needed"). A row that is
+            always collected already shows a tick that will not turn off. */}
+      </div>
+    )
+  }
+
+  /* --- The row is the button --------------------------------------------------
+
+     It used to be a `<div>` holding a SHRUNKEN `<button>` plus a `TipDot`
+     sibling, with `::after` stretching the toggle's hit area back across the row
+     and a `z-index` on the mark so the row would not swallow its press. Every
+     line of that was machinery to keep one real `<button>` out of another.
+
+     `TipMark` is that same dot rendered as a `<span>`, which is legal inside a
+     button — so the row becomes one element with one press, and the `::after`,
+     the `z-index` and the `margin-top: 11px` optical nudge all go with it. It is
+     also thirteen to thirty-eight fewer tab stops, which is the objection this
+     codebase already records against a focusable dot on every row of a list.
+
+     The mark beside the tick is the row's CATEGORY — see `CAT_ICON`. An earlier
+     pass argued it out on the grounds that two small shapes per line compete and
+     the checkbox is the one that matters. That held while the list was grouped
+     under named headings; with the headings gone this column is the only thing
+     left saying which family a row belongs to, and it is 16px against the
+     heading rows it replaced. The two shapes do not in fact compete: the tick is
+     a filled square that changes on press, the mark is a hairline glyph that
+     never changes, and they are 8px apart in a fixed order. */
+  return (
+    /* A checkbox, as the wizard's inline rows are, so the list that chooses and
+       the list that chooses and sets read alike to a screen reader. */
+    <button
+      type="button"
+      role="checkbox"
+      className={`bfp2__pickrow ${on ? 'is-on' : ''}`}
+      data-id={attr.id}
+      aria-checked={on}
+      onClick={(e) => onToggle(e.shiftKey)}
+    >
+      <span className="bx-tick" aria-hidden>
+        <Check size={11} strokeWidth={3.2} />
+      </span>
+      <CheckMark attr={attr} />
+      <span className="bfp2__pickname">
+        <span className="bfp2__pickword">{attr.name}</span>
+        <TipMark text={attr.purpose} />
+      </span>
+      {state}
+    </button>
+  )
+}
+
+/* `BasicAside` stood here — the enrolment panel written from the answers
+   ("Each user can register up to 3 devices", the reach, the roster, whether a
+   device registers silently). It is `DEVICES_NOTE` in profile-notes.ts now:
+   the same panel, said once and fixed (owner, 18 Sep 2026). */
+
+/* What an empty list holds the save for — `profileIssue`'s words, said where the list is. */
+const emptyHeld = (mode: ProfileMode) => (mode === 'os' ? 'Add at least one check.' : 'Add at least one signal.')
+
+/* --- The checks: what this profile is set to, and one door to change it ---------
+
+   The page shows only what is ON — each check with its value at the end of the
+   line — and "Edit" opens the catalogue to add or remove. Showing every offered
+   check here, ticked or not, made the page about the catalogue rather than
+   about this profile: thirteen rows to read in order to learn that four apply.
+
+   Choosing is the drawer's job (search, Select all, shift-select, the rows an
+   agent would unlock); setting is this list's. Both write the page's draft, and
+   the SaveBar is still the only thing that commits.
+
+   One check per row, on one line: the mark, the name, its control and a
+   Remove. Removing is the one edit that did need the drawer, and it is the one
+   people make while looking at the row.
+
+   Drawn as the zone page's IP networks list is, and this time literally
+   (owner, 15 Sep 2026, with the zone tab beside it: "make it like this only").
+   Each check is a field — the zone's `.bz7__rowin`, same edge, height and
+   radius — holding the mark, the name and the check's setting at its right
+   end, with the zone's red trash can outside it. Under the list, the zone's
+   link: "Add checks", as "Add IP". It had been a card, then four aligned
+   columns across the whole work column with an Edit button on the heading
+   line; a row of loose parts on a white page read as a table with no table,
+   and the field is what makes one check one thing.
+
+   Half the column, as zones are, but not less than 560px: a check is a name
+   and a setting where an address is one string, and at zones' 360px floor
+   the setting would take the name. */
+export function ChosenList({
+  draft,
+  fullEmpty = false,
+  saving = false,
+  awaitingReach = false,
+  title,
+  tip,
+  onEdit,
+  onConfig,
+  onWeight,
+  onRemove,
+}: {
+  draft: FingerprintProfile
+  /** Draw the empty state as a page's, with the primary Add: for a new profile,
+      where this list is all there is to do. */
+  fullEmpty?: boolean
+  /* The page's own save footer is up. It holds the view's one orange button, so
+     the full empty state's Add turns secondary, and an empty list is then the
+     reason that footer's save is held — so the empty state says that, in the
+     words of `profileIssue`, rather than its first-visit invitation. */
+  saving?: boolean
+  /* The agent question above this list is still open, so there is no Add.
+
+     Which signals exist is that question's answer — 20 agentless, 38 with an
+     agent — so an Add here would open a picker whose size is not yet decided,
+     and a choice made from the short list would silently mean "agentless". The
+     rows that remain are the always-on ones, which are collected whatever the
+     answer turns out to be. */
+  awaitingReach?: boolean
+  /** The heading, when the list is a step rather than a tab — the wizard's "Set
+      values". Checks or Signals otherwise. */
+  title?: string
+  /** What the heading's `?` says. No `?` without it. */
+  tip?: string
+  onEdit: () => void
+  onConfig: (id: string, v: AttrConfigValue) => void
+  onWeight: (id: string, w: number) => void
+  onRemove: (id: string) => void
+}) {
+  const noun = ITEM_NOUN[draft.mode]
+  const heading = title ?? noun.many.replace(/^./, (c) => c.toUpperCase())
+  const offered = offeredAttributes(draft.mode, draft.reach)
+  const chosen = offered.filter((a) => a.always || draft.enabled.includes(a.id))
+  /* Always-on first, for the reason the picker gives: a locked row between two
+     chosen ones reads as one somebody could have left out. */
+  const ordered = [...chosen.filter((a) => a.always), ...chosen.filter((a) => !a.always)]
+  /* The stem of each row's error id, so the field it describes can point at it
+     — as a zone entry's input points at its `.bz7__rowerr`. */
+  const errStem = useId()
+
+  /* Where focus goes once a row has gone. The pressed button leaves with its
+     row, so without this a keyboard user is dropped back at the top of the
+     document: the next row's Remove instead, then the previous one's, then the
+     Add under the list — or the empty state's Add — when no removable row is
+     left. The kit's IconButton and Button take no ref, so the refs are on the
+     spans around them, as the zone rows hold theirs. */
+  const card = useRef<HTMLElement>(null)
+  const removers = useRef<Record<string, HTMLSpanElement | null>>({})
+  const refocus = useRef<string | null>(null)
+  useEffect(() => {
+    const to = refocus.current
+    if (!to) return
+    refocus.current = null
+    const el =
+      removers.current[to]?.querySelector<HTMLButtonElement>('button') ??
+      card.current?.querySelector<HTMLButtonElement>('.bz7__addrow, .bempty button')
+    el?.focus()
+  })
+
+  const remove = (id: string) => {
+    const removable = ordered.filter((a) => !a.always)
+    const at = removable.findIndex((a) => a.id === id)
+    refocus.current = (removable[at + 1] ?? removable[at - 1])?.id ?? '@edit'
+    onRemove(id)
+  }
+
+  const floors = draft.mode === 'os' && ordered.some((a) => a.config?.kind === 'version')
+
+  const head = (
+    <header className="bfp2__checkshead">
+      <h2>{heading}</h2>
+      {tip && <TipDot label={`About ${heading.toLowerCase()}`} text={tip} />}
+      {/* The count, once, and not at zero: the empty state below says that. */}
+      {ordered.length > 0 && <span className="bfp2__checkscount">{countLabel(draft.mode, chosen.length)}</span>}
+      {/* No button here. The door to the catalogue is the link under the
+          list, where zones put Add IP (owner, 15 Sep 2026) — it had moved up
+          to an "Edit checks" button at this line's end, and the owner's
+          reference put it back. */}
+    </header>
+  )
+
+  return (
+    <section className="bfp2__checks" ref={card}>
+      {head}
+
+      {ordered.length === 0 && fullEmpty ? (
+        /* A new profile's first thing to do, so the primary button and a
+           page's air rather than a section's. It opens the same drawer. */
+        <EmptyState
+          icon={ShieldOff}
+          title={`No ${noun.many} yet`}
+          blurb={
+            saving
+              ? emptyHeld(draft.mode)
+              : draft.mode === 'os'
+                ? 'Choose what a device must pass before it can sign in.'
+                : 'Choose the signals that recognise a device.'
+          }
+          action={
+            <Button variant={saving ? 'secondary' : 'brand'} icon={Plus} onClick={onEdit}>
+              Add {noun.many}
+            </Button>
+          }
+        />
+      ) : ordered.length === 0 ? (
+        /* The true reason. "A profile with no checks lets every device through"
+           stood here while the save it sat over was held for "Add at least one
+           check." — said only in a tooltip once the footer lost its words
+           (23 Oct 2026). */
+        <EmptyState
+          compact
+          icon={ShieldOff}
+          title={`No ${noun.many}`}
+          blurb={draft.mode === 'os' ? emptyHeld('os') : 'Add at least one signal to recognise a device.'}
+          action={
+            <Button variant="secondary" size="sm" onClick={onEdit}>
+              <Plus size={14} strokeWidth={2.2} aria-hidden />
+              Add {noun.many}
+            </Button>
+          }
+        />
+      ) : (
+        /* `is-weights` narrows the setting to a weight's width: every row on a
+           trusted device carries the same three-word picker, and the width an
+           answer needs would come out of the names. */
+        <div className={`bfp2__chosen${draft.mode === 'device' ? ' is-weights' : ''}`}>
+          {/* The columns' names, on the row's own frame so each sits over its
+              column: the name's side, the setting's width, and the remove's slot. */}
+          <div className="bz7__fieldline bfp2__colhead" aria-hidden>
+            <div className="bfp2__chosenbox">
+              <span className="bfp2__colhead__left">{LIST_COLUMNS[draft.mode === 'device' ? 'device' : 'os'].left}</span>
+              <span className="bfp2__chosenctl">
+                {LIST_COLUMNS[draft.mode === 'device' ? 'device' : 'os'].right}
+                {floors && <VersionFloorNote />}
+              </span>
+            </div>
+            <span className="bz7__rowdel bfp2__colhead__del" />
+          </div>
+          <ul className="bz7__fields">
+            {ordered.map((a) => {
+              const error = versionError(a, draft.config)
+              const errId = `${errStem}-${a.id}-err`
+              return (
+              <ChosenRow
+                key={a.id}
+                attr={a}
+                name={checkName(a, draft.config)}
+                error={error}
+                errId={errId}
+                answer={
+                  draft.mode !== 'device' && a.config?.kind === 'choice'
+                    ? String(draft.config[a.id] ?? a.config.value)
+                    : undefined
+                }
+                slot={
+                  draft.mode === 'device' ? (
+                    <TierPick
+                      value={tierOf(draft.weights[a.id] ?? a.weight)}
+                      label={`${a.name} priority`}
+                      onChange={(t) => onWeight(a.id, TIER_WEIGHT[t])}
+                    />
+                  ) : a.config ? (
+                    <AttrControl attr={a} values={draft.config} onChange={onConfig} />
+                  ) : null
+                }
+                removeRef={(el) => {
+                  removers.current[a.id] = el
+                }}
+                onRemove={a.always ? undefined : () => remove(a.id)}
+              />
+              )
+            })}
+          </ul>
+          {/* The zone's Add IP, word for word in shape: a plus and the noun,
+              left on the fields' edge. "Add" although the drawer also takes
+              checks away — the trash can on each row is where removing is
+              done now, so what the link is for is the adding. Not at zero:
+              the empty state has its own Add, and two doors to one drawer on
+              an empty pane is one too many. No mousedown guard, unlike the
+              zone's: nothing here commits on blur, and the drawer hands focus
+              back to whatever had it when it opened, which is this link. */}
+          {!awaitingReach && (
+            <button type="button" className="bz7__addrow" onClick={onEdit}>
+              <CirclePlus size={16} strokeWidth={1.9} aria-hidden />
+              Add {noun.many}
+            </button>
+          )}
+        </div>
+      )}
+    </section>
+  )
+}
+
+/* One chosen check: a plain line with the mark, the name, its dropdown and a
+   Remove. What the check reads is behind the `?` beside its name.
+
+   No box around the row. It was drawn as the zone page's field for a moment,
+   with the setting inside the outline, and the owner turned that down the
+   same day: "don't like this outline, just give me a basic list view with
+   dropdowns" (15 Sep 2026). So the row has no edge and the dropdown keeps its
+   own, as every other picker in the console does. A setting that can't be
+   saved says why under its row.
+
+   The zone rows' Remove — a red trash can, not a grey ✕ — so the two lists
+   delete the same way. An always-on check has none: it is collected whatever
+   the profile says, and a lock stands in the Remove's place to say so, in the
+   same slot outside the field so every field ends on one x. That was an
+   "Always on" pill on the name line, and on a Signals list four rows of six
+   wore it between the `?` and the weight (owner, 15 Sep 2026). The lock is
+   where the question comes up — "why can't I remove this one" — and its words
+   are its tooltip and its accessible name. */
+function ChosenRow({
+  attr,
+  name,
+  slot,
+  answer,
+  error,
+  errId,
+  removeRef,
+  onRemove,
+}: {
+  attr: Attribute
+  name: string
+  slot: ReactNode
+  /** The chosen answer in words, for a control that can cut it short. */
+  answer?: string
+  /** Why the value on this row can't be saved, or null. */
+  error?: string | null
+  /** The error line's id, which the setting in `slot` names as its description. */
+  errId: string
+  removeRef: (el: HTMLSpanElement | null) => void
+  onRemove?: () => void
+}) {
+  return (
+    <li>
+      <div className="bz7__fieldline">
+        <div className="bfp2__chosenbox">
+          <CheckMark attr={attr} />
+          <span className="bfp2__chosenline">
+            {/* The whole name on hover, since a long one is cut to the field. */}
+            <span className="bfp2__chosenname" title={name}>
+              {name}
+            </span>
+            <TipDot text={attr.purpose} label={`About ${attr.name}`} />
+          </span>
+          {/* The whole answer on hover too. The list narrows the setting to
+              200px when it is narrow (the page at 1100 wide), which cuts
+              "Not rooted, jailbroken or tampered", and the trigger names
+              itself "Require", so without this the answer could only be read
+              by opening it. */}
+          {slot && (
+            <div className="bfp2__chosenctl" title={answer}>
+              {slot}
+            </div>
+          )}
+        </div>
+        {/* The lock is back in the remove's slot (owner, 26 Sep 2026: "add the
+            lock button here as we used to have"). With the slot empty (23 Sep)
+            it had no width, so an always-on row's setting ran on past the
+            others and the list stopped ending on one x; the lock is the size of
+            the trash can it stands in for. A button, as the kit's `TipDot` is,
+            so a keyboard reaches the words the pointer gets on hover. Pressing
+            it does nothing. */}
+        {!onRemove && (
+          <span className="bz7__rowdel">
+            <Tip text="Always on — can't be removed">
+              <button type="button" className="bfp2__checklock" aria-label={`${attr.name} is always on`}>
+                <Lock size={14} strokeWidth={2} aria-hidden />
+              </button>
+            </Tip>
+          </span>
+        )}
+        {onRemove && (
+          /* Only the first click of a double-click removes. The rows below move
+             up one line and focus goes to the next Remove, which is then under
+             the pointer, so the second click would take that check too. A
+             keyboard press has a detail of 0 and still goes through. */
+          <span
+            className="bz7__rowdel"
+            ref={removeRef}
+            onClickCapture={(e) => {
+              if (e.detail > 1) e.stopPropagation()
+            }}
+          >
+            <IconButton icon={Trash2} tone="danger" size="sm" label={`Remove ${attr.name}`} onClick={onRemove} />
+          </span>
+        )}
+      </div>
+      {error && (
+        <p className="bz7__rowerr" id={errId}>
+          {error}
+        </p>
+      )}
+    </li>
+  )
+}
+
+/* --- The side column: how the step works ---------------------------------------
+
+   The zone page's aside, on a profile: the list on the left is the editor, and
+   this column says how the thing being edited works. Fixed copy from
+   `profile-notes.ts` — short paragraphs, named options with a line each, and a
+   closing note under a rule, which is the shape of the zone panel the owner
+   pointed at (18 Sep 2026).
+
+   `ProfileAside` and `ChecksAside` stood here. Both read the DRAFT: the first
+   listed every check the profile held ("Laptops only.", "Windows 10 or
+   later.", … — fifteen lines restating the list beside it, moving under the
+   reader on every edit), the second chose between that and a static panel.
+   Neither survives the owner's "make sure all of this is static; there's no
+   need to add dynamic values here".
+
+   A "You can also check" catalogue, an Add on every row, stood under the panel.
+   Removed 15 Sep 2026: the list's Edit button opens the same catalogue.
+
+   The kit's `Note` since 16 Oct 2026 (owner: "whatever content we have on the
+   right can be static, no accordion"): the one heading in the info blue, the
+   lines, terms and foot under it, nothing to open and nothing to press. */
+export function SidePanel({ note }: { note: ProfileNote }) {
+  return (
+    <aside className="bz7__aside" aria-label="About this step">
+      <Note title={note.title} className="bz7__side">
+        {note.lines && note.lines.length > 0 && (
+          <ul className="bfp2__sumlines">
+            {note.lines.map((l) => (
+              <li key={l}>{l}</li>
+            ))}
+          </ul>
+        )}
+        {note.terms && note.terms.length > 0 && (
+          <ul className={`bz7__sidelist bz7__sidelist--words${note.lines?.length ? ' is-under' : ''}`}>
+            {note.terms.map((t) => (
+              <li key={t.term}>
+                <strong>{t.term}</strong>
+                <em>{t.note}</em>
+              </li>
+            ))}
+          </ul>
+        )}
+        {note.foot && <p className="bz7__sidep">{note.foot}</p>}
+      </Note>
+    </aside>
+  )
+}
+
+/* Every version is a floor, said once, in brackets on the Requirement column's
+   own heading (director, 22 Sep 2026: "add some indication that this is a
+   minimum version and not a specific version"). It was "or later" inside every
+   version field first, and down a column of eight that was the same two words
+   eight times (owner: "very repetitive, add it in one place"); then a caption
+   line under the list's heading, a sentence away from the values it was about
+   (owner, same day: "move this beside the requirement, perhaps in brackets").
+   On the heading it sits over the very column it qualifies. Only over a list
+   that holds a version check. The heading row is hidden from assistive tech, so
+   the fields' accessible names still say Minimum, for a reader who meets them
+   one at a time.
+
+   The words say what PASSES (owner, 23 Sep 2026: "versions are minimums doesn't
+   make sense — make it direct and easy to understand"). "Minimums" described
+   the stored value; an admin reading a row wants to know whether a newer
+   Windows gets in, and "that version or newer" answers it. "That version"
+   rather than "this version" keeps the reach on the version rows: the column
+   also holds a device type and an integrity answer, which are not versions. */
+export function VersionFloorNote() {
+  return <span className="bfp2__colnote">(that version or newer)</span>
+}
+
+export function AttrControl({
+  attr,
+  values,
+  onChange,
+}: {
+  attr: Attribute
+  /* A bag of values, not a profile.
+
+     The wizard sets values now and it has no profile to hand — building a
+     half-real one, with a fake id and a `restrictionSet` it has no opinion
+     about, would be a state the model should not be able to express. So the
+     control takes the only thing it ever read. */
+  values: Record<string, AttrConfigValue>
+  onChange: (id: string, v: AttrConfigValue) => void
+}) {
+  const c = attr.config!
+  const raw = values[attr.id]
+
+  if (c.kind === 'tolerance') {
+    return (
+      <span className="bfp2__num">
+        <input
+          type="number"
+          min={c.min}
+          max={c.max}
+          value={Number(raw ?? c.value)}
+          aria-label={c.label}
+          onChange={(e) => onChange(attr.id, Number(e.target.value))}
+        />
+        {c.unit}
+      </span>
+    )
+  }
+
+  if (c.kind === 'choice') {
+    return (
+      <Picker
+        label={c.label}
+        value={String(raw ?? c.value)}
+        options={c.options.map((o) => ({ value: o, label: o }))}
+        onChange={(v) => onChange(attr.id, v)}
+      />
+    )
+  }
+
+  /* Two controls, read as one sentence: the attribute's name is already to the
+     left of them, so "Operating system · is at least · Windows 10 22H2" runs
+     across the row as a line of English rather than as two settings that happen
+     to be adjacent.
+
+     The operator is narrow and the value is not, because that is the ratio of
+     the words in them and a pair of equal boxes would make the short one look
+     like the more important half.
+
+     Values arrive grouped, straight from the attribute's own list. An <optgroup>
+     rather than a flat list with prefixes: the platform is the group, so
+     "Android 14" does not have to carry the word Android to be findable, and a
+     platform added to the master arrives as a heading rather than as thirty
+     more rows. */
+  if (c.kind === 'rule') {
+    const v: AttrRuleValue = isRuleValue(raw) ? raw : c.value
+    const set = (next: Partial<AttrRuleValue>) => onChange(attr.id, { ...v, ...next })
+    return (
+      <span className="bfp2__rule">
+        <Picker
+          label={`${attr.name} — comparison`}
+          value={v.op}
+          options={c.operators.map((o) => ({ value: o, label: o }))}
+          onChange={(op) => set({ op })}
+        />
+        {/* `group` where the native control had `optgroup` — the headings the
+            platform drew, drawn by the console instead. */}
+        <Picker
+          label={`${attr.name} — value`}
+          value={v.value}
+          options={c.groups.flatMap((g) => g.values.map((val) => ({ value: val, label: val, group: g.label })))}
+          onChange={(value) => set({ value })}
+        />
+      </span>
+    )
+  }
+
+  /* A comparison and a version the admin PICKS.
+
+     The same two-part sentence the rule kind makes — "Android OS version · is
+     at least · 13" reads across the row as English — and the second half is now
+     the platform's own list rather than a text field. What the text field cost
+     is in the config type's comment: it accepted "Windows 11", "11 " and
+     "22h2" as readily as "11", validated none of them, and a floor that does
+     not parse is a floor that is not there.
+     A stored value the list does not carry is added to it and stays selected.
+     That is the whole of what the old free field was protecting — a profile
+     written before a release, or a fixture with a build nobody offers — and it
+     survives without letting anyone type a new bad one. */
+  if (c.kind === 'version') {
+    const v: AttrRuleValue = isRuleValue(raw) ? raw : c.value
+    const set = (next: Partial<AttrRuleValue>) => onChange(attr.id, { ...v, ...next })
+    const op = versionOp(v.op)
+    /* "At least" is said by the row's name now — see `checkName` — so the
+       comparison menu only appears for a floor stored with some other operator,
+       where the name falls back and the glyph is the only place it is stated. */
+    const atLeast = v.op === 'gte'
+    return (
+      <span className={`bfp2__expr${atLeast ? ' is-bare' : ''}`}>
+        {atLeast ? null : (
+        /* The operator as one glyph, the way a conditional row states it —
+            Figma's prototype panel is the reference. A dropdown reading "is at
+            least" is three words competing with the attribute name to its left;
+            the symbol is the join between two operands and disappears into the
+            expression, which is what an operator should do.
+
+            The menu is where the words live. Each row names the symbol and
+            shows it on the right — the kit's `kbd` slot, which already renders
+            exactly that — so ≥ is choosable by somebody who does not read
+            mathematical notation, and recognisable afterwards by somebody who
+            does. */
+        <MenuButton
+          size="sm"
+          align="start"
+          label={op.symbol}
+          items={VERSION_OPS.map((o) => ({ id: o.id, label: o.label, kbd: o.symbol }))}
+          onSelect={(id) => set({ op: id })}
+        />
+        )}
+        {/* Chosen where there is a list, typed where there is not — see the
+            `versions` field for why an OS and a browser differ on that.
+
+            When there IS a list, the stored value goes in first if the
+            catalogue does not carry it, so a profile's floor is never quietly
+            rewritten to whatever happens to sit at the top. It is marked as
+            what it is rather than passed off as a current release. */}
+        {c.versions ? (
+          <Picker
+            label={atLeast ? `Minimum ${c.label}` : c.label}
+            value={v.value}
+            options={[
+              ...(c.versions.some((o) => o.value === v.value)
+                ? []
+                : [{ value: v.value, label: v.value, meta: 'Not a listed release' }]),
+              ...c.versions.map((o) => ({ value: o.value, label: o.label ?? o.value })),
+            ]}
+            onChange={(value) => set({ value })}
+          />
+        ) : (
+          /* `inputMode="decimal"` and not `type="number"`: 131.0.6778.86 is a
+             version, not a number, and a numeric field refuses the second dot.
+             Typing is free; a value that is blank or not digits and dots is
+             marked here, said under the row, and blocks Save. */
+          <input
+            type="text"
+            inputMode="decimal"
+            className="bfp2__exprval"
+            aria-label={atLeast ? `Minimum ${c.label}` : c.label}
+            aria-invalid={!isVersionText(v.value)}
+            value={v.value}
+            placeholder={c.placeholder}
+            title={c.hint}
+            onChange={(e) => set({ value: e.target.value })}
+          />
+        )}
+      </span>
+    )
+  }
+
+  /* A list is edited on the inner page, but not in a row this narrow — it gets
+     the count and opens where there is room. Kept honest: the count is the
+     real length, not a placeholder. */
+  return <span className="bfp2__nocfg">{c.values.length} entries</span>
+}
+
+/* --- An enrolment question: label above, answer below ----------------------------
+
+   The shape `Profile name` uses, applied to the whole enrolment section.
+
+   These were `FormRow` — a mark, the label pushed left and the control pushed
+   right, with a stretch of empty row between them. That row is right for a LIST
+   of things a profile already holds, which is what the signals tab is: forty
+   rows scanned down one column, each ending in the same control. It is wrong
+   for a form of four unlike questions, because the answer ends up as far from
+   its label as the widest row in the set allows, and a dropdown, a switch and a
+   stepper have nothing to line up with each other about.
+
+   Stacked, each question is one block: the label and the control under it, with
+   any caveat on the label's mark. No icon, for the same reason `Profile name` has none —
+   these are questions, not items, and a mark per question is decoration on a
+   form of four.
+
+   Full width of the work column, which the 50/50 page already holds to half
+   the page. */
+function EnrolField({
+  label,
+  tip,
+  inline,
+  children,
+}: {
+  label: string
+  /** The caveat, on a mark. */
+  tip?: string
+  /** Label and control on ONE line, for a control that is the answer rather
+      than a field to fill — a switch. See `.bfp2__enrolfield--inline`. */
+  inline?: boolean
+  children: ReactNode
+}) {
+  return (
+    <div className={`bfp2__enrolfield${inline ? ' bfp2__enrolfield--inline' : ''}`}>
+      <span className="bfp2__enrollabel">
+        {label}
+        {tip && <TipDot label={label} text={tip} />}
+      </span>
+      <div className="bfp2__enrolctl">{children}</div>
+    </div>
+  )
+}
+
+/* The two console checkboxes in Device registration (owner, 22 Oct 2026: "use
+   a checkbox with the same design and content, and apply this change
+   throughout the device flow").
+
+   A checkbox, not a switch, and the sentence is VISIBLE. The console draws
+   these two as checkboxes with their explanation underneath; this prototype
+   drew them as switches with the explanation hidden behind a `TipDot`, so the
+   content was already written — promoting it is not new copy. The owner's
+   standing rule is that product parity keeps OUR control types rather than the
+   console's; he reversed it for these two rows by name.
+
+   `role="checkbox"` on a button rather than a native input, following
+   `bfp2__selectall` above: `.bx-tick` (kit.css) is the console's one tick
+   mark, consolidated from five near-identical marks, and a native box draws
+   whatever the operating system draws — which is the thing that consolidation
+   was written to stop.
+
+   The explanations say "signing in" and "sign-in". The tips they came from
+   said "logging in" and "login", which this product's copy rules forbid and
+   `ui-copy.test.ts` catches in every spelling. */
+function EnrolCheck({
+  label,
+  hint,
+  checked,
+  onChange,
+}: {
+  label: string
+  /** The console's own sentence, under the label. Not optional: a checkbox
+      with no explanation is the switch this replaced, minus its mark. */
+  hint: string
+  checked: boolean
+  onChange: (next: boolean) => void
+}) {
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={checked}
+      className={`bfp2__enrolcheck${checked ? ' is-on' : ''}`}
+      onClick={() => onChange(!checked)}
+    >
+      <span className="bx-tick" aria-hidden>
+        <Check size={11} strokeWidth={3.2} />
+      </span>
+      <b className="bfp2__enrolchecklabel">{label}</b>
+      <span className="bfp2__enrolcheckhint">{hint}</span>
+    </button>
+  )
+}
+
+/* `FormRow` stood here — a mark, a label pushed left and a control pushed
+   right. Its four callers were the enrolment questions, and they stack now;
+   see `EnrolField` above for why a row is right for a list and wrong for a
+   form. Deleted rather than left for a future caller: the row shape still
+   exists where it belongs, on the signals list. */
+
+/* --- What an agent-based profile asks of every device -------------------------------
+
+   The live console's prerequisites banner, in its words (owner, 21 Sep 2026:
+   "add the download agent banner as well"). Shown under the reach tiles once
+   Agent-based is the answer, on the create wizard's Devices step and on the
+   Basic details tab alike: it is the cost of the answer just given, so it sits
+   under the answer rather than further down beside the registration questions.
+
+   Not the kit's `Note`: the section is its own layout, `AgentPrerequisites`
+   in agent-download.tsx (owner, 16 Oct 2026: "I don't like the card layout,
+   we can do better for this section only"). This wrapper only places it. */
+export function AgentBanner() {
+  return (
+    <div className="bfp2__agent">
+      <AgentPrerequisites />
+    </div>
+  )
+}
+
+/* --- Registration: one definition, two places -------------------------------------
+
+   How a device gets onto a person's list, how many they may keep, and the two
+   switches the live console asks beside them. The attributes decide whether a
+   machine is the SAME one; these decide whether it is allowed to become a known
+   one at all.
+
+   The live console's order and words (owner, 21 Sep 2026): Device registration
+   method, then Allowed device registrations — or the roster that replaces it —
+   then Enable mobile device restriction and Enable device auto-registration.
+   The console's Title Case is set in the console's sentence case. The controls
+   stay this console's own — a dropdown and switches, not the live console's
+   radios and checkboxes (owner, same day) — and the live console's line under
+   each answer is the `?` on it.
+
+   It is asked in the create form, on the step where the collector is chosen,
+   and it is edited from one place afterwards. One component because the two
+   surfaces must not drift: the same rows, the same dependency order, the same
+   refusals. That order is real and it is why a roster question can disappear
+   rather than grey out — a roster is matched on MAC address, MAC is one of the
+   eighteen things only an agent can read, and it is in the device catalogue
+   only. So an OS-and-version profile cannot use one at any reach, and an
+   agentless device profile cannot either. */
+
+/* What the chosen method means, on the question's `?`. The first is the live
+   console's own line; it shows none for the second in the screenshot this was
+   built from, so that one says what the branch does in the same shape. */
+const REGISTRATION_HELP: Record<Registration, string> = {
+  self: 'Allow users to register their own devices up to the configured limit.',
+  'pre-approved': 'Allow only the devices on the roster you upload to access the application.',
+}
+
+export function EnrolmentFields({
+  enabled,
+  checkMac = true,
+  mode,
+  reach,
+  registration,
+  autoRegister,
+  restrictMobile,
+  maxDevices,
+  roster,
+  onChange,
+}: {
+  /* The chosen signals, and the only reason this form reads them: whether a
+     roster can be matched depends on whether MAC is one of them. */
+  enabled: string[]
+  /** Warn when a roster can't be matched because MAC is not read. Off on the
+      create wizard's Devices step, where MAC is ticked for you on the way past. */
+  checkMac?: boolean
+  mode: ProfileMode
+  /** Null while the collector question is still unanswered on the step above. */
+  reach: ProfileReach | null
+  registration: Registration
+  autoRegister: boolean
+  restrictMobile: boolean
+  maxDevices: number | null
+  roster: Roster | null
+  onChange: (p: {
+    registration?: Registration
+    autoRegister?: boolean
+    restrictMobile?: boolean
+    maxDevices?: number | null
+    roster?: Roster | null
+  }) => void
+}) {
+  const rosterPossible = mode === 'device' && reach === 'agent'
+  const file = useRef<HTMLInputElement>(null)
+  const [fileProblem, setFileProblem] = useState<string | null>(null)
+
+  /* The roster is read in the browser: one device per line, a header line
+     skipped. Nothing is sent anywhere in this prototype. */
+  const upload = async (f: File | undefined) => {
+    if (!f) return
+    const next = rosterFromCsv(f.name, await f.text(), new Date())
+    if (next.rows === 0) {
+      setFileProblem('That file has no devices in it.')
+      return
+    }
+    setFileProblem(null)
+    onChange({ roster: next })
+  }
+
+  /* The console's own branch: a roster REPLACES the allowance rather than
+     sitting beside it. */
+  const pickMethod = (next: Registration) =>
+    onChange({
+      registration: next,
+      maxDevices: next === 'pre-approved' ? null : (maxDevices ?? DEFAULT_MAX_DEVICES),
+    })
+
+  return (
+    <div className="bfp2__rows bfp2__rows--form">
+      {/* Asked only where it has two answers. Agentless can't match a roster,
+          so self registration is the only method there and the question is
+          not rendered at all (owner, 21 Sep 2026: "remove this from agentless,
+          no need") — it used to be the same dropdown, disabled. `withReach`
+          already holds an agentless profile to self registration. */}
+      {!rosterPossible && mode === 'device' && (
+        /* One method, so it is read, not picked (owner, 10 Nov 2026): a roster needs the Device Agent, which is hidden. */
+        <EnrolField label="Device registration method" tip={REGISTRATION_HELP.self}>
+          <span className="bfp2__enrolfixed">{REGISTRATION_LABEL.self}</span>
+        </EnrolField>
+      )}
+      {rosterPossible && (
+        <EnrolField label="Device registration method" tip={REGISTRATION_HELP[registration]}>
+          <Picker
+            label="Device registration method"
+            width="fill"
+            value={registration}
+            options={(Object.keys(REGISTRATION_LABEL) as Registration[]).map((r) => ({
+              value: r,
+              label: REGISTRATION_LABEL[r],
+            }))}
+            onChange={(v) => pickMethod(v as Registration)}
+          />
+        </EnrolField>
+      )}
+
+      {/* One or the other, never both. A question that no longer applies is
+          not disabled or greyed — it is not rendered. */}
+      {registration === 'self' ? (
+        <EnrolField label="Allowed device registrations" tip="How many devices each user can register.">
+          <NumberStepper
+            label="Allowed device registrations"
+            value={maxDevices ?? DEFAULT_MAX_DEVICES}
+            min={1}
+            max={20}
+            width="fill"
+            onChange={(next) => onChange({ maxDevices: next })}
+          />
+        </EnrolField>
+      ) : (
+        <EnrolField
+          label="Approved device roster"
+          tip="A CSV file with one device per line: device name, user email and MAC address."
+        >
+          <input
+            ref={file}
+            type="file"
+            accept=".csv,text/csv"
+            hidden
+            onChange={(e) => {
+              void upload(e.target.files?.[0])
+              e.target.value = ''
+            }}
+          />
+          {roster ? (
+            /* A file, drawn as a file: a spreadsheet mark, the name, and how
+               many devices it holds. */
+            <span className="bfp2__file">
+              <span className="bfp2__file-ico" aria-hidden>
+                <FileSpreadsheet size={17} strokeWidth={1.8} />
+              </span>
+              <span className="bfp2__file-body">
+                <strong title={roster.fileName}>{roster.fileName}</strong>
+                <em>
+                  {roster.rows} devices, uploaded {roster.uploadedAt}
+                </em>
+              </span>
+              {/* Replace, not Upload. The row already has a file, and a
+                  second `Upload CSV` beside one would not say which of the
+                  two survives. */}
+              <Button variant="ghost" size="sm" onClick={() => file.current?.click()}>
+                Replace
+              </Button>
+            </span>
+          ) : (
+            <Button variant="secondary" size="sm" onClick={() => file.current?.click()}>
+              <Upload size={14} strokeWidth={1.9} aria-hidden />
+              Upload CSV
+            </Button>
+          )}
+        </EnrolField>
+      )}
+
+      {/* The two ways a pre-approved profile can be inert, said under the
+          roster that makes it so — before the two switches, not after them.
+          Both block saving until fixed. */}
+      {registration === 'pre-approved' && fileProblem && (
+        <p className="bfp2__enrolwarn" role="status">
+          <AlertTriangle size={13} strokeWidth={2} aria-hidden />
+          <span>{fileProblem}</span>
+        </p>
+      )}
+      {registration === 'pre-approved' && !roster && !fileProblem && (
+        <p className="bfp2__enrolwarn">
+          <AlertTriangle size={13} strokeWidth={2} aria-hidden />
+          <span>Upload a device roster. No device can sign in until you do.</span>
+        </p>
+      )}
+      {checkMac && rosterNeedsMac({ registration, enabled }) && (
+        <p className="bfp2__enrolwarn">
+          <AlertTriangle size={13} strokeWidth={2} aria-hidden />
+          <span>
+            The roster is matched on <b>MAC address</b>. Add MAC address to this profile&apos;s signals.
+          </span>
+        </p>
+      )}
+
+      {/* The two switches are hidden in this version (device-profile-phase.ts). */}
+      {ENROL_OPTIONS && (
+        <>
+          <EnrolCheck
+            label="Enable mobile device restriction"
+            hint="Restrict users from signing in on mobile devices."
+            checked={restrictMobile}
+            onChange={(next) => onChange({ restrictMobile: next })}
+          />
+    
+          <EnrolCheck
+            label="Enable device auto-registration"
+            hint="Silently register the browser during sign-in."
+            checked={autoRegister}
+            onChange={(next) => onChange({ autoRegister: next })}
+          />
+        </>
+      )}
+    </div>
+  )
+}

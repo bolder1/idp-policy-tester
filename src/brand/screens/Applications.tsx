@@ -1,0 +1,265 @@
+import { useMemo, useState } from 'react'
+import { AppWindow, Pencil, Plus, Trash2 } from 'lucide-react'
+
+import { Button, IconButton, SearchBox } from '../kit'
+import { EmptyState, NoMatches } from '../empty'
+import { PageHead } from '../Shell'
+import { AppLogo } from '../logos/AppLogo'
+import { useBrand } from '../store'
+import type { App } from '../data'
+import { ownerOf, summarise, type AppSummary } from './app-policies'
+import { compareUpdated } from './applications-model'
+import { AppProtection } from './AppProtection'
+import { ListPager } from './list-pager'
+import { usePagedList } from './paged-list'
+import { PageBar } from './page-bar'
+import { ViewSwitch } from './library-view'
+import { LIB_VIEWS } from './library-view-state'
+import { SHOWCASE } from '../showcase'
+
+/* -----------------------------------------------------------------------------
+   Applications — the console's own Apps page, and the one place an application
+   says what protects it.
+
+   The columns, the search, the button and the pager follow the live page. The
+   Protection column is new.
+
+   Add application opens Choose application, the live catalogue (AppCatalog,
+   13 Oct 2026; spec docs/specs/APP-CREATE-AND-ACCESS.md §3).
+
+   The name opens the application's own page, on Policies. Actions are two
+   icon buttons in the column rather than a kebab (owner, 22 Oct 2026: "we can
+   remove the three dots from here and have icon buttons in the column, and
+   remove Users and groups because the user can go inside to do whatever, so we
+   can have 2 buttons"): Edit, which opens the page's Basic tab, and Delete.
+   Users and groups was the third, and it only went to a tab of the page the
+   name already opens — a menu whose own row made it redundant. Two buttons
+   read at a glance where a kebab costs a press to find out it held three
+   items, one of them a duplicate.
+
+   Delete is still a toast: deleting an application needs ConfirmDelete's
+   refuse-while-live contract, the saved sign-ins that name it and its retired
+   id, and none of that is built (spec §5). It is neutral, not red: a
+   destructive trigger carries no colour and the confirm it opens carries it
+   all. The Protection cell keeps its quick add: the protection panel, where
+   new and existing are both visible before either is chosen.
+   -------------------------------------------------------------------------- */
+
+type SortKey = 'name' | 'type' | 'protection' | 'updated'
+
+/* A table row's height. The page shows as many as fit the window and pages the
+   rest, like every other paged page, so the pager sits on the bottom edge and
+   the page never scrolls (16 Sep 2026). It was a fixed ten, which is taller
+   than a laptop window. */
+const ROW_H = 52
+
+const NOT_BUILT = SHOWCASE ? 'Coming soon.' : 'Not built in this prototype.'
+const APP_VIEWS = LIB_VIEWS.map((v) => (v.id === 'table' ? v : { ...v, disabled: true, note: NOT_BUILT }))
+
+export function Applications() {
+  const store = useBrand()
+  const [query, setQuery] = useState('')
+  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'name', dir: 1 })
+  /** Which application's protection panel is open. Null is closed. */
+  const [panelFor, setPanelFor] = useState<string | null>(null)
+
+  /* With the directory, so a policy bound to named people is asked about them. */
+  const summaries = useMemo(() => {
+    const m = new Map<string, AppSummary>()
+    for (const a of store.apps) m.set(a.id, summarise(a.id, store.policies, store.users))
+    return m
+  }, [store.apps, store.policies, store.users])
+
+  const rows = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    const kept = q
+      ? store.apps.filter((a) => a.name.toLowerCase().includes(q) || a.type.toLowerCase().includes(q))
+      : [...store.apps]
+
+    const cmp: Record<SortKey, (a: App, b: App) => number> = {
+      name: (a, b) => a.name.localeCompare(b.name),
+      type: (a, b) => a.type.localeCompare(b.type) || a.name.localeCompare(b.name),
+      updated: compareUpdated,
+      protection: (a, b) => {
+        const s = summaries.get(a.id)!
+        const t = summaries.get(b.id)!
+        return s.decides - t.decides || s.own - t.own || a.name.localeCompare(b.name)
+      },
+    }
+    return kept.sort((a, b) => cmp[sort.key](a, b) * sort.dir)
+  }, [store.apps, query, sort, summaries])
+
+  /* A new search or sort starts at the first page; a list that shrank under the
+     current page shows its last page rather than an empty one — both are the
+     hook's. */
+  const paged = usePagedList(rows, { rowHeight: ROW_H, resetKey: [query, sort] })
+  const total = rows.length
+  const shown = paged.pageRows
+
+  const head = (key: SortKey, label: string) => {
+    const on = sort.key === key
+    return (
+      <th
+        className={on ? 'is-sorted' : ''}
+        scope="col"
+        aria-sort={on ? (sort.dir === 1 ? 'ascending' : 'descending') : 'none'}
+      >
+        <button
+          type="button"
+          className={`btable__sort ${on ? 'is-on' : ''}`}
+          onClick={() => setSort((s) => ({ key, dir: s.key === key && s.dir === 1 ? -1 : 1 }))}
+        >
+          {label}
+          <span aria-hidden>{on ? (sort.dir === 1 ? '↑' : '↓') : '↕'}</span>
+        </button>
+      </th>
+    )
+  }
+
+  /* Both doors, the bar's and the empty state's, open the catalogue. */
+  const addApp = () => store.go({ name: 'application-new' })
+  const empty = store.apps.length === 0
+
+  return (
+    <div className="bpage bapl">
+      <PageHead title="Applications" caption="Every application connected to this tenant." />
+
+      {empty ? (
+        <EmptyState
+          icon={AppWindow}
+          title="No applications yet"
+          blurb="Connect an application to protect its sign-ins with a policy."
+          action={
+            <Button variant="brand" onClick={addApp}>
+              <Plus size={15} strokeWidth={2.2} aria-hidden />
+              Add application
+            </Button>
+          }
+        />
+      ) : (
+        <>
+          {/* The row every list page has — see `PageBar`: the search box on the
+              left (no filter worth adding), the view and Add on the right. */}
+          <PageBar
+            left={
+              <SearchBox
+                value={query}
+                onChange={setQuery}
+                placeholder="Search applications…"
+                label="Search applications"
+              />
+            }
+            right={
+              <>
+                {/* The live page has three views; the other two were never seen,
+                    so they are disabled rather than guessed at. */}
+                {/* One live view, so no switch in the showcase build (see showcase.ts). */}
+                {!SHOWCASE && <ViewSwitch value="table" onChange={() => {}} label="Application view" views={APP_VIEWS} />}
+                <Button variant="brand" onClick={addApp}>
+                  <Plus size={15} strokeWidth={2.2} aria-hidden />
+                  Add application
+                </Button>
+              </>
+            }
+          />
+
+          {total === 0 ? (
+            <NoMatches
+              noun="applications"
+              query={query}
+              onClear={() => setQuery('')}
+            />
+          ) : (
+            <div className="btable-wrap">
+              <div className="btable__scroll">
+                <table className="btable">
+                  <thead>
+                    <tr>
+                      {head('name', 'Application name')}
+                      {head('type', 'App type')}
+                      {head('protection', 'Policy')}
+                      {head('updated', 'Last updated')}
+                      <th scope="col" className="btable__actions btable__col-actions btable__col-actions--pair">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody ref={paged.listRef}>
+                    {shown.map((a) => (
+                      <AppRow key={a.id} app={a} summary={summaries.get(a.id)!} onOpen={() => setPanelFor(a.id)} />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          {/* At the bottom of the page, as on every paged page — it was the
+              table's footer, and so sat wherever the table happened to end. */}
+          {total > 0 && (
+            <ListPager {...paged.pager} label="Application pages" />
+          )}
+        </>
+      )}
+
+      <AppProtection appId={panelFor} onClose={() => setPanelFor(null)} />
+    </div>
+  )
+}
+
+function AppRow({ app, summary, onOpen }: { app: App; summary: AppSummary; onOpen: () => void }) {
+  const store = useBrand()
+  return (
+    <tr>
+      {/* Layout on a wrapper inside the cell, not on the `<td>` — see the same
+          note on the Policies table's name cell. */}
+      <td>
+        <div className="btable__primary">
+          <span className="btable__app">
+            <AppLogo appId={app.id} name={app.name} size={20} />
+            {/* The name opens the application's page. The row itself is not a
+                target, so its text stays selectable and the kebab stays clear. */}
+            <button type="button" className="btable__link" onClick={() => store.go({ name: 'application', appId: app.id })}>
+              {app.name}
+            </button>
+          </span>
+        </div>
+      </td>
+      <td className="u-muted">{app.type}</td>
+      <td>
+        <ProtectionCell app={app} summary={summary} policyName={ownerOf(app.id, store.policies)?.name} onOpen={onOpen} />
+      </td>
+      {/* Without the seconds; the full stamp is on hover. */}
+      <td className="u-muted" title={app.lastUpdated}>
+        {app.lastUpdated.replace(/:\d\d$/, '')}
+      </td>
+      <td className="btable__actions btable__actions--pair">
+        <IconButton icon={Pencil} label={`Edit ${app.name}`} onClick={() => store.go({ name: 'application', appId: app.id, tab: 'basic' })} size="sm" tone="ghost" />
+        <IconButton
+          icon={Trash2}
+          label={`Delete ${app.name}`}
+          onClick={() => store.showToast(SHOWCASE ? 'Deleting applications is coming soon.' : 'Deleting applications is not built in this prototype.')}
+          size="sm"
+          tone="ghost"
+        />
+      </td>
+    </tr>
+  )
+}
+
+/* What protects this application, without opening anything: the count, and the
+   shortfall when there is one. */
+/* One application, one policy (owner, 14 Oct 2026): the cell names it. */
+function ProtectionCell({ app, summary, policyName, onOpen }: { app: App; summary: AppSummary; policyName?: string; onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      className={`bapl__prot is-${summary.tone}`}
+      onClick={onOpen}
+      title={summary.title}
+      aria-label={`${summary.label}${summary.tag ? `, ${summary.tag}` : ''}. Open protection for ${app.name}`}
+    >
+      <span>{policyName ?? summary.label}</span>
+      {summary.tag && <em>{summary.tag}</em>}
+    </button>
+  )
+}

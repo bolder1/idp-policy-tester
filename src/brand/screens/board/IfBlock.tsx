@@ -1,0 +1,659 @@
+import { Fragment, useContext, type MouseEvent, type ReactNode } from 'react'
+import { CondTagsContext, condTokens } from './cond-tags'
+import { ArrowRight, Braces, CornerDownRight, Split, Users } from 'lucide-react'
+
+import { hasWho as ruleHasWho, normaliseWho, whoSummary } from '../../rule-who'
+import { FaceStack, type FaceItem } from '../../faces'
+import { conditionName, conditionType, zoneScopeOf, type Condition, type Rule } from '../../data'
+import { cardJoin, cardLetter, topJoin } from '../../predicate'
+import { postActionLabel } from '../../post-sign-in'
+import type { NameLookup } from '../predicate-prose'
+import { DECISION_NAME, TONE, journeyOf } from './model'
+import { isPristine } from './parts'
+import { POST_TONE, usePostBoard } from './post-board'
+import { conditionIcon, conditionTone } from './tones'
+
+/* -----------------------------------------------------------------------------
+   The rule, as a conditional.
+
+   Figma's prototype conditional is the grammar administrators already read:
+
+       ⑂ if   [value] != [value]
+          └   Set …
+       else
+          └   Add action
+
+   A rule IS that shape — if these things are true, decide this; else the next
+   rule gets it — so it is drawn that way, once, and used by the card on the
+   board and the editor in the inspector. The block is a dark surface on
+   purpose: it is logic, and logic reads as code.
+   -------------------------------------------------------------------------- */
+
+/** The rule that inherits a sign-in this one lets past. Null is the default. */
+export type NextRule = { index: number; name: string } | null
+
+export function IfKw({ children, tone }: { children: ReactNode; tone?: 'and' | 'or' | 'op' }) {
+  return <span className={`bb__ifkw ${tone ? `is-${tone}` : ''}`}>{children}</span>
+}
+
+export function IfChip({
+  icon,
+  tone,
+  variant,
+  muted,
+  unset,
+  title,
+  ariaLabel,
+  onClick,
+  children,
+}: {
+  icon?: ReactNode
+  tone?: string
+  /* Which half of the sentence this is. The attribute names the axis and the
+     value is the answer, and the editor already draws them at two weights —
+     the card was drawing both identically, so a row of three chips gave no
+     clue which one you would go and change. */
+  variant?: 'attr' | 'val'
+  muted?: boolean
+  unset?: boolean
+  title?: string
+  /* Required in spirit whenever `onClick` deletes something.
+
+     A value chip's text is the value, so a chip that removes "Engineering" on
+     press announced itself as "Engineering" — the name of the thing, with no
+     hint that pressing it destroys it. The visible text stays the value; the
+     accessible name says what the button does to it. */
+  ariaLabel?: string
+  onClick?: (e: MouseEvent<HTMLButtonElement>) => void
+  children: ReactNode
+}) {
+  const cls = `bb__ifchip ${tone ? `is-tone-${tone}` : ''} ${variant ? `is-${variant}` : ''} ${muted ? 'is-muted' : ''} ${unset ? 'is-unset' : ''}`
+  if (onClick)
+    return (
+      <button type="button" className={cls} title={title} aria-label={ariaLabel} onClick={onClick}>
+        {icon && <i aria-hidden>{icon}</i>}
+        {children}
+      </button>
+    )
+  return (
+    <span className={cls} title={title}>
+      {icon && <i aria-hidden>{icon}</i>}
+      {children}
+    </span>
+  )
+}
+
+/* Everything that belongs UNDER a keyword.
+
+   The card used to run its keywords inline with their content: `if` opened the
+   first condition's row, `who` opened the avatar stack, and only `then` stood on
+   a line of its own with its outcome indented beneath it. So of the three parts
+   a rule has, one was drawn as a heading over a body and two were drawn as the
+   first words of a sentence — and a five-condition rule read as five sibling
+   lines with no sign that four of them were arguments to the first word on the
+   first one.
+
+   `then` had it right. All three do it now: the keyword takes a line, and what
+   answers it is indented under a guide, so the shape of a rule is visible before
+   any of it is read.
+
+   The `└` elbow that used to mark the single indented row has gone with the
+   change. It reads as "one thing follows"; the guide reads as "everything here
+   belongs to the word above", which is what is true of all three sections and
+   was never true of just the outcome. */
+export function IfSub({ children, className }: { children: ReactNode; className?: string }) {
+  return <div className={`bb__ifbody ${className ?? ''}`}>{children}</div>
+}
+
+/* How many values a card prints before the rest become a count.
+
+   It was four, flat, and four is the wrong number in both directions. Four
+   zones called "HQ", "EU", "APAC" and "VPN" leave half the row empty. Four
+   groups called "Acquired-Co-Employees" and "Matter-Acme-Litigation" do not
+   come close to fitting — and the condition row does not wrap (see
+   `.bb__ifrow.is-cond`), so what arrived instead was a run of pills all
+   squeezed to ellipses: the exact failure a cap exists to prevent, dressed up
+   as a cap being obeyed.
+
+   What is actually scarce is WIDTH, so the budget is width. It is spent in
+   CHARACTERS rather than pixels, because the row is one line, one size, one
+   face — a character is a fair unit of it — and because counting characters
+   keeps this pure: no ResizeObserver, no layout read, no second paint, and the
+   same answer in a test as on the stage. A measured cap would be exact and
+   would also flicker on every card the first frame after mount, which on a
+   canvas of twenty cards is worse than being a few pixels conservative.
+
+   The numbers are calibrated against the running board, not guessed. A
+   condition row measures 448px — `--bb-card` is 520 and the card spends 72 on
+   padding and the guide indent, exactly as the note on that token says — and
+   the value chips in the seeded estate average 5.6px a character at this size
+   and weight.
+
+     ROW    448 / 5.6            the whole line, in characters
+     ATTR   30px of chip chrome (padding, border, the category mark) + the gap
+     OP     the gap after a bare keyword — an operator is text and nothing else
+     CHIP   14px of chip chrome + the gap
+     MORE   what "+17" itself costs, charged only once something overflows
+
+   ATTR and OP each carry a known error and they are opposite ones: an
+   attribute LABEL is narrow for its length (5.1px a character — `Device
+   profile` measures 101px) so charging it at the average over-states it, while
+   an operator is semibold and short (`does not match` measures 90px, 6.4px a
+   character) so charging it at the average under-states it. Every real row
+   pairs one with the other, and they cancel to within a pixel or two:
+   `Device profile · does not match` is charged 202px and measures 203, and
+   `Device profile · matches` is charged 162 and measures 162. Do not "fix" one
+   of them alone.
+
+   The two chip costs are rounded UP, so the estimate errs towards printing one
+   value fewer. A card with a little room to spare is right; a card that elides
+   is not. */
+const ROW = 80
+const ATTR = 7
+const OP = 1
+const CHIP = 4
+const MORE = 7
+
+/* And a ceiling, for the degenerate end of it. Sixteen values named "A" fit the
+   row arithmetically and read as a handful of confetti. Past six pills nobody
+   is reading a phrase any more, they are counting — and counting is what the
+   `+N` already does better. It only ever binds on very short values; the width
+   budget decides every real row. */
+const MAX = 6
+
+/* How many of `chips` the row can print, given `head` characters already spent.
+
+   Private, and deliberately: `oxlint`'s `only-export-components` is on for this
+   file, so exporting a helper out of it to reach from a test costs a warning
+   the gate does not allow. If it ever needs pinning it moves to `parts.ts`,
+   which is the board's pure module and already has a spec beside it. */
+function valuesShown(chips: { text: string }[], head: number): number {
+  const fit = (budget: number) => {
+    let used = 0
+    let n = 0
+    for (const c of chips) {
+      /* Always at least one, whatever it costs. A single value wider than the
+         whole card is a real case — the chip ellipsizes, which is the row's own
+         promise — and a condition drawn as nothing but "+1" says less than
+         nothing about what the rule tests. */
+      if (n > 0 && used + c.text.length + CHIP > budget) break
+      used += c.text.length + CHIP
+      n++
+    }
+    return Math.min(n, MAX)
+  }
+  const room = Math.max(0, ROW - head)
+  const all = fit(room)
+  /* Two passes, because the `+N` costs nothing until it exists. Reserving for
+     it up front hides a last value that would have fitted exactly, and the card
+     then spends the width it just saved on a chip that says "+1". */
+  return all >= chips.length ? chips.length : fit(room - MORE)
+}
+
+/** The value(s) of a condition, as chips. */
+function valueChips(c: Condition, resolve: NameLookup): { text: string; unset: boolean }[] {
+  const t = conditionType(c.typeId)
+  const vals = c.values.filter(Boolean)
+  if (vals.length === 0) return [{ text: 'no value', unset: true }]
+  if (t.valueKind === 'time') return [{ text: `${c.values[0] ?? '09:00'} – ${c.values[1] ?? '17:00'}`, unset: false }]
+  /* A typed number, with what it counts: "8 hours", "1000 records". */
+  if (t.valueKind === 'number') return [{ text: `${vals[0]}${t.unit ? ` ${t.unit}` : ''}`, unset: false }]
+  if (t.valueKind === 'zone' || t.valueKind === 'fingerprint' || t.valueKind === 'group' || t.valueKind === 'user')
+    return vals.map((v) => {
+      const name = resolve(t.valueKind as 'zone', v)
+      if (name != null) return { text: name, unset: false }
+      /* Group and user values only reach a card as a leftover condition, which
+         the linter reports (PE150). People and groups can sit outside the
+         listed directory, so only a zone or device profile missing from the
+         library is known to be deleted. */
+      return t.valueKind === 'zone' || t.valueKind === 'fingerprint' ? { text: 'Deleted', unset: true } : { text: v, unset: false }
+    })
+  return vals.map((v) => ({ text: v, unset: false }))
+}
+
+/** One condition, read-only: [attribute] operator [value]… */
+export function CondReadout({ c, resolve }: { c: Condition; resolve: NameLookup }) {
+  const t = conditionType(c.typeId)
+  /* "Event hours", not "Sign-in hours", on a post sign-in policy (data.ts `postLabel`). */
+  const name = conditionName(c, usePostBoard().on)
+  const Ico = conditionIcon(t.id, t.group)
+  const tone = conditionTone(t.id, t.group)
+  /* Which half of each zone (per zone since 22 Sep 2026). One half shared by
+     every zone is said once after the names, as before; different halves go on
+     each zone's own chip. */
+  const zoneVals = t.valueKind === 'zone' ? c.values.filter(Boolean) : []
+  const halves = zoneVals.map((v) => zoneScopeOf(c, v))
+  const uniform = halves.every((h) => h === halves[0])
+  const chips = valueChips(c, resolve).map((chip, i) =>
+    uniform || chip.unset || !halves[i] || halves[i] === 'both'
+      ? chip
+      : { ...chip, text: `${chip.text} · ${halves[i] === 'ip' ? 'IP' : 'location'}` },
+  )
+  /* What the rest of the row has already claimed, before a single value is
+     drawn. The attribute and the operator never shrink — the CSS says so — and
+     a zone asking about one of its two halves adds a third phrase on the same
+     line, which is the one most likely to push the values off it. */
+  const shared = uniform ? halves[0] : undefined
+  const scope = shared === 'ip' ? 'on the network only' : shared === 'location' ? 'by location only' : ''
+  const head = name.length + ATTR + c.operator.length + OP + (scope ? scope.length + OP : 0)
+  const n = valuesShown(chips, head)
+  const shown = chips.slice(0, n)
+  const rest = chips.length - n
+  return (
+    <>
+      <IfChip tone={tone} variant="attr" icon={<Ico size={11} strokeWidth={2.2} />} title={t.group}>
+        {name}
+      </IfChip>
+      <IfKw tone="op">{c.operator}</IfKw>
+      {/* As many names as the line holds, then how many more.
+
+          Every value was a chip, so a condition naming eleven zones drew
+          eleven, and the eleventh name is no more useful than the fifth at this
+          size. The overflow is honest about being a count: it says how many are
+          not shown rather than trailing off, and the full list is on the
+          chip's title and in the panel — which is where a list belongs. */}
+      {shown.map((v, i) => (
+        <IfChip key={i} variant="val" unset={v.unset}>
+          {v.text}
+        </IfChip>
+      ))}
+      {rest > 0 && (
+        <IfChip variant="val" title={chips.map((v) => v.text).join(', ')}>
+          +{rest}
+        </IfChip>
+      )}
+      {/* Which half of the zone, when it is narrower than the zone as written.
+
+          A zone is an AND of a network section and a geographic one, and a
+          condition can now ask about either alone. Two rules that differ only
+          in that read as the same rule on the canvas without this — the one
+          thing a card must never do — and the card is where somebody decides
+          whether they need to open the panel at all. Absent when it is both,
+          because that is what the zone already means. */}
+      {scope && <IfKw tone="op">{scope}</IfKw>}
+    </>
+  )
+}
+
+/** The rule's consequence, in its tone, under a `then` that matches the `if`. */
+export function ActionRow({ rule, token, control }: { rule: Rule; token?: ReactNode; control?: ReactNode }) {
+  const post = usePostBoard().on
+  /* A post sign-in rule's Then is its action and nothing after it: no
+     factors, so no journey. Said "Not set" until one is chosen — in the
+     unset chip, as a value nobody has given — because a rule without one
+     keeps the policy a draft (post-sign-in.ts `turnOnIssue`). */
+  if (post)
+    return (
+      <>
+        <div className="bb__ifrow">
+          <span className="bb__ifbranch" aria-hidden>
+            <CornerDownRight size={12} strokeWidth={2} />
+          </span>
+          <IfKw>then</IfKw>
+        </div>
+        <IfSub className="bb__ifaction">
+          {token}
+          {rule.action ? <IfChip tone={POST_TONE[rule.action]}>{postActionLabel(rule.action)}</IfChip> : <IfChip unset>Not set</IfChip>}
+        </IfSub>
+      </>
+    )
+  const journey = journeyOf(rule)
+  return (
+    <>
+      {/* The word, said out loud.
+
+          The consequence hung off an unlabelled `└` while the conditions above
+          it were introduced by `if` and the fall-through below by `else`. Two
+          of the three keywords in a conditional were written and the middle one
+          was a glyph — so the card read "if … ⟶ something … else", and the
+          "something" was the only part that says what the rule DOES. */}
+      <div className="bb__ifrow">
+        <span className="bb__ifbranch" aria-hidden>
+          <CornerDownRight size={12} strokeWidth={2} />
+        </span>
+        <IfKw>then</IfKw>
+      </div>
+      {/* An outcome nobody has chosen is not printed as one. A rule is born
+          with `decision: '2fa'` — allow after a second factor is the DEFAULT —
+          and until the owner presses a tile the card was saying "Second factor
+          · Password → Any enabled method" in the same chip as a real answer.
+          Seen on 23 Sep 2026 in the demo film: two conditions added, no outcome
+          picked, and the card already promising a second factor. The panel
+          lights no tile in this state (`answered` is false); the card now
+          agrees with it. `pristine` is cleared by the first `decision` patch,
+          so this line goes the moment a tile is pressed. The default at the
+          foot of the chain never carries the flag, and `control` is its editor. */}
+      {rule.pristine === true && !control ? (
+        <IfSub className="bb__ifaction">
+          {token}
+          <span className="bb__ifkw is-blank">Outcome not chosen yet</span>
+        </IfSub>
+      ) : (
+      <IfSub className="bb__ifaction">
+        {token}
+        {control ?? <IfChip tone={TONE[rule.decision]}>{DECISION_NAME[rule.decision]}</IfChip>}
+        <span className="bb__ifjourney" aria-label="The sign-in journey this produces">
+          {journey.map((s, i) => (
+            <Fragment key={s.id}>
+              {i > 0 && <ArrowRight size={10} strokeWidth={2} aria-hidden />}
+              {/* The second line of a step, which this used to drop on the floor.
+
+                  `journeyOf` has always returned a `sub` for five of its steps —
+                  "No prompt, no way round", "every step, in order", "on this
+                  device", "else TOTP", "cannot be completed" — and this map read
+                  `label` only. That was survivable while the inspector drew the
+                  same journey underneath the decision tiles, because its copy
+                  rendered both halves. The inspector's copy has gone, so this is
+                  the only renderer left, and a step whose sub is dropped here is
+                  a sentence the product no longer says anywhere.
+
+                  The costly one is "cannot be completed". A rule asking for a
+                  specific second factor with no method chosen reads as "Nothing
+                  chosen" without it — which sounds like an empty field rather
+                  than what it is, a rule that can never fire. */}
+              <span>
+                {s.label}
+                {s.sub && <em className="bb__ifjsub">{s.sub}</em>}
+              </span>
+            </Fragment>
+          ))}
+          </span>
+      </IfSub>
+      )}
+    </>
+  )
+}
+
+/* `ElseRow` stood here — the `else → Rule 3 · Executive step-up decides
+   instead` line at the foot of every card.
+
+   It is the arrow the chain draws BETWEEN two cards, printed again inside the
+   first of them. On a scrolling form that repetition earned its place; on a
+   canvas where the next card sits directly below and joined by a line, it is
+   the same fact told twice, in the half of the card with the least room for
+   it.
+
+   `NextRule` stays exported. `Board` still works out which rule follows which,
+   and the chain still draws it — that is the version of this fact that was
+   worth keeping. */
+
+/* --- The read-only block, for the card ------------------------------------- */
+
+/* `mark`, read-only and nothing else (owner, 5 Oct 2026: Check access's
+   Classic v2 draws the rule that passed "exactly as the builder draws it",
+   plus what the sign-in made of each row): given, it is called once for the
+   who row (`'who'`) and once per condition (its id), and what it returns
+   stands at that row's right end — and, on the last row, once for its
+   `always` (Check access v3, 20 Oct 2026). The builder never passes it, so
+   its card is drawn exactly as before. */
+export function IfBlock({
+  rule,
+  resolve,
+  token,
+  terminal,
+  mark,
+}: {
+  rule: Rule
+  resolve: NameLookup
+  token?: ReactNode
+  terminal?: boolean
+  mark?: (row: string) => ReactNode
+}) {
+  const tagged = useContext(CondTagsContext)
+  /* Every card, as stored. People and groups are the rule's `who`, not
+     conditions, so nothing here is filtered out and no alternative's letter
+     can move. */
+  const cards = rule.when.cards
+  const top = topJoin(rule.when)
+  const post = usePostBoard().on
+  if (terminal)
+    return (
+      <div className="bb__if">
+        <div className="bb__ifrow">
+          <span className="bb__ifbranch" aria-hidden>
+            <Split size={12} strokeWidth={2} />
+          </span>
+          <IfKw>always</IfKw>
+          <span className="bb__ifjourney">— whatever reached this far</span>
+          {/* Check access v3 (20 Oct 2026) marks the row as the walk reaches it; the builder passes no `mark`. */}
+          {mark?.('always')}
+        </div>
+        <ActionRow rule={rule} token={token} />
+      </div>
+    )
+
+  /* The who, as the first row of the reading, from `rule.who`.
+
+     A row of its own, in the same shape as `if` and `then` and above both,
+     whatever shape the cards below have — who applies to the whole rule, so it
+     is never drawn inside a group.
+
+     Omitted for everyone. That is the rule's default, and this card draws
+     nothing until it has been answered (below). A who that is only exceptions
+     is an answer, so "Everyone except Contractors" does get the row.
+
+     Faces, not words (owner, 21 Sep 2026): the groups and people as a stack,
+     each named on hover. An EXCEPTION cannot be drawn as a face, so what a rule
+     takes back out stays in words after the stack — "except Priya Sharma" —
+     and a who that is only exceptions reads "Everyone except …". */
+  const whoName = (kind: 'group' | 'user', id: string) => resolve(kind, id)
+  const whoNorm = normaliseWho(rule.who)
+  const whoFaces: FaceItem[] = whoNorm
+    ? [
+        ...whoNorm.groupIds.map((id) => ({ kind: 'group' as const, key: `g:${id}`, name: whoName('group', id) ?? id })),
+        ...whoNorm.userIds.map((id) => ({ kind: 'user' as const, key: `u:${id}`, name: whoName('user', id) ?? id })),
+      ]
+    : []
+  const whoExcept = whoNorm
+    ? [
+        ...(whoNorm.exceptGroupIds ?? []).map((id) => whoName('group', id) ?? id),
+        ...(whoNorm.exceptUserIds ?? []).map((id) => whoName('user', id) ?? id),
+      ]
+    : []
+  const whoFull = whoSummary(rule.who, whoName, Infinity)
+
+  /* Nothing is drawn until it has been ANSWERED.
+
+     A rule you had just added carried four rows and eleven words before you
+     touched it: `who everyone`, `if any sign-in reaches it`, `then Let in,
+     then verify · Password → Any enabled method → Signed in`, and an `else`
+     naming the default. Every one of those was a DEFAULT reported as though it
+     were a decision — so the emptiest rule on the board was also the busiest
+     card on it, and the card whose whole job is to say what a rule does was
+     saying it loudest about the rule that does nothing.
+
+     They appear in the order a rule is written: who, then the circumstances,
+     and the outcome LAST, once there is something for it to be the outcome of.
+     A `then` above two blank rows answers a question nobody has asked yet. */
+  const hasWho = ruleHasWho(rule.who)
+  const hasIf = cards.length > 0
+  const configured = hasWho || hasIf
+  /* No who and no conditions is only "nothing set" while the rule is untouched.
+     Once an outcome is chosen, it catches every sign-in that reaches it — the
+     one thing about this rule most worth reading off the card. */
+  const blank = !configured && isPristine(rule)
+  const catchAll = !configured && !blank
+
+  return (
+    <div className="bb__if">
+      {/* Who first, always, and Everyone as a node of its own (owner, 19 Oct 2026: "we have to show the who and
+          everyone here as a node"): the rule's default said as the answer it is, the way the panel says it. */}
+      {!hasWho && (
+        <>
+          <div className="bb__ifrow">
+            <span className="bb__ifbranch" aria-hidden>
+              <Users size={12} strokeWidth={2} />
+            </span>
+            <span className="bb__ifkw">who</span>
+          </div>
+          <IfSub className="bb__ifwho">
+            <span className="bb__ifchip bb__ifwho__all">
+              <Users size={12} strokeWidth={2} aria-hidden />
+              Everyone
+            </span>
+            {mark?.('who')}
+          </IfSub>
+        </>
+      )}
+      {blank && (
+        /* One quiet line under the who rather than a skeleton of the rule. The doors that fix it are on the panel,
+           which this card opens. */
+        <div className="bb__ifrow">
+          <span className="bb__ifkw is-blank">Nothing set yet</span>
+        </div>
+      )}
+      {catchAll && (
+        <div className="bb__ifrow">
+          <span className="bb__ifbranch" aria-hidden>
+            <Split size={12} strokeWidth={2} />
+          </span>
+          <IfKw>if</IfKw>
+          <span className="bb__ifjourney">{post ? 'Every event' : 'Every sign-in'}</span>
+        </div>
+      )}
+      {hasWho && (
+        <>
+          <div className="bb__ifrow">
+            <span className="bb__ifbranch" aria-hidden>
+              <Users size={12} strokeWidth={2} />
+            </span>
+            <span className="bb__ifkw">who</span>
+          </div>
+          <IfSub className="bb__ifwho">
+            {whoFaces.length > 0 ? <FaceStack faces={whoFaces} max={6} /> : <span className="bb__ifwho__text">Everyone</span>}
+            {whoExcept.length > 0 && (
+              <span className="bb__ifwho__text" title={whoFull}>
+                except {whoExcept.join(', ')}
+              </span>
+            )}
+            {mark?.('who')}
+          </IfSub>
+        </>
+      )}
+      {hasIf && (
+        <div className="bb__ifrow">
+          <span className="bb__ifbranch" aria-hidden>
+            <Split size={12} strokeWidth={2} />
+          </span>
+          <IfKw>if</IfKw>
+        </div>
+      )}
+      {hasIf && (
+        <div className="bb__ifbody">
+        {cards.map((k, i) => {
+          /* Read, not assumed.
+
+             These were the literals 'or' between cards and 'and' inside one,
+             which was correct only while those were the only joiners the model
+             could hold. Once the editor could flip either, the card on the
+             stage went on printing the old words — so the same rule read
+             `A and B or C` here and `A or B and C` in the panel beside it.
+             A card that disagrees with the editor about the rule it is showing
+             is worse than a card that shows less. */
+          const join = cardJoin(k)
+          return (
+          <Fragment key={k.id}>
+            {/* The RULE's operator, between the members it joins — outside the
+                group, because it is not the group's.
+
+                It was drawn as the first keyword INSIDE the group's box, which
+                put the word that says how this bracket joins the one above it
+                in the one place that reads as part of this bracket. On a rule
+                with two groups the card said `(AND … OR …)` where the AND
+                belonged to neither.
+
+                Its own row, at the group's left edge, in the gap — which is
+                where the editor puts it too, so the two surfaces draw one
+                operator in one place. */}
+            {i > 0 && (
+              <div className="bb__ifrow bb__ifjoin">
+                <IfKw tone={top}>{top}</IfKw>
+              </div>
+            )}
+            {/* A frame means a group somebody MADE, and this drew one round
+                every card unconditionally — so a rule whose conditions were
+                simply typed one after another came back wearing a bracket its
+                author had not asked for. The editor has told these two states
+                apart since groups became a thing; the card went on showing them
+                the same, which meant the canvas and the panel described the
+                same rule differently.
+
+                `grouped` is the field that says which is which, and it is
+                exactly what it is for. */}
+            <div className={k.grouped ? 'bb__ifgroup' : 'bb__ifplain'}>
+            {/* The group's name, on the card, in words.
+
+                It was a `title` attribute — invisible, unreachable by keyboard,
+                and gone on touch. Meanwhile the editor beside this card draws
+                the same group with a visible heading and its operator in
+                words, so the two surfaces described one group two ways and
+                only one of them could be read. `Group A` is the fallback the
+                linter and the change log already use. */}
+            {k.grouped && (
+              <div className="bb__ifgrouptag">
+                <Braces size={10} strokeWidth={2.2} aria-hidden />
+                <b>{k.label?.trim() || `Group ${cardLetter(i)}`}</b>
+                {/* `· all must match` stood here and has gone with the change
+                    above it. Every gap inside this box now carries the operator
+                    on a line of its own, so the caption was the third telling of
+                    one fact — said once in the heading, then again in each of
+                    the group's internal joins. The heading names the group; the
+                    joins say how it holds together. */}
+              </div>
+            )}
+            {k.conditions.map((c, j) => (
+              /* Each condition is its own row with its own edge, rather than a
+                 line in an undivided block. Reading a five-condition rule off
+                 the card meant finding where one ended and the next began in a
+                 run of chips of whatever width their contents happened to be —
+                 the operator that starts each row is the only mark, and at
+                 11px it is easy to lose. A rule per row makes the count
+                 readable at a glance, which is the whole job of the card. */
+              <Fragment key={c.id}>
+                {/* The operator between two conditions, on a line of its own.
+
+                    It used to be the first word of the SECOND one's row, which
+                    made `and` a property of the condition after it. It is not:
+                    `and` joins the two and belongs to neither, and this is the
+                    same misattribution that was fixed one level up when the
+                    rule's own operator was lifted out of the group box it was
+                    being drawn inside. Both levels are drawn the same way now,
+                    which is also how the editor beside this card draws them.
+
+                    Two things fall out of it. Every condition row now starts
+                    with its attribute glyph at the same x, so the guide line
+                    has one hard edge under it instead of one that jogged in on
+                    every row after the first. And an operator can no longer
+                    wrap: a five-chip condition that ran onto a second line used
+                    to leave the `and` stranded above a fragment of the
+                    condition it introduced.
+
+                    `is-run` is what keeps the two levels apart. The operator
+                    between MEMBERS carries a hairline out to the block's right
+                    edge, because a member boundary is the bigger break; the
+                    operator between conditions of one member is the bare pill.
+                    One mark per level, which is what the hairline in every gap
+                    was removed for. */}
+                {j > 0 && (
+                  <div className="bb__ifrow bb__ifjoin is-run">
+                    <IfKw tone={join}>{join}</IfKw>
+                  </div>
+                )}
+                <div className="bb__ifrow is-cond" data-ct={tagged ? condTokens(c) : undefined}>
+                  <CondReadout c={c} resolve={resolve} />
+                  {mark?.(c.id)}
+                </div>
+              </Fragment>
+            ))}
+          </div>
+          </Fragment>
+          )
+        })}
+        </div>
+      )}
+      {/* The outcome, last, and only once there is something above it to be
+          the outcome OF. */}
+      {!blank && <ActionRow rule={rule} token={token} />}
+    </div>
+  )
+}

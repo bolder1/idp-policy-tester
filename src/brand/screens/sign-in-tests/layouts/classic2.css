@@ -1,0 +1,666 @@
+/* -----------------------------------------------------------------------------
+   Classic v2 (ClassicV2Layout.tsx): Check access on the policy builder's own
+   canvas. Almost nothing here draws — the start pill, the connector, the
+   cards, their heads, tiles and fold, the sunken reading with its keywords,
+   guide, rows and chips, the row marks, the spinner and the dock are
+   board.css's (`.bb__start`, `.bb__link`, `.bb__card`, `.bb__cardhead`,
+   `.bb__idx`, `.bb__fold__btn`, `.bb__if`, `.bb__ifbody`, `.bb__ifchip`,
+   `.bb__tmark`, `.bb__tspin`, `.bb__dock`), and the identity chips are the
+   column's (journey.css `.tj-engine__ids`). What this sheet holds is only
+   what the builder's canvas gets from its own `.bb` root and this page has
+   none of — the column down the middle, its width, the connector's ink — and
+   what the builder never draws: a card that is read and not pressed, a head
+   of three lines (the Overview's node), a policy's one line, the outcome's
+   tone in its tile and title.
+
+   Light console only, tokens only. Motion owns every arrival (opacity and y on
+   `.rl-c2__seg`) and every fold (height on `.bb__tbody`); nothing here gives a
+   motion element a transform or a transition.
+   -------------------------------------------------------------------------- */
+
+/* The scroller (`.tj-scroll`: the canvas's own layout root) — a column read top
+   to bottom, so it scrolls down, never across. The builder's two variables its
+   chain is drawn with, which board.css sets on `.bb` and this page has no `.bb`
+   to carry: the card's width (board.css: 520, measured off the widest condition
+   row) and the connector's ink (its later `.bb` block: `--border-strong`). */
+.rl-c2 {
+  --bb-card: 520px;
+  --bb-link: var(--border-strong);
+}
+/* Only on Classic v2's own canvas: Focus draws the same chain and cards inside its stage, which scrolls for itself. */
+.tj-scroll.rl-c2 {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+/* The chain: the builder's Centred column, one card wide, down the middle;
+   under the canvas's top fade, and clear of the dock at the foot. Zoomed (not
+   transformed) to fit once it lands — ClassicV2Layout's `--rl-c2-z`. */
+.rl-c2__chain {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: min(var(--bb-card), 100% - 2 * var(--space-6));
+  margin: 0 auto;
+  padding: var(--space-12) 0 var(--space-16);
+  zoom: var(--rl-c2-z, 1);
+}
+.rl-c2__seg { display: flex; flex-direction: column; align-items: stretch; min-width: 0; }
+
+/* The first node on the axis, as the Centred skin hangs the start pill. (Focus's fold-all, which stood on its row, is
+   the canvas's own bar's now: owner, 5 Oct 2026, "move the Expand all button to the bottom bar".) */
+.rl-c2__first { display: flex; justify-content: center; min-width: 0; }
+/* A sign-in node is sized to its sentence, wider than the column if it needs to be (to its ceiling), as the builder's
+   start pill is: one line down the canvas. */
+.rl-c2__first > .rl-c2__node { flex: none; }
+
+/* The connector, on the axis, as the builder draws it between two cards, with no `+`, no hint and nothing to press: a
+   reading, not a place to insert. One line, unbroken (owner, 6 Oct 2026: "the lines feel broken — why this gap"): the
+   break was where the builder's `+` stands, and here nothing does.
+
+   Its ink says where the run is (classic2-chain.tsx `Link`): blue as the engine travels it, drawn down as each card
+   arrives (`is-run`); once the run lands, the outcome's colour flows down the chain, one connector a beat after the one
+   above (`is-landed`), holds, and gives way to the grey at rest. Keyframes on clip-path and opacity only. */
+.rl-c2 .bb__link { margin-left: 0; pointer-events: none; }
+.rl-c2 .bb__link::before {
+  left: 50%;
+  margin-left: calc(var(--bw-thick) / -2);
+  background: var(--bb-link);
+}
+.rl-c2 .bb__link.is-run::before { background: var(--accent); animation: rl-c2-link-draw 0.36s var(--ease-out, ease-out) both; }
+.rl-c2 .bb__link.is-landed::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: var(--bw-thick);
+  margin-left: calc(var(--bw-thick) / -2);
+  background: var(--rl-c2-link-out, var(--bb-link));
+  clip-path: inset(0 0 100% 0);
+  animation: rl-c2-link-out 2.8s var(--ease-out, ease-out) calc(var(--rl-c2-link-i, 0) * 0.14s) both;
+}
+.rl-c2 .bb__link.is-out-allow { --rl-c2-link-out: var(--fb-positive-dot); }
+.rl-c2 .bb__link.is-out-mfa { --rl-c2-link-out: var(--fb-positive-strong-dot); }
+.rl-c2 .bb__link.is-out-deny { --rl-c2-link-out: var(--fb-negative-dot); }
+.rl-c2 .bb__link.is-out-depends { --rl-c2-link-out: var(--fb-notice-dot); }
+@keyframes rl-c2-link-draw { from { clip-path: inset(0 0 100% 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes rl-c2-link-out {
+  0% { clip-path: inset(0 0 100% 0); opacity: 1; }
+  14% { clip-path: inset(0 0 0 0); opacity: 1; }
+  68% { clip-path: inset(0 0 0 0); opacity: 1; }
+  100% { clip-path: inset(0 0 0 0); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rl-c2 .bb__link.is-run::before { animation: none; }
+  .rl-c2 .bb__link.is-landed::after { display: none; }
+}
+
+/* --- A card ------------------------------------------------------------------ */
+
+/* Read, not pressed: open, it keeps its resting edge under the pointer; folded,
+   a press anywhere opens it, and it answers the pointer as the builder's
+   folded trace card does. */
+.rl-c2 .bb__card.rl-c2__card { cursor: default; }
+.rl-c2 .bb__card.rl-c2__card:hover { border-color: var(--border-subtle); box-shadow: var(--el-low); }
+.rl-c2 .bb__card.rl-c2__card:not(.is-open) { cursor: pointer; }
+.rl-c2 .bb__card.rl-c2__card:not(.is-open):hover { border-color: var(--border-default); box-shadow: var(--el-mid); }
+/* A card whose page hands it a press of its own (Focus's route: the cards one at a time) answers the pointer open or
+   folded. */
+.rl-c2 .bb__card.rl-c2__card.is-pressable { cursor: pointer; }
+.rl-c2 .bb__card.rl-c2__card.is-pressable:hover { border-color: var(--border-default); box-shadow: var(--el-mid); }
+/* What an answer or the details panel points at: a soft ring outside the card — the admin's selection, not the engine's
+   (6 Oct 2026: the near-black ring was too heavy beside the rest; the owner asked for it subtler). */
+.rl-c2 .bb__card.rl-c2__card.is-lit { outline: var(--bw-thick) solid var(--accent-soft-border); outline-offset: var(--space-1); }
+
+/* The head: the tile, the Overview's three lines in the title's track, the
+   trail in the third (the Centred skin's merge) — shown at rest, since the
+   fold is how a folded chain is read further, and the pencil and Replay are
+   the page's own. */
+.rl-c2 .rl-c2__card > .bb__cardhead {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--space-5);
+  padding: var(--space-5) var(--space-4) var(--space-5) var(--space-5);
+}
+.rl-c2 .rl-c2__card > .bb__cardhead > .bb__cardmeta { grid-column: 3; grid-row: 1; }
+.rl-c2 .rl-c2__card .bb__acts {
+  position: static;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* The tile: a position or a mark, never a grip — it takes no pointer (so the
+   builder's hover scale never runs), and a press on it is a press on the card. */
+.rl-c2 .rl-c2__idx { pointer-events: none; }
+/* The person's face fills it; its letters at the floor. */
+.rl-c2__idx.is-face { background: none; }
+.rl-c2__idx.is-face > .bx-face { width: 100%; height: 100%; font-size: var(--fs-xs); box-shadow: none; }
+
+/* Three lines, as the Overview's node (focus-far.tsx; focus.css's far face at
+   the route's 0.8 — 12.8 / 16 / 13.6) on the builder's scale: the step at the
+   floor, grey; what was selected at the large size; one meta line under it. */
+.rl-c2 .rl-c2__card .bb__title { gap: 0; }
+.rl-c2__kicker {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  line-height: 1.4;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rl-c2 .rl-c2__card .bb__title strong.rl-c2__name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  font-size: var(--fs-lg);
+  line-height: 1.4;
+}
+.rl-c2__nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-c2__name > svg,
+.rl-c2__app > .applogo { flex: none; }
+/* The application's mark and name, one piece of the title: on the chain it gives way as the name did. */
+.rl-c2__app { display: inline-flex; align-items: center; gap: var(--space-3); min-width: 0; }
+.rl-c2__to { color: var(--text-tertiary); }
+
+.rl-c2 .rl-c2__card .bb__title em.rl-c2__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  margin-top: var(--space-1);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.rl-c2__mk { display: inline-grid; flex: none; place-items: center; }
+.rl-c2__mt { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.rl-c2__then { font-weight: var(--fw-semibold); }
+/* The line's tones, the Overview's: what held green, what failed red, what can't be told amber, the engine at work in
+   its accent, not reached grey — and the rule's own answer in its decision's colour (its card's `--tone-*`). */
+.rl-c2 .rl-c2__meta.is-ok > .rl-c2__mk { color: var(--fb-positive-fg); }
+.rl-c2 .rl-c2__meta.is-bad > .rl-c2__mk { color: var(--fb-negative-fg); }
+.rl-c2 .rl-c2__card .bb__title em.rl-c2__meta.is-warn { color: var(--fb-notice-fg); }
+.rl-c2 .rl-c2__card .bb__title em.rl-c2__meta.is-work { color: var(--accent-strong); }
+.rl-c2 .rl-c2__card .bb__title em.rl-c2__meta.is-quiet { color: var(--text-tertiary); }
+.rl-c2 .rl-c2__meta.is-decision > .rl-c2__mk,
+.rl-c2 .rl-c2__meta.is-decision .rl-c2__then { color: var(--tone-fg, var(--fb-positive-fg)); }
+/* The sign-in's "Not run" (or "Expected …") after its count, the way the run line says it. */
+.rl-c2__state { display: inline-flex; flex: none; align-items: center; gap: var(--space-1); color: var(--text-secondary); }
+.rl-c2__state::before { content: '·'; margin-right: var(--space-2); color: var(--text-tertiary); }
+.rl-c2__state.is-unrun,
+.rl-c2__state.is-changed { color: var(--fb-notice-fg); }
+
+/* --- 1. The sign-in ---------------------------------------------------------- */
+
+/* Edit sign-in: pressed while the form's panel is open, as the run line's pencil is. */
+.rl-c2__edit[aria-pressed='true'] { background: var(--accent-soft); color: var(--accent-strong); }
+.rl-c2__replay[aria-disabled='true'] { color: var(--text-tertiary); cursor: default; }
+.rl-c2__replay[aria-disabled='true']:hover { background: none; }
+/* Several identities: under the head, folded or not; the chips fold their names to keep to the card. */
+.rl-c2__under { padding: 0 var(--space-4) var(--space-5) var(--space-5); }
+.rl-c2__who { display: flex; min-width: 0; overflow: hidden; }
+.tj-engine__ids.rl-c2__ids { padding-right: 0; border-right: 0; }
+/* `who`: the person, and under them their groups, each tile with its name. */
+.rl-c2__stack { display: grid; gap: var(--space-1); }
+.rl-c2__members { flex-wrap: wrap; gap: var(--space-2) var(--space-5); }
+.rl-c2__member {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+/* The faces' letters at the 12 px floor — the who rows' groups ("EN", "DE") are smaller on the builder's own card. */
+.rl-c2 .bx-face.is-sm { font-size: var(--fs-xs); letter-spacing: 0; }
+
+/* --- 2. The policies --------------------------------------------------------- */
+
+/* One line a policy under its keyword: its order, its name, only what is news about it, and the ✓ on the one that
+   applies at the line's end. */
+.rl-c2__rows { display: grid; gap: var(--space-1); }
+.rl-c2__prow { flex-wrap: nowrap; gap: var(--space-3); }
+.rl-c2__n { flex: none; font-size: var(--fs-xs); font-weight: var(--fw-semibold); color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+.rl-c2__pname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-sm); color: var(--text-secondary); }
+.rl-c2__say { flex: none; font-size: var(--fs-xs); color: var(--text-tertiary); white-space: nowrap; }
+.rl-c2__prow > .bb__tmark { margin-left: auto; }
+.rl-c2__prow.is-applies .rl-c2__n { color: var(--text-secondary); }
+.rl-c2__prow.is-applies .rl-c2__pname { font-weight: var(--fw-medium); color: var(--text-primary); }
+.rl-c2__prow.is-applies .rl-c2__say { font-weight: var(--fw-medium); color: var(--text-secondary); }
+.rl-c2__prow.is-applies > .bb__tmark.is-pass { background: var(--fb-positive-bg); color: var(--fb-positive-fg); }
+.rl-c2__prow.is-checking .rl-c2__pname,
+.rl-c2__prow.is-not-reached .rl-c2__pname { color: var(--text-tertiary); }
+/* Also covers, and would answer otherwise: its words in the notice tone (amber). */
+.rl-c2__prow.is-also.is-conflict .rl-c2__say { font-weight: var(--fw-medium); color: var(--fb-notice-fg); }
+/* The policies read as a search (classic2-chain.tsx `PolicySearch`, 6 Oct 2026): a search box naming the application,
+   its caret blinking; under it the policies in the order they are asked, the one being asked in the accent's soft band
+   with a line drawn under it, the ones not asked yet quiet. Keyframes on opacity, background and clip-path only. */
+.rl-c2__search { display: flex; flex-direction: column; gap: var(--space-3); }
+.rl-c2__searchbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--ctl-height-sm);
+  padding: 0 var(--space-4);
+  border: var(--bw-thin) solid var(--accent-soft-border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: var(--text-tertiary);
+  font-size: var(--fs-sm);
+}
+.rl-c2__searchbar > svg { flex: none; color: var(--accent); }
+.rl-c2__searchq { min-width: 0; overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; white-space: nowrap; }
+.rl-c2__caret { flex: none; width: var(--bw-thick); height: var(--space-6); margin-left: calc(var(--space-2) * -1); background: var(--accent); animation: rl-c2-caret 1s steps(1, end) infinite; }
+@keyframes rl-c2-caret { 50% { opacity: 0; } }
+.rl-c2__plist { display: flex; flex-direction: column; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+.rl-c2__plist > .rl-c2__prow { position: relative; min-height: var(--space-9); padding: 0 var(--space-3); overflow: hidden; border-radius: var(--radius-sm); }
+.rl-c2__plist > .rl-c2__prow.is-waiting .rl-c2__pname,
+.rl-c2__plist > .rl-c2__prow.is-waiting .rl-c2__n { color: var(--text-tertiary); }
+.rl-c2__plist > .rl-c2__prow.is-working { background: var(--accent-soft); animation: rl-c2-band 0.18s var(--ease-out, ease-out) both; }
+.rl-c2__plist > .rl-c2__prow.is-working::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--bw-thick);
+  background: var(--accent);
+  clip-path: inset(0 100% 0 0);
+  animation: rl-c2-sweep 0.6s cubic-bezier(0.45, 0, 0.55, 1) forwards;
+}
+.rl-c2__plist > .rl-c2__prow.is-applies { background: var(--fb-positive-bg); }
+.rl-c2__plist > .rl-c2__prow:not(.is-waiting, .is-working, .is-applies) .rl-c2__pname { color: var(--text-secondary); }
+@media (prefers-reduced-motion: reduce) {
+  .rl-c2__caret { animation: none; }
+  .rl-c2__plist > .rl-c2__prow.is-working { animation: none; }
+  .rl-c2__plist > .rl-c2__prow.is-working::after { display: none; }
+}
+
+/* --- 3. The rule ------------------------------------------------------------- */
+
+/* The engine on it: its edge in the accent's soft border, as the trace card's. */
+.rl-c2 .bb__card.rl-c2__card.is-reading { border-color: var(--accent-soft-border); }
+/* Matched: no ring. It had one in its decision's colour (1 Oct 2026); the owner took it off (6 Oct 2026: "remove the
+   colour outline, not needed") — the head's "Matches · Then …" and the ✓ of the rows that held already say it. */
+.rl-c2__card.is-matched .bb__tmark.is-pass { background: var(--tone-bg, var(--fb-positive-bg)); color: var(--tone-fg, var(--fb-positive-fg)); }
+/* Each row's mark at the row's right end, one column of them, as the trace card lines them up. */
+.rl-c2 .bb__ifwho > .bb__tmark,
+.rl-c2 .bb__ifrow.is-cond > .bb__tmark { margin-left: auto; }
+/* The row the engine is reading (6 Oct 2026: "it should feel more real"): the accent's soft band behind it, and a line
+   drawn under it left to right over the step — the trace card's sweep (journey.css `tj-sweep`), in clip-path so nothing
+   transforms. Its ✓ or ✕ then lands where the spinner turned. Only while a row works, so a settled run is plain. */
+.rl-c2 .bb__ifwho,
+.rl-c2 .bb__ifrow.is-cond { position: relative; border-radius: var(--radius-sm); }
+.rl-c2 .bb__ifwho:has(> .bb__tmark.is-working),
+.rl-c2 .bb__ifrow.is-cond:has(> .bb__tmark.is-working) { background: var(--accent-soft); animation: rl-c2-band 0.18s var(--ease-out, ease-out) both; }
+.rl-c2 .bb__ifwho:has(> .bb__tmark.is-working)::after,
+.rl-c2 .bb__ifrow.is-cond:has(> .bb__tmark.is-working)::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--bw-thick);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  clip-path: inset(0 100% 0 0);
+  animation: rl-c2-sweep var(--rl-c2-step, 0.3s) cubic-bezier(0.45, 0, 0.55, 1) forwards;
+}
+/* A row that did not hold keeps the negative tint while its rule is read, then lets it go with the rule. */
+.rl-c2__rule.is-reading .bb__ifrow.is-cond:has(> .bb__tmark.is-fail),
+.rl-c2__rule.is-reading .bb__ifwho:has(> .bb__tmark.is-fail) { background: var(--fb-negative-bg); }
+@keyframes rl-c2-sweep { to { clip-path: inset(0 0 0 0); } }
+@keyframes rl-c2-band { from { background: transparent; } }
+/* What the sign-in showed on the row (classic2-chain.tsx `Evidence`): a quiet line of its own under the condition, the
+   mark staying at the row's end. Beside the mark it widened the row past the card (owner, 6 Oct 2026: "the content
+   overflows through the card"); under it, the rule's words keep their line and the value has the card's width. */
+.rl-c2 .bb__ifrow.is-cond:has(> .rl-c2__ev),
+.rl-c2 .bb__ifwho:has(> .rl-c2__ev) { flex-wrap: wrap; row-gap: 0; }
+.rl-c2__ev { order: 1; flex: 1 0 100%; min-width: 0; overflow: hidden; padding-bottom: var(--space-1); font-size: var(--fs-xs); color: var(--text-secondary); text-overflow: ellipsis; white-space: nowrap; }
+.rl-c2 .bb__ifrow.is-cond > .bb__tmark,
+.rl-c2 .bb__ifwho > .bb__tmark { flex: none; }
+/* The block never grows past its card: every track and row may shrink, and a value chip elides first (board.css). */
+.rl-c2 .bb__if > *,
+.rl-c2 .bb__ifbody,
+.rl-c2 .bb__ifplain > * { min-width: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .rl-c2 .bb__ifwho:has(> .bb__tmark.is-working),
+  .rl-c2 .bb__ifrow.is-cond:has(> .bb__tmark.is-working) { animation: none; }
+  .rl-c2 .bb__ifwho:has(> .bb__tmark.is-working)::after,
+  .rl-c2 .bb__ifrow.is-cond:has(> .bb__tmark.is-working)::after { display: none; }
+}
+/* The rules read and passed over, one quiet line over the reading: each one's ✕ (or ? for one that can't be told). */
+.rl-c2__passed { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); margin: 0; font-size: var(--fs-xs); color: var(--text-secondary); }
+.rl-c2__miss { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.rl-c2__miss > svg { flex: none; }
+.rl-c2__miss.is-no-match > svg { color: var(--fb-negative-fg); }
+.rl-c2__miss.is-unknown > svg { color: var(--fb-notice-fg); }
+
+/* --- 4. The outcome ---------------------------------------------------------- */
+
+/* The builder's terminal card: the decision's tone down the edge (`.is-terminal`
+   with the card's `.is-allow` / `.is-mfa` / `.is-deny`), kept under the pointer,
+   and here in the tile and the title too — read through names of its own,
+   since `.bb__idx` resets the builder's on itself. Depends takes the notice
+   tone; no decision, none. */
+.rl-c2__out.is-depends { --tone-bg: var(--fb-notice-bg); --tone-fg: var(--fb-notice-fg); --tone-border: var(--fb-notice-border); }
+.rl-c2__out { --rl-c2-out-bg: var(--tone-bg, var(--fb-neutral-bg)); --rl-c2-out-fg: var(--tone-fg, var(--text-primary)); }
+.rl-c2 .bb__card.rl-c2__card.is-terminal:not(.is-matched),
+.rl-c2 .bb__card.rl-c2__card.is-terminal:not(.is-matched):hover { border-left-color: var(--tone-border, var(--border-default)); }
+.rl-c2__out > .bb__cardhead > .bb__idx { background: var(--rl-c2-out-bg); color: var(--rl-c2-out-fg); }
+.rl-c2 .rl-c2__out .bb__title strong.rl-c2__name { color: var(--rl-c2-out-fg); }
+/* Decided by: opens the rule that decided in its policy. */
+.rl-c2 .bb__titlebtn.rl-c2__by {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: auto;
+  min-width: 0;
+  color: var(--text-secondary);
+}
+.rl-c2__by > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-c2__by > svg { flex: none; color: var(--text-tertiary); }
+.rl-c2__by:hover { color: var(--text-link); }
+.rl-c2__by.is-static { cursor: default; }
+/* A Deny's message, as the person reads it; when it depends, the arrow between a case and its answer. */
+.rl-c2__said { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-c2__reason { color: var(--text-secondary); }
+.rl-c2__reason span { color: var(--text-tertiary); margin-left: var(--space-1); }
+.rl-c2__arrow { flex: none; color: var(--text-tertiary); }
+/* The way to the why in the page's right-hand panel (Focus hands it; classic2-chain.tsx `ChainWhy`): under the
+   outcome's head, folded or not, in line with its title — a quiet link in the link's own colour with its chevron, the
+   policy names' look, never a button, never orange. The unseen tile holds the title's column without restating it. */
+.rl-c2__whyunder { display: flex; align-items: center; gap: var(--space-5); margin-top: calc(var(--space-3) * -1); }
+.rl-c2__whyspace { flex: none; height: 0; visibility: hidden; }
+.rl-c2__why {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: var(--fw-medium);
+  color: var(--text-link);
+  cursor: pointer;
+}
+.rl-c2__why > svg { flex: none; }
+.rl-c2__why:hover { text-decoration: underline; }
+.rl-c2__why:focus-visible { outline: none; box-shadow: 0 0 0 var(--bw-thick) var(--focus-ring); border-radius: var(--radius-sm); }
+
+/* --- The sign-in node (classic2-pill.tsx) ----------------------------------- */
+
+/* The builder's start pill, grown to hold the sign-in, and a press as the builder's is: its edge darkens under the
+   pointer, the focus ring is the pill's own when its words are focused, and it is pressed (blue) while the panel it
+   opens is open. One line down the canvas; the words wrap only past its ceiling. */
+.rl-c2 .rl-c2__node {
+  align-items: center;
+  gap: var(--space-3) var(--space-4);
+  max-width: calc(var(--bb-card) + var(--space-16) * 3);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  font-size: var(--fs-md);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.rl-c2 .rl-c2__node:hover { border-color: var(--border-strong); }
+.rl-c2 .rl-c2__node:has(.rl-c2__nmain:focus-visible) { border-color: var(--ctl-border-focus); box-shadow: 0 0 0 var(--space-2) var(--focus-halo); }
+.rl-c2 .rl-c2__node.is-on { border-color: var(--accent-strong); box-shadow: 0 0 0 calc(var(--space-1) + var(--bw-thin)) var(--focus-halo); }
+/* What an answer points at: the cards' own greyscale ring. */
+.rl-c2 .rl-c2__node.is-lit { outline: var(--bw-thick) solid var(--text-secondary); outline-offset: var(--space-1); }
+/* What it says, one piece: the chips of a Run of several, who signs in to what and the count, the two buttons. */
+.rl-c2__nbody { display: flex; align-items: center; gap: var(--space-3) var(--space-4); min-width: 0; }
+/* Who, to what, how many conditions: one press with the pill, its words the pill's own, wrapping as prose. */
+.rl-c2__nmain {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.rl-c2__nmain:focus-visible { outline: none; }
+.rl-c2__nface { display: grid; flex: none; }
+.rl-c2__nface > .bx-face { font-size: var(--fs-xs); letter-spacing: 0; }
+.rl-c2__nname { font-weight: var(--fw-semibold); color: var(--text-primary); white-space: nowrap; }
+.rl-c2__nverb { white-space: nowrap; }
+/* The application's mark and name as one, so a wrapping line keeps them together. */
+.rl-c2__napp { display: inline-flex; align-items: center; gap: var(--space-2); white-space: nowrap; }
+.rl-c2__napp > .applogo { flex: none; }
+/* The person and the application as presses of their own (classic2-pill.tsx, where the page has the details panel):
+   the words as they were, the link's colour and underline under the pointer, the focus ring on the word itself. */
+.rl-c2__nlink { padding: 0; border: 0; border-radius: var(--radius-sm); background: none; font: inherit; color: inherit; cursor: pointer; }
+.rl-c2__nlink:hover,
+.rl-c2__nlink:hover .bb__start__at { color: var(--text-link); text-decoration: underline; }
+.rl-c2__nlink:focus-visible { outline: none; box-shadow: 0 0 0 var(--bw-thick) var(--focus-ring); }
+/* `font: inherit` would take the name's weight with it: the person stays semibold, as the words were. */
+.rl-c2__nlink.rl-c2__nname { font-weight: var(--fw-semibold); white-space: nowrap; }
+.rl-c2__nnone { color: var(--text-tertiary); white-space: nowrap; }
+.rl-c2__nids { display: flex; min-width: 0; }
+/* The count, quiet, after a dot; its tip says the conditions. Then the run's state, as the row said it. */
+.rl-c2__ncount { color: var(--text-tertiary); font-weight: var(--fw-regular); white-space: nowrap; }
+.rl-c2__ncount::before { content: '·'; margin-right: var(--space-3); }
+.rl-c2__nstate { display: inline-flex; align-items: center; gap: var(--space-1); white-space: nowrap; }
+.rl-c2__nstate::before { content: '·'; margin-right: var(--space-2); }
+.rl-c2__nstate.is-unrun,
+.rl-c2__nstate.is-changed { color: var(--fb-notice-fg); }
+.rl-c2__nstate .lucide-check { color: var(--fb-positive-fg); }
+.rl-c2__nstate .lucide-x { color: var(--fb-negative-fg); }
+/* The pencil and Replay, after a hairline. */
+.rl-c2__nacts { display: inline-flex; flex: none; align-items: center; gap: var(--space-1); padding-left: var(--space-3); border-left: var(--bw-thin) solid var(--border-subtle); }
+
+/* --- Across: the same nodes left to right ----------------------------------- */
+
+/* Focus's Horizontal view (owner, 5 Oct 2026: "the cards themselves should convert … just 4 simple cards"): the first
+   node, then each card after its connector, every card at `--rl-c2-row-card` (classic2-model.ts ROW_CARD) and
+   top-aligned on its head, so a card opened grows down and its neighbours stand still. The grid keeps a track for
+   every card the run will draw from the start (`--rl-c2-tracks`), so a card arriving never moves the ones before it.
+   The connectors run through the heads at `--rl-c2-axis`, and the first node stands centred on that line. */
+.rl-c2__chain.is-across {
+  --rl-c2-axis: var(--space-10);
+  --rl-c2-link: var(--space-9);
+  display: grid;
+  grid-template-columns: auto repeat(var(--rl-c2-tracks, 3), calc(var(--rl-c2-link) + var(--rl-c2-row-card)));
+  align-items: start;
+  width: max-content;
+}
+.rl-c2__chain.is-across > .rl-c2__seg { flex-direction: row; align-items: flex-start; }
+.rl-c2__chain.is-across .rl-c2__first { align-items: center; min-height: calc(var(--rl-c2-axis) * 2); }
+.rl-c2__chain.is-across .rl-c2__first > .bb__start { align-self: center; }
+.rl-c2__chain.is-across .rl-c2__card { flex: none; width: var(--rl-c2-row-card); }
+/* The connector on its side: the same unbroken ink, across instead of down — a shorter line, so the row keeps its room
+   for the cards; drawn and flowing left to right. */
+.rl-c2__chain.is-across .bb__link { flex: none; width: var(--rl-c2-link); height: calc(var(--rl-c2-axis) * 2); }
+.rl-c2__chain.is-across .bb__link::before {
+  top: 50%;
+  right: 0;
+  bottom: auto;
+  left: 0;
+  width: auto;
+  height: var(--bw-thick);
+  margin: calc(var(--bw-thick) / -2) 0 0;
+}
+.rl-c2__chain.is-across .bb__link.is-run::before { background: var(--accent); animation-name: rl-c2-link-draw-across; }
+.rl-c2__chain.is-across .bb__link.is-landed::after {
+  top: 50%;
+  right: 0;
+  bottom: auto;
+  left: 0;
+  width: auto;
+  height: var(--bw-thick);
+  margin: calc(var(--bw-thick) / -2) 0 0;
+  clip-path: inset(0 100% 0 0);
+  animation-name: rl-c2-link-out-across;
+}
+@keyframes rl-c2-link-draw-across { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes rl-c2-link-out-across {
+  0% { clip-path: inset(0 100% 0 0); opacity: 1; }
+  14% { clip-path: inset(0 0 0 0); opacity: 1; }
+  68% { clip-path: inset(0 0 0 0); opacity: 1; }
+  100% { clip-path: inset(0 0 0 0); opacity: 0; }
+}
+/* The first node keeps to its ceiling: its words wrap onto a second line, the two buttons standing beside the last. */
+.rl-c2__chain.is-across .rl-c2__node {
+  max-width: var(--rl-c2-row-start);
+  padding: var(--space-3) var(--space-2) var(--space-3) var(--space-5);
+}
+.rl-c2__chain.is-across .rl-c2__nbody { align-items: flex-end; }
+.rl-c2__chain.is-across .rl-c2__nmain { flex: 1 1 0; row-gap: var(--space-2); }
+/* A Run of several: the chips their own line on top, folding to the node's ceiling; the words and buttons under them. */
+.rl-c2__chain.is-across .rl-c2__node.has-ids .rl-c2__nbody {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: 'ids ids' 'main acts';
+  row-gap: var(--space-2);
+}
+.rl-c2__chain.is-across .has-ids .rl-c2__nids { grid-area: ids; }
+.rl-c2__chain.is-across .has-ids .rl-c2__nmain { grid-area: main; }
+.rl-c2__chain.is-across .has-ids .rl-c2__nacts { grid-area: acts; }
+/* A card's head at the row's width: the fold (and the rule's Open) over the step's line at the card's corner, so what
+   was selected and its meta line take the head's whole width, and wrap rather than being cut. */
+.rl-c2__chain.is-across .rl-c2__card > .bb__cardhead { position: relative; grid-template-columns: auto minmax(0, 1fr); }
+.rl-c2__chain.is-across .rl-c2__card > .bb__cardhead > .bb__cardmeta { position: absolute; top: var(--space-4); right: var(--space-3); grid-row: auto; grid-column: auto; }
+.rl-c2__chain.is-across .rl-c2__kicker { padding-right: var(--space-12); }
+.rl-c2__chain.is-across .rl-c2__nm,
+.rl-c2__chain.is-across .rl-c2__mt { white-space: normal; overflow-wrap: break-word; }
+.rl-c2__chain.is-across .rl-c2__card .bb__title em.rl-c2__meta { align-items: flex-start; white-space: normal; }
+/* The rule's answer wraps as one: "Then" / "Allow on 1 factor", never "Allow on 1" / "factor". */
+.rl-c2__chain.is-across .rl-c2__then { white-space: nowrap; }
+.rl-c2__chain.is-across .rl-c2__mk { min-height: calc(var(--fs-sm) * 1.4); }
+/* The builder's reading, narrower than it was sized for: its lines wrap rather than run out of the card or cut what
+   they say — a policy's news under its name, a condition's value under its attribute, what decided under its keyword. */
+.rl-c2__chain.is-across .bb__ifbody > *,
+.rl-c2__chain.is-across .bb__ifplain > * { min-width: 0; }
+.rl-c2__chain.is-across .bb__ifrow.is-cond { flex-wrap: wrap; row-gap: var(--space-1); }
+.rl-c2__chain.is-across .rl-c2__prow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: 'n name mark' '. say mark';
+  align-items: baseline;
+  column-gap: var(--space-3);
+}
+.rl-c2__chain.is-across .rl-c2__n { grid-area: n; }
+.rl-c2__chain.is-across .rl-c2__pname { grid-area: name; }
+.rl-c2__chain.is-across .rl-c2__say { grid-area: say; white-space: normal; }
+.rl-c2__chain.is-across .rl-c2__prow > .bb__tmark { grid-area: mark; align-self: center; }
+.rl-c2__chain.is-across .rl-c2__pname,
+.rl-c2__chain.is-across .rl-c2__by > span,
+.rl-c2__chain.is-across .rl-c2__said { white-space: normal; }
+
+/* While the chain changes shape its nodes' words are already laid out for where they are going: a box still on its
+   way shows only what it holds, so nothing runs past its edge (classic2-glide.ts). Each box and each piece in it is its
+   own layer for the move, from the press — while the connectors fade — so the browser can draw them before anything
+   moves and the move itself is composited. Motion writes the transforms; this only says they are coming. */
+.rl-c2__chain.is-moving .rl-c2__card,
+.rl-c2__chain.is-moving .rl-c2__node { overflow: clip; }
+/* An open card's body travels on its card's ground, so a head laid out taller for where it is going runs under it,
+   never through its words. */
+.rl-c2__chain.is-moving .rl-c2__card > .bb__tbody { background: var(--surface-raised); }
+.rl-c2__chain.is-moving :is(.rl-c2__card, .rl-c2__card > *, .rl-c2__node, .rl-c2__node > *, .rl-c2__link) { will-change: transform; }
+
+/* The rules of the policy, in its own order, the one that matched open (classic2-chain.tsx `RuleList`). Tokens only; nothing moves. */
+.rl-c2__pnamebtn { padding: 0; border: 0; background: none; font: inherit; text-align: left; color: inherit; cursor: pointer; }
+.rl-c2__pnamebtn { color: var(--text-link); }
+.rl-c2__pnamebtn:hover { text-decoration: underline; }
+.rl-c2__pnamebtn:focus-visible { outline: none; box-shadow: 0 0 0 var(--bw-thick) var(--focus-ring); border-radius: var(--radius-sm); }
+.rl-c2__rules { display: flex; flex-direction: column; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.rl-c2__rule { border: var(--bw-thin) solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface-raised); }
+.rl-c2__rule.is-open { background: var(--surface-sunken); }
+/* The rule that matched (owner, 6 Oct 2026: "when one matches, a border animation with colour based on allow or deny"):
+   its edge takes its decision's colour — a ring lands as it matches, then settles to the soft edge. Its word is in the
+   same tone. Played only as the run reaches it (`is-hit`); a chain drawn settled has the edge alone. */
+.rl-c2__rule.is-match.is-d-allow { --rl-c2-hit: var(--fb-positive-dot); --rl-c2-hit-edge: var(--fb-positive-border); --rl-c2-hit-fg: var(--fb-positive-fg); }
+.rl-c2__rule.is-match.is-d-mfa { --rl-c2-hit: var(--fb-positive-strong-dot); --rl-c2-hit-edge: var(--fb-positive-strong-border); --rl-c2-hit-fg: var(--fb-positive-strong-fg); }
+.rl-c2__rule.is-match.is-d-deny { --rl-c2-hit: var(--fb-negative-dot); --rl-c2-hit-edge: var(--fb-negative-border); --rl-c2-hit-fg: var(--fb-negative-fg); }
+.rl-c2__rule.is-match { border-color: var(--rl-c2-hit-edge, var(--border-default)); }
+.rl-c2__rule.is-match.is-hit { animation: rl-c2-hit 1.1s var(--ease-out, ease-out) both; }
+@keyframes rl-c2-hit {
+  0% { border-color: var(--border-subtle); box-shadow: 0 0 0 0 transparent; }
+  28% { border-color: var(--rl-c2-hit); box-shadow: 0 0 0 var(--bw-thick) var(--rl-c2-hit); }
+  100% { border-color: var(--rl-c2-hit-edge); box-shadow: 0 0 0 var(--space-2) transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rl-c2__rule.is-match.is-hit { animation: none; }
+}
+.rl-c2__rulerow { display: flex; align-items: center; }
+.rl-c2__rulerow > .rl-c2__rulehead { flex: 1 1 auto; min-width: 0; }
+.rl-c2__ruledetails { flex: none; margin-right: var(--space-2); }
+.rl-c2__rulehead { display: flex; align-items: center; gap: var(--space-4); width: 100%; padding: var(--space-3) var(--space-4); border: 0; border-radius: var(--radius-md); background: none; font: inherit; font-size: var(--fs-sm); text-align: left; color: var(--text-primary); cursor: pointer; }
+.rl-c2__rulehead:hover { background: var(--surface-sunken); }
+.rl-c2__rulehead:focus-visible { outline: none; box-shadow: inset 0 0 0 var(--bw-thick) var(--focus-ring); }
+.rl-c2__rulen { flex: none; display: inline-grid; place-items: center; min-width: var(--space-5); color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+.rl-c2__rulename { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--fw-medium); }
+.rl-c2__rulestate { flex: none; font-size: var(--fs-xs); color: var(--text-tertiary); }
+/* "Matches" in its decision's tone, as "Not matched" is in the negative: the word carries it, not a dark frame. */
+.rl-c2__rule.is-match .rl-c2__rulestate { color: var(--rl-c2-hit-fg, var(--fb-positive-fg)); font-weight: var(--fw-medium); }
+.rl-c2__rule.is-no-match .rl-c2__rulestate { color: var(--fb-negative-fg); }
+.rl-c2__rulehead > svg { flex: none; color: var(--text-tertiary); }
+.rl-c2__rulebody { padding: 0 var(--space-4) var(--space-4); }
+/* What an open rule uses (classic2-chain.tsx `RuleUses`): each a press into the page's panel. */
+.rl-c2__uses { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: var(--space-3) 0 0; font-size: var(--fs-xs); }
+.rl-c2__useslabel { color: var(--text-tertiary); margin-right: var(--space-1); }
+.rl-c2__use { display: inline-flex; align-items: baseline; gap: var(--space-2); padding: var(--space-1) var(--space-3); border: var(--bw-thin) solid var(--border-subtle); border-radius: var(--radius-pill); background: var(--surface-raised); font: inherit; color: var(--text-link); cursor: pointer; }
+.rl-c2__use em { font-style: normal; color: var(--text-tertiary); }
+.rl-c2__use:hover { background: var(--surface-sunken); }
+.rl-c2__use:focus-visible { outline: none; box-shadow: 0 0 0 var(--bw-thick) var(--focus-ring); }
+
+/* ONE POLICY, ONE CARD (phase.ts ONE_POLICY_CARD, 20 Oct 2026; classic2-one-model.ts). Every rule here is scoped to the
+   merged card's list (`.is-one`) or its own pieces, so the rule card's list is as it was. A row's head stays one line:
+   its name gives way, its state and outcome never wrap. The outcome badge is the kit's (decision-badge.tsx), grey on a
+   row that did not decide; on the one that did it takes its tone, the colour easing in as the row's edge rings — the
+   ring's own keyframes, on a filter only, played only as the run reaches it (`is-hit`). Rules never reached read quiet; a later rule that also applies is amber, as the
+   policies' own "also covers" was; a row an answer points at takes the accent's soft ground, never a ring, never orange. */
+.rl-c2__rules.is-one .rl-c2__rulestate { white-space: nowrap; }
+/* The card's body is a grid (board.css `.bb__cardbody`), whose items keep their min-content width: a row's state and
+   outcome, which never wrap, would push the list past the card. The list and the foot take the card's width instead,
+   and a row's name gives way. */
+.rl-c2 .bb__cardbody > .rl-c2__rules.is-one,
+.rl-c2 .bb__cardbody > .rl-c2__onefoot { min-width: 0; }
+.rl-c2__rulehead > .bx-decision-badge { flex: none; }
+.rl-c2__rules.is-one > .rl-c2__rule.is-match.is-hit .rl-c2__rulehead > .bx-decision-badge { animation: rl-c2-badge-in var(--dur-normal) var(--ease-standard) both; }
+@keyframes rl-c2-badge-in { from { filter: saturate(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .rl-c2__rules.is-one > .rl-c2__rule.is-match.is-hit .rl-c2__rulehead > .bx-decision-badge { animation: none; }
+}
+.rl-c2__rules.is-one > .rl-c2__rule.is-not-reached .rl-c2__rulename { color: var(--text-tertiary); font-weight: var(--fw-regular); }
+.rl-c2__rules.is-one > .rl-c2__rule.is-also .rl-c2__rulestate { color: var(--fb-notice-fg); font-weight: var(--fw-medium); }
+.rl-c2__rules.is-one > .rl-c2__rule.is-lit,
+.rl-c2__rules.is-one > .rl-c2__rule.is-lit.is-open { background: var(--accent-soft); }
+.rl-c2__chain.is-across .rl-c2__rules.is-one .rl-c2__rulehead { flex-wrap: wrap; }
+/* Why the Global Default decides (classic2-one.tsx `OneReason`): one quiet line under the head, in line with the title as
+   the Why under it is — an unseen tile holds the column — the policy it names a press in the link's colour. */
+.rl-c2__onereason { display: flex; align-items: center; gap: var(--space-5); margin-top: calc(var(--space-3) * -1); }
+.rl-c2__onewhy { display: flex; align-items: center; gap: var(--space-2); min-width: 0; font-size: var(--fs-xs); color: var(--text-secondary); }
+.rl-c2__onewhy > svg { flex: none; color: var(--text-tertiary); }
+.rl-c2__onetext { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-c2__onewhy .rl-c2__pname,
+.rl-c2__oneline .rl-c2__pname { font-size: inherit; }
+/* The foot (classic2-one.tsx `OneFoot`): under a dashed rule, at most two quiet lines — the Global Default under the
+   application's own policy, and another policy on the application, amber where it would answer otherwise. */
+.rl-c2__onefoot { margin-top: var(--space-3); padding-top: var(--space-3); border-top: var(--bw-thin) dashed var(--border-subtle); }
+.rl-c2__oneline { display: flex; align-items: center; gap: var(--space-2); min-width: 0; margin: 0; padding: var(--space-2) var(--space-4); font-size: var(--fs-xs); color: var(--text-tertiary); }
+.rl-c2__oneline > svg { flex: none; }
+.rl-c2__oneline .rl-c2__pname { flex: 0 1 auto; }
+.rl-c2__onelabel,
+.rl-c2__onewords { flex: none; white-space: nowrap; }
+.rl-c2__oneline.is-conflict .rl-c2__onewords { color: var(--fb-notice-fg); font-weight: var(--fw-medium); }
+
+/* The deny colour on the outcome is enough here; the coloured left edge stays in the policy builder only. */
+.rl-c2 .bb__card.rl-c2__card.is-terminal, .rl-c2 .bb__card.rl-c2__card.is-terminal:hover { border-left: var(--bw-thin) solid var(--border-subtle); }
+.rl-c2 .bb__card.rl-c2__card.is-terminal:not(.is-matched):hover { border-left-color: var(--border-default); }
+.rl-c2 .bb__card.rl-c2__card.is-terminal.rl-c2__out, .rl-c2 .bb__card.rl-c2__card.is-terminal.is-matched { border-color: var(--border-subtle); }

@@ -1,0 +1,1157 @@
+/* -----------------------------------------------------------------------------
+   Authentication methods · final.
+
+   Measured off the deployed prototype's V2 rather than guessed at: 72px rows, a
+   36px tile at 8px radius, 16px between tile and text, 12px between rows, a
+   pill count chip in the section head, and a tab bar that is a 1px rule with a
+   2px brand underline on the active tab. Every value below is the token nearest
+   what was measured — the proportions are the prototype's, the colours are ours,
+   because the prototype only has a light theme and this has two.
+   -------------------------------------------------------------------------- */
+
+.bm8 { display: flex; flex-direction: column; gap: 18px; }
+
+.bm8__head h1 { margin: 0; }
+/* The head wraps, as `PageHead`'s row does: the title takes the row, and the
+   preview switches drop under it before they squeeze it. Without the wrap the
+   gear switch and the width switch, side by side, pushed the page sideways
+   below about 800px (16 Sep 2026). */
+.bm8__head { flex-wrap: wrap; }
+.bm8__title { flex: 1 1 240px; min-width: 0; }
+.bm8__head p {
+  margin: 4px 0 0; max-width: 68ch;
+  font-size: var(--fs-md); color: var(--text-secondary); line-height: 1.55;
+}
+
+/* --- The row-end variant switch ---------------------------------------------
+   In the head's action slot, and deliberately the quietest thing in it: a
+   comparison between two shapes of the same row is not an authentication
+   decision, and it should not read like one. Tertiary text at the size the
+   blurb under the title uses, with the rows it reaches named underneath in the
+   same muted 12px the rest of the screen gives a qualifier.
+
+   `align-items: center` against the head's own `flex-start`, so the switch sits
+   on the first line of its label rather than at the top of a two-line block. */
+.bm8__variant {
+  flex: none; display: flex; align-items: center; gap: var(--space-5);
+  font-size: var(--fs-md); color: var(--text-secondary);
+}
+.bm8__variant > span { display: flex; flex-direction: column; gap: 1px; white-space: nowrap; }
+.bm8__variant i { font-style: normal; font-size: var(--fs-xs); color: var(--text-tertiary); }
+
+@media (max-width: 900px) {
+  /* The names go first: at this width the head is already stacking and the
+     switch's own label says enough to find the rows by flipping it. */
+  .bm8__variant i { display: none; }}
+
+/* --- Tabs, horizontal ---------------------------------------------------------
+   The brief's one explicit layout change. Underline rather than a pill group:
+   two tabs in a pill group read as a segmented control, which implies switching
+   a setting rather than moving between views. */
+.bm8__tabbar {
+  display: flex; gap: 24px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.bm8__tab {
+  /* Icon and label in one line, the zone tabs' spacing. */
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 0 0 10px;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: none; cursor: pointer;
+  font-size: var(--fs-md); font-weight: var(--fw-medium); color: var(--text-tertiary);
+  transition: color var(--dur-fast) var(--ease-standard), border-color var(--dur-fast) var(--ease-standard);
+}
+.bm8__tab:hover { color: var(--text-secondary); }
+.bm8__tab.is-on { color: var(--brand-text); font-weight: var(--fw-semibold); border-bottom-color: var(--brand); }
+.bm8__tab:focus-visible { outline: none; box-shadow: 0 0 0 4px var(--focus-halo); border-radius: var(--radius-sm); }
+
+/* `.bm8__pane` stood here: a 14px column holding the bar and the list. They are
+   children of the page grid now (see `CategoryList` for why), where the gap is
+   the grid's 16px — so the two joints the column used to space are held to
+   what it gave them, and the list does not move. */
+.bm8 > .bm8__bar + .bm8__list { margin-top: -2px; }
+.bm8 > .bmact { margin-bottom: 12px; }
+
+/* The row carries no control at all, so its whole state has to be in words. */
+/* The shared pill geometry - see the --pill-* block in console-theme.css. */
+.bm8__always {
+  display: inline-flex; align-items: center;
+  padding: var(--pill-py) var(--pill-px); border-radius: var(--pill-radius);
+  line-height: var(--pill-line);
+  background: var(--fb-positive-bg); color: var(--fb-positive-fg);
+  border: var(--bw-thin) solid var(--fb-positive-border);
+  font-style: normal; font-size: var(--pill-fs); font-weight: var(--pill-fw);
+  letter-spacing: 0; white-space: nowrap;
+}
+
+/* --- The rows ------------------------------------------------------------------ */
+
+/* One panel, rows divided — the shape every reference uses.
+
+   Checked on Mobbin partway through this: Jira, PandaDoc, Binance, OKX,
+   Mercury, Gemini and Coinbase all present a list of authentication methods as
+   ONE container with hairline-divided rows inside it. Not one of them gives
+   each method its own card.
+
+   Five shapes were tried before landing back here, and the notes stay so the
+   rejected four do not get tried again:
+
+     outlined cards    eleven rectangles down a white page, and the rectangle
+                       was louder than the name inside it.
+     filled at 6%      --surface-inset. Read as DISABLED — a flat mid-grey is
+                       what that means everywhere — and put body text on a tint.
+     white + shadow    drew nothing, and separated almost nothing with it.
+                       --el-low is 6%/5% alpha, tuned for a card that already
+                       has a border or a tinted page beneath it.
+     filled at 3%      #f8f8f8. Legible and inoffensive, and still eleven
+                       separate slabs where the references have one list.
+
+   One edge for the whole list instead of eleven; rows on white at full
+   contrast; and the divider does the separating, which is the one job it is
+   for. */
+.bm8__list {
+  display: flex; flex-direction: column;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-default); border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+ul.bm8__list { margin: 0; padding: 0; list-style: none; }
+
+/* The page's list is the whole catalogue, not paged, but every row keeps one
+   height: the name on one line, the detail on its tip, and anything past the
+   edge clipped rather than wrapped into a taller row. Tips portal out, so
+   clipping never cuts one off. */
+.bm8__list--oneline > .bm8__card { height: 84px; min-height: 0; padding-block: 0; overflow: hidden; }
+.bm8__list--oneline .bm8__info { overflow: hidden; }
+.bm8__list--oneline .bm8__name { flex-wrap: nowrap; min-width: 0; white-space: nowrap; }
+/* The line under the name: one line on the page's list, clipped rather than
+   wrapped, because every row there keeps one height. In the slider, where rows
+   size to their content, it wraps. */
+.bm8__list--oneline .bm8__blurb { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* A row in that panel: no fill of its own, no edge of its own, one divider.
+
+   The vertical padding carries more than it did as a free-standing card. A card
+   had a gap either side of it doing half the work of separating it from its
+   neighbours; a row has a hairline and nothing else, so the air has to come from
+   inside. `min-height` moves with it, or the one-line rows would sit tighter
+   than the two-line ones and the list would lose its rhythm. */
+.bm8__card {
+  display: flex; align-items: center; gap: 16px;
+  width: 100%; min-height: 84px; padding: 20px;
+  background: none;
+  border: 0; border-bottom: 1px solid var(--border-subtle); border-radius: 0;
+  text-align: left;
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+/* The panel's own edge closes the list; a divider under the last row would sit
+   a pixel above it and read as a double rule. */
+.bm8__list > .bm8__card:last-child { border-bottom: 0; }
+
+/* A row that goes somewhere gets a hover; a row that does not, gets none.
+
+   The row is a `<div>` and its link is the name, stretched over the whole row by
+   an `::after` — a row holding a switch cannot also be a button. The switch and
+   the tip sit above the stretch, so they stay controls of their own, and the
+   row only lights up while the pointer is on the part that opens.
+
+   A tint, and nothing else. The lift and the shadow a free-standing card had
+   are wrong for a row in a list — a row cannot rise off a surface it is part of
+   without tearing the divider above it. */
+.bm8__card--family { position: relative; }
+.bm8__open {
+  appearance: none; margin: 0; padding: 0; border: 0; background: none;
+  font: inherit; color: inherit; text-align: inherit; cursor: pointer;
+}
+.bm8__open::after { content: ''; position: absolute; inset: 0; }
+/* The row draws the focus ring, so the name draws none — not even the kit's halo. */
+.bm8__open:focus-visible { outline: none; box-shadow: none; }
+/* Lifted above the name's stretched `::after`, or the row would swallow the
+   press. The gear joins them: it opens the same page the row does, so a press
+   landing on the overlay instead would still work — but the BUTTON has to get
+   the event or it never takes focus and never announces its own name. */
+.bm8__card--family .bm8__rowctl,
+.bm8__card--family .bm8__rowgear,
+.bm8__card--family .bx-tip { position: relative; z-index: 1; }
+
+/* The gear is excluded from the row tint alongside the switch and the tip. It
+   is the one exclusion that is arguable — the gear and the row go to the same
+   place, so lighting the row while the gear is hovered would be honest — and it
+   is excluded anyway, because the gear draws its own hover and two of them
+   firing at once on one control is the busier read. One hover at a time. */
+.bm8__card--family.is-link:hover:not(:has(.bm8__rowctl:hover, .bm8__rowgear:hover, .bx-tip:hover)) { background: var(--surface-sunken); }
+.bm8__card--family:has(.bm8__open:focus-visible) { box-shadow: inset 0 0 0 2px var(--focus-ring); }
+
+/* The chevron leans the way the click goes — only for someone who has not asked
+   for less motion. Its colour moves either way. The lean lives in its own query
+   rather than being undone in a `reduce` one: this selector outweighs any short
+   override, and an override that loses is a promise the page does not keep. */
+.bm8__card--family.is-link:hover:not(:has(.bm8__rowctl:hover, .bx-tip:hover)) .bm8__rowchev > svg { color: var(--accent-strong); }
+@media (prefers-reduced-motion: no-preference) {
+  .bm8__card--family.is-link:hover:not(:has(.bm8__rowctl:hover, .bx-tip:hover)) .bm8__rowchev > svg { transform: translateX(3px); }}
+/* The two chevron rules above are left keyed on the old exclusion on purpose: a
+   row that has a chevron never has a gear, so adding `.bm8__rowgear:hover` to
+   them would be a condition that cannot fire. The NAME darkens on every row that
+   opens, gear or chevron, so that one takes the exclusion. */
+.bm8__card--family.is-link:hover:not(:has(.bm8__rowctl:hover, .bm8__rowgear:hover, .bx-tip:hover)) .bm8__name { color: var(--accent-strong); }
+.bm8__card > svg, .bm8__rowchev > svg { color: var(--text-muted); transition: transform var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard); }
+.bm8__name { transition: color var(--dur-fast) var(--ease-standard); }
+
+/* --- The tile ------------------------------------------------------------------
+   Identity, not status: a family keeps its colour whether or not anything in it
+   is on. A family with nothing enabled gets the neutral tile instead, which is
+   the prototype's grey and the only status the tile carries. */
+/* Inset again: the row is white, so a grey chip is the step, the way it was
+   before the row briefly went grey itself. */
+.bm8__tile {
+  flex: none; display: grid; place-items: center;
+  width: 36px; height: 36px; border-radius: var(--radius-md);
+  background: var(--surface-inset); color: var(--text-muted);}
+/* No fill of its own — MethodIcon brings the vendor logo and its own box. */
+.bm8__tile--logo { width: auto; height: auto; background: none; }
+
+/* …and that box gets the same brand tint the family tiles have. A method row
+   and a family row sit in one list, and the mark is the first thing read down
+   the left edge of both; two different chips down one column is a difference
+   the reader has to account for and there is nothing behind it. Scoped to these
+   rows, because `.bv5__mico` is also the recovery screen's, on other surfaces. */
+.bm8__card .bv5__mico { background: var(--accent-soft); color: var(--accent-strong); }
+
+/* Brand where the family has something switched on.
+
+   The history is worth keeping, because this has been round twice. It began as
+   six per-family hues — decoration, since a family's colour said nothing you
+   could act on, and eleven of them turned the list into a legend nobody was
+   given. Those rules were deleted; the CLASSES were not, so `is-blue` and the
+   rest went on being emitted with nothing behind them and every tile rendered
+   the neutral grey regardless of state. Dull, and dull for no reason anybody
+   had decided.
+
+   The colour is back, on every tile. It was briefly conditional — brand only
+   where a family had something live — and that made the mark a third copy of a
+   status the row already carries in the toggle on the right and the enrolment
+   figure beside it. The tile is identity, and identity does not switch off.
+
+   `live > 0` still drives `.is-off`, which dims the NAME and the description.
+   That is the row saying it, once, in the place a reader is already looking. */
+.bm8__tile.is-brand { background: var(--accent-soft); color: var(--accent-strong); }
+
+/* Untouched: is-warn, is-error and the --fb-* feedback colours. Those are the
+   linter's verdict and a control's state, not decoration. */
+
+/* --- Row text ------------------------------------------------------------------ */
+
+.bm8__info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+/* What the method or family is, in one line under its name (owner, 18 Sep
+   2026). It was a tip beside the name and nothing else, which asked a reader
+   scanning eleven rows to hover each one to tell them apart. The tip stays
+   where there is more to say than the line holds. */
+.bm8__blurb {
+  min-width: 0;
+  font-size: var(--fs-sm); line-height: 1.45; color: var(--text-tertiary);
+  overflow-wrap: anywhere;
+}
+.bm8__card.is-off .bm8__blurb { color: var(--text-muted); }
+.bm8__name {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-size: var(--fs-base); font-weight: var(--fw-semibold); color: var(--text-primary);
+}
+/* `.bm8__desc` and `.bm8__usage` stood here: a description and a "used in N
+   rules" line under each name. Row details are on the tip beside the name now,
+   and how many rules use a method is said when it is turned off. */
+
+/* Grey (owner, 23 Sep 2026: "make this gray"). It was green, which read as a
+   state — something switched on and healthy — when it is a fact about what the
+   method IS. The row's switch and its enabled count carry the state. */
+.bm8__badge {
+  display: inline-flex; align-items: center; gap: var(--pill-gap);
+  padding: var(--pill-py) var(--pill-px); border-radius: var(--pill-radius);
+  line-height: var(--pill-line);
+  background: var(--fb-neutral-bg); color: var(--fb-neutral-fg);
+  border: var(--bw-thin) solid var(--border-subtle);
+  font-style: normal; font-size: var(--pill-fs); font-weight: var(--pill-fw); white-space: nowrap;
+}
+
+/* --- The tenant default ----------------------------------------------------------
+   Brand-tinted rather than green: the phishing-resistant badge beside it is a
+   property of the method and true whether or not anyone chose it, while this is
+   a decision somebody made. Two green badges on one row would read as two
+   grades of the same thing. */
+.bm8__badge--default { background: var(--accent-soft); color: var(--accent-strong); }
+
+/* --- Newly added ------------------------------------------------------------------
+   A new integration is worth showing off, and eleven identical white cards is
+   the one layout that guarantees nobody notices one of them changed. Three
+   things do the work, in descending order of how much they actually matter:
+
+   1. POSITION. It sits fifth, straight after miniOrange Authenticator, instead
+      of tenth. Nothing else on this list beats being above the fold.
+   2. The PILL, and only the pill. Solid brand, which is the exception to this
+      screen being otherwise grey: a promotional marker is the one element whose
+      whole job is to interrupt, and it is a single small object on one row of
+      eleven. It is the sidebar's badge, unchanged, so "new" looks the same
+      everywhere the product says it.
+
+   The row itself was tinted for one revision and that was a mistake worth
+   recording: on a list of eleven cards where the others are white, a filled row
+   does not read as "new", it reads as SELECTED — the same thing a chosen radio
+   card or an active row means everywhere else in this console. A promotional
+   marker that impersonates a state is worse than no marker, because the state
+   is the thing an admin acts on. The row stays white; the pill does the work. */
+/* The one solid-brand pill on the screen, and it keeps that - but at the
+   family size and case. It was 9px uppercase, the smallest type in the product,
+   on the one label whose whole job is to be noticed. */
+.bm8__new {
+  flex: none; padding: var(--pill-py) var(--pill-px); border-radius: var(--pill-radius);
+  line-height: var(--pill-line);
+  background: var(--brand-on-fill); color: var(--text-on-brand);
+  font-style: normal; font-size: var(--pill-fs); font-weight: var(--fw-semibold);
+  letter-spacing: 0; white-space: nowrap;
+}
+
+.bm8__right {
+  flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 5px;
+}
+/* A family row's end sits beside the count, not under it — whether that end is
+   a chevron or the one method's controls. */
+.bm8__card--family .bm8__right { flex-direction: row; align-items: center; gap: var(--bm8-endgap); }
+/* The end of a row: one slot for its mark, one for its control, both drawn on
+   every row. Fixed widths, because each row is its own box — nothing lines a
+   column up across rows except the width being the same in all of them. The
+   control track is the OUTER one: a switch, "Configure" or "Always on" sits on
+   the row's right edge, and a gear or chevron just inside it (owner, 18 Sep
+   2026). See `RowEnd` in AuthMethods.tsx for the one row that swaps them. */
+/* The control track is a SWITCH wide, and a wider control ("Always on" at
+   74px, "Configure" at 73px) overflows it to the left — which is safe because
+   the rows that carry one never carry a mark, so the space to their left is
+   empty, and the end still reserves mark + gap + switch = 77px before the
+   enrolment figure's own 16px. It was a 76px track: that kept every control
+   inside its own box, but it also parked the 32px of slack between the mark
+   and the switch, so a gear sat 16px from the figure and 48px from the toggle
+   it belongs with (owner, 18 Sep 2026: "move it in between, in the centre
+   between the two — right now it feels close to the number and far from the
+   toggle"). The slack moved outward, and the gear now sits 16px from each. */
+.bm8__list { --bm8-endgap: 16px; --bm8-mark: 17px; --bm8-switch: 44px; }
+/* Two fixed tracks, not a flex row: a track keeps its width whatever lands in
+   it, so the switch column, the mark column and the figures to their left all
+   hold their x on every row. A control wider than its track ("Configure"
+   where the others have a switch) overflows to the left instead of moving
+   them. In flex, its extra width pushed the neighbouring column along.
+
+   Mark first, control second, and a row with no control puts its mark in the
+   second slot instead — the order is the DOM's, so the two cases cost nothing
+   but a swap and the end keeps one width in both. */
+.bm8__rowend {
+  flex: none; display: grid; align-items: center; justify-items: end;
+  grid-template-columns: var(--bm8-mark) var(--bm8-switch);
+  column-gap: var(--bm8-endgap);
+}
+.bm8__rowctl, .bm8__rowmark {
+  min-width: 0;
+  display: flex; align-items: center; justify-content: flex-end;
+}
+.bm8__rowchev, .bm8__rowgear { display: flex; align-items: center; }
+/* The switch's own column inside a control cluster, so "Configure" on a row
+   with no switch and "Set up" on a row with one end on the same x. A switch's
+   width, not the whole end's: this one sits INSIDE the cluster. */
+.bm8__rowswitch {
+  flex: none; display: flex; align-items: center; justify-content: flex-end;
+  min-width: var(--bm8-switch);
+}
+/* Inside a row end the slot already reserves the width, so the switch itself
+   reserves nothing, and an empty one leaves altogether — otherwise its gap
+   alone held a lone "Configure" 10px off the column the switches make. */
+.bm8__rowctl .bm8__rowswitch { min-width: 0; }
+.bm8__rowctl .bm8__rowswitch:empty { display: none; }
+
+/* --- Two marks, one column -------------------------------------------------------
+   A row that opens a single page ends in a gear; a row that opens a panel with
+   a choice in it keeps its chevron (23 Sep 2026 — see `marksGear`). Both land
+   in the same list, so the track is sized for the wider of the two.
+
+   The mark's WIDTH is set for the whole list, not per row: a gear is 40px
+   against the chevron's 17px, so growing the track only on the rows that wear
+   one would step those rows' switches 23px out of the column. The ORDER does
+   not change either — the mark keeps the right edge, because a chevron that
+   stops short of an edge its neighbours' switches reach is the one thing this
+   row end exists to prevent.
+
+   `--ctl-height-md`, the icon button's own box, not the `-sm` it was: at 34px
+   the 40px button overflowed its track to the left and took 6px out of the gap
+   that holds it off the switch. */
+.bm8__list.is-gear { --bm8-mark: var(--ctl-height-md); }
+/* The two never land in the same slot, which is why a gear beside a chevron
+   costs the column nothing. A chevron row is a family with methods inside, so
+   it has no switch: `RowEnd` swaps its mark into the switch's slot and the
+   chevron takes the row's right edge, with the switches. A gear row is a
+   family of ONE, so it does have a switch, and the gear sits in the mark slot
+   just inside it. Every row still ends on one x; what changes down the list is
+   only which glyph ends it.
+
+   Measured at 1440px: the chevrons and the switches both end at 1258, and the
+   gears sit at 1158–1198, one 16px gap inside them. Giving the chevron the
+   gear's 40px box to centre in was tried first and stopped it 12px short of
+   that edge — the one thing this row end exists to prevent. */
+/* A person's rows end in a chevron and never a switch, so nothing is reserved
+   for one: the chevron takes the outer slot and the inner one collapses. */
+.bm8__list.is-person .bm8__rowend { grid-template-columns: 0 var(--bm8-mark); }
+/* `.bm8__rowend.is-wide` stood here: the wider control track CAC Card's Upload
+   CA chain button needed beside its switch (21 Sep 2026). The row opens its CA
+   chains itself since 30 Sep, and its gear sits in the mark slot. */
+
+/* --- Status and reach, on the category row --------------------------------------
+   The two facts the row reports: whether anything in this category is on, and
+   how many people are already on it.
+
+   Both were prose at the weight of the blurb — the status a third grey line
+   under the description, the enrolment a muted string. Reading a column of
+   eleven for "which of these is live" meant reading eleven paragraphs. As a
+   chip and a figure at fixed positions the column can be scanned straight
+   down, which is the only way this list gets used.
+
+   No brand colour on either: green means live, grey means dormant, and neither
+   is an action. Orange stays on the things you click. */
+/* --- Transactions left ------------------------------------------------------------
+   Only on the families that spend a purchased pool — SMS, Email and Call.
+
+   It sits beside the enabled chip because the two together are the whole answer
+   to "will this work": a category can read "2 of 3 enabled" and still deliver
+   nothing, since enabled and funded are separate facts and only one of them was
+   on the row before. Empty is drawn as a fault rather than a low number,
+   because it is one — the next send fails.
+
+   Outlined rather than filled, so a row can carry two chips without them
+   competing; the enabled chip is the primary state and this qualifies it. */
+/* The shared pill geometry - see the --pill-* block in console-theme.css. */
+.bm8__txn {
+  display: inline-flex; align-items: center;
+  padding: var(--pill-py) var(--pill-px); border-radius: var(--pill-radius);
+  line-height: var(--pill-line);
+  border: var(--bw-thin) solid var(--border-default);
+  color: var(--text-tertiary);
+  font-size: var(--pill-fs); font-weight: var(--pill-fw); white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.bm8__txn.is-low { border-color: var(--fb-notice-border); color: var(--fb-notice-fg); background: var(--fb-notice-bg); }
+.bm8__txn.is-empty { border-color: var(--fb-negative-border); color: var(--fb-negative-fg); background: var(--fb-negative-bg); }
+
+@media (max-width: 900px) {
+  /* The plain count goes first. "No transactions left" and a low balance stay:
+     they are the only place the row says its codes will not send. */
+  .bm8__txn:not(.is-empty):not(.is-low) { display: none; }}
+
+/* The figure reads first and the word explains it, rather than one muted string
+   where the number has to be found inside the sentence. */
+/* The enrolment figure that stood here is gone (18 Sep 2026) — see the note in
+   `FamilyListRow`. What is left on a row's right is the balance chip, where a
+   family spends a pool, and the end itself. */
+
+@media (max-width: 720px) {
+  .bm8__list { --bm8-endgap: 10px; }}
+
+/* A family with nothing on, or a method that is off. Dimmed by desaturating the
+   text, never by `opacity` on the row — opacity would take the toggle down with
+   it, and the toggle is the one control that still has to look operable. */
+.bm8__card.is-off .bm8__name { color: var(--text-secondary); }
+
+/* --- Slide-over -----------------------------------------------------------------
+   The category opens over the list rather than replacing it. Only the head
+   needs styling — the rows inside are the same .bm8__card the index uses, at
+   the same measurements, so a method looks identical in both places. */
+
+.bm8__dw { display: flex; flex-direction: column; gap: 16px; }
+
+/* --- Panel head ------------------------------------------------------------------
+   One header. It was the kit's own head — name, count, close — and then a banner
+   directly beneath repeating the same two facts next to a tile, plus a bar of
+   three grey slabs restating a count already written beside it in words. All of
+   that is one block now, rendered into the Drawer's `head` slot so it scrolls
+   with nothing and keeps the close button where it was.
+
+   No spine. The tile already carries the family's colour, and a second stroke
+   saying the same thing beside it is the tint stated twice. */
+.bm8__dwhead {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: var(--space-4);
+}
+
+/* The head is a name and nothing else, so it is set to be seen: the page-title
+   size, bold, beside a 36px tile. What it used to carry under the name — the
+   blurb and the numbers, in 13px and 12px grey — went to an overview card, and
+   that card is gone too (15 Sep 2026): the list and the head already say it. */
+.bm8__dwtile {
+  flex: none; display: grid; place-items: center;
+  width: 36px; height: 36px; border-radius: var(--radius-md);
+  background: var(--surface-inset); color: var(--text-secondary);
+}
+/* Scoped through the drawer and the head so it outranks `.bpage h2` in
+   console-theme.css and its `[data-brand=rebrand]` twin (0,2,1), which set every
+   h2 on a page to 16px/600 and would quietly take the title back down. */
+.bx-drawer .bm8__dwhead > h2.bm8__dwtitle {
+  margin: 0; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--fs-xl); font-weight: var(--fw-bold); line-height: 1.3;
+  color: var(--text-primary);
+}
+.bm8__dwhead > .bx-badge { flex: none; --badge-max: 28ch; }
+
+/* Settings sections: a plain heading over its rows. What the section reaches is
+   said once, in the Note at the top of the Settings pane, not as an italic tail
+   on every heading. */
+.bm8__settings { display: flex; flex-direction: column; gap: var(--space-6); }
+/* The pane's scope note: the kit's `Note`, a sentence per line. */
+.bm8__setnote p { margin: 0; }
+.bm8__setnote p + p { margin-top: var(--space-2); }
+.bm8__setlabel {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-md); font-weight: var(--fw-semibold); color: var(--text-primary);
+}
+
+/* --- Panel tabs ------------------------------------------------------------------
+   These shipped as markup with no stylesheet, which is why they rendered as
+   "Methods 3Settings 5" — two buttons and their counts running together in
+   inline flow. Underlined, matching the page's own tab bar so the panel does not
+   invent a second idea of what a tab looks like. */
+.bm8__dwtabs {
+  display: flex; gap: 20px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.bm8__dwtab {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 0 0 9px; margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  background: none; cursor: pointer;
+  font-size: var(--fs-md); font-weight: var(--fw-medium); color: var(--text-tertiary);
+  transition: color var(--dur-fast) var(--ease-standard), border-color var(--dur-fast) var(--ease-standard);
+}
+.bm8__dwtab:hover { color: var(--text-secondary); }
+.bm8__dwtab.is-on { color: var(--brand-text); font-weight: var(--fw-semibold); border-bottom-color: var(--brand); }
+.bm8__dwtab:focus-visible { outline: none; box-shadow: 0 0 0 4px var(--focus-halo); border-radius: var(--radius-sm); }
+
+/* The settings list. The row brings its own dividers, so this only stacks. */
+.bm8__setlist { display: flex; flex-direction: column; }
+
+/* --- Pages inside the panel --------------------------------------------------------
+   The panel pushes and pops (see `PanelPage` in auth-panel.ts). Head and body
+   move as one page, and Back sits above the title it leaves, on the line the
+   close button already occupies. */
+.bm8__dwstack { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.bm8__dwstack > .bm8__dwhead { flex: none; }
+
+.bm8__back {
+  align-self: flex-start;
+  display: inline-flex; align-items: center; gap: 6px;
+  height: var(--ctl-height-sm); margin: -2px 0 0 -8px; padding: 0 10px 0 8px;
+  border: 0; border-radius: var(--radius-md); background: none; cursor: pointer;
+  font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--text-tertiary);
+  transition: background var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard);
+}
+.bm8__back:hover { background: var(--state-hover-bg); color: var(--text-primary); }
+.bm8__back:active { background: var(--state-press-bg); }
+.bm8__back:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--focus-halo); }
+.bm8__back svg { transition: transform var(--dur-fast) var(--ease-standard); }
+/* The arrow leans the way the click goes, as the row chevron does. */
+.bm8__back:hover svg { transform: translateX(-2px); }
+@media (prefers-reduced-motion: reduce) {
+  .bm8__back svg { transition: none; }
+  .bm8__back:hover svg { transform: none; }}
+
+/* A vendor mark in place of the family glyph — MethodIcon brings its own box. */
+.bm8__dwtile--logo { width: auto; height: auto; background: none; }
+
+/* The category holding it. Brand-tinted rather than green: the enabled chip
+   beside it is a count, and this is a choice somebody made. */
+.bm8__defchip {
+  display: inline-flex; align-items: center; gap: var(--pill-gap);
+  padding: var(--pill-py) var(--pill-px); border-radius: var(--pill-radius);
+  line-height: var(--pill-line);
+  background: var(--accent-soft); color: var(--accent-strong);
+  border: var(--bw-thin) solid var(--accent-soft-border);
+  font-style: normal; font-size: var(--pill-fs); font-weight: var(--pill-fw);
+  white-space: nowrap;
+}
+
+/* --- The setup form ---------------------------------------------------------------
+   Behind the Set up button. No blurb over it: the prerequisites and the field
+   tips carry what an admin needs, and the sentence above them was read past. */
+.bm8__setup { display: flex; flex-direction: column; gap: var(--space-7); }
+
+/* --- CA chains --------------------------------------------------------------------
+   CAC Card's slider (ca-chain-drawer.tsx), 30 Sep 2026: the tenant's chains as a
+   flat list, and Add CA chain pushed over it. One row per chain — its alias,
+   what it holds, where it came from — with its status and date at the end,
+   where a column of them can be read straight down. */
+
+/* The count on CAC Card's row, in the figure slot the balances use. */
+
+/* The list page's head: the name and its tip, then Add CA chain, beside the
+   close button. */
+.bm8__cahead { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); }
+.bm8__catitle { min-width: 0; display: flex; align-items: center; gap: 6px; }
+.bm8__catitle h2 { margin: 0; }
+.bm8__caaddbtn { flex: none; display: inline-flex; }
+.bm8__caaddhead { min-width: 0; }
+.bm8__caaddhead h2 { margin: 0; }
+
+/* The whole body takes a dropped file, so it is as tall as the panel. */
+.bm8__cabody { min-height: 100%; border-radius: var(--radius-lg); }
+.bm8__cabody.is-over { background: var(--surface-sunken); box-shadow: inset 0 0 0 2px var(--ctl-border-focus); }
+
+.bm8__catile {
+  flex: none; display: grid; place-items: center;
+  width: 32px; height: 32px; border-radius: var(--radius-md);
+  background: var(--surface-inset); color: var(--text-secondary);
+}
+
+.bm8__calist, .bm8__capend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.bm8__carow {
+  position: relative;
+  display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center;
+  gap: var(--space-5);
+  margin: 0 calc(-1 * var(--space-4)); padding: var(--space-5) var(--space-4);
+  border-radius: var(--radius-md);
+}
+/* The rule between rows, straight and inset to the text: drawn as a shadow on a
+   rounded row it curled up at both ends. */
+.bm8__carow + .bm8__carow::before {
+  content: ''; position: absolute; top: 0; left: var(--space-4); right: var(--space-4);
+  height: var(--bw-thin); background: var(--border-subtle);
+}
+.bm8__carow:first-child { padding-top: var(--space-2); }
+/* Just uploaded: a moment of green that fades, so the eye finds the new rows. */
+.bm8__carow.is-fresh { animation: bm8-cafresh 2.4s var(--ease-standard); }
+@keyframes bm8-cafresh {
+  0%, 40% { background: var(--fb-positive-bg); }
+  100% { background: transparent; }
+}
+
+.bm8__camain, .bm8__capfmain { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.bm8__caname {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--fs-md); font-weight: var(--fw-semibold); line-height: 1.45; color: var(--text-primary);
+}
+.bm8__cameta {
+  min-width: 0; display: flex; gap: var(--space-3);
+  font-size: var(--fs-sm); line-height: 1.45; color: var(--text-secondary);
+}
+.bm8__cameta > span { flex: none; white-space: nowrap; }
+.bm8__cameta > span + span::before { content: '·'; margin-right: var(--space-3); color: var(--text-tertiary); }
+/* The long one on each line gives way; the short fact beside it stays whole. */
+.bm8__cameta > .bm8__cacn { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.bm8__camain > .bmc__error { margin-top: var(--space-2); }
+
+.bm8__catop { min-width: 0; display: flex; align-items: center; gap: var(--space-4); }
+.bm8__catop > .bm8__caname { flex: 0 1 auto; }
+/* The date is never clipped; the alias gives way first. */
+.bm8__catop > .bm8__cadate {
+  flex: none; margin-left: auto; white-space: nowrap;
+  font-size: var(--fs-sm); color: var(--text-secondary); font-variant-numeric: tabular-nums;
+}
+.bm8__cadate.is-soon { color: var(--fb-notice-fg); font-weight: var(--fw-medium); }
+.bm8__cadate.is-expired { color: var(--fb-negative-fg); font-weight: var(--fw-medium); }
+
+/* What the last action did, and its Undo: a line at the top of the list, inside the
+   slider (23 Oct 2026: no words in footers; the toast is outside the panel, where Tab
+   cannot reach its Undo while the slider is open). */
+.bm8__casaid {
+  margin: 0 0 var(--space-4); display: flex; align-items: center; gap: var(--space-3);
+  font-size: var(--fs-sm); line-height: 1.45; color: var(--text-secondary);
+}
+.bm8__casaidtext { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bm8__casaid > .bx-btn { flex: none; }
+
+/* --- Add CA chain ---------------------------------------------------------------- */
+.bm8__caadd { display: flex; flex-direction: column; gap: var(--space-5); }
+/* The add page's two fields, as the live dialog sets them: label over field. */
+.bm8__caform { display: flex; flex-direction: column; gap: var(--space-6); }
+/* Certificate file: the live file field — Choose file | No file chosen. */
+.bm8__cafield {
+  display: flex; align-items: stretch; width: 100%; min-height: var(--ctl-height-md); padding: 0;
+  background: var(--ctl-bg); border: var(--bw-thin) solid var(--ctl-border); border-radius: var(--ctl-radius);
+  font: inherit; font-size: var(--fs-md); text-align: left; cursor: pointer; overflow: hidden;
+  transition: border-color var(--dur-fast) var(--ease-standard);
+}
+.bm8__cafieldbtn {
+  display: flex; align-items: center; flex: none; padding: 0 var(--space-5);
+  background: var(--surface-sunken); border-right: var(--bw-thin) solid var(--ctl-border);
+  color: var(--text-primary); font-weight: var(--fw-medium);
+}
+.bm8__cafieldname { display: flex; align-items: center; flex: 1 1 auto; min-width: 0; padding: 0 var(--space-4); color: var(--text-tertiary); }
+.bm8__cafield .bm8__cadrophint { display: flex; align-items: center; flex: none; padding-right: var(--space-4); }
+.bm8__cafield:hover, .bm8__cafield.is-over { border-color: var(--ctl-border-focus); }
+.bm8__cafield.is-over { background: var(--surface-sunken); }
+.bm8__cafield.is-invalid { border-color: var(--fb-negative-border); }
+.bm8__cafield:focus-visible { outline: none; border-color: var(--ctl-border-focus); box-shadow: 0 0 0 4px var(--focus-halo); }
+/* Solid, like the Display tokens import's: a panel you press, not a dashed pill. */
+.bm8__cadrop {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-2);
+  min-height: 132px; padding: var(--space-6);
+  border: var(--bw-thin) solid var(--border-default); border-radius: var(--radius-lg);
+  background: none; cursor: pointer; font: inherit; color: var(--text-secondary);
+  transition: background var(--dur-fast) var(--ease-standard), border-color var(--dur-fast) var(--ease-standard);
+}
+.bm8__cadrop > svg { margin-bottom: var(--space-2); color: var(--text-tertiary); }
+.bm8__cadroptext { font-size: var(--fs-md); font-weight: var(--fw-medium); color: var(--text-primary); }
+.bm8__cadrophint { font-size: var(--fs-sm); color: var(--text-tertiary); }
+/* Once files are in, it steps back to a line: more can still be added. */
+.bm8__cadrop.is-compact { flex-direction: row; min-height: 0; padding: var(--space-4) var(--space-5); gap: var(--space-3); }
+.bm8__cadrop.is-compact > svg { margin-bottom: 0; }
+.bm8__cadrop.is-compact .bm8__cadrophint { margin-left: auto; }
+.bm8__cadrop:hover, .bm8__cadrop.is-over { background: var(--surface-sunken); border-color: var(--ctl-border-focus); }
+.bm8__cadrop:focus-visible { outline: none; box-shadow: 0 0 0 4px var(--focus-halo); border-color: var(--ctl-border-focus); }
+
+.bm8__capf {
+  display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: start; gap: var(--space-5);
+  padding: var(--space-5) 0;
+  animation: bm8-cain var(--dur-normal) var(--ease-standard);
+}
+.bm8__capf + .bm8__capf { border-top: var(--bw-thin) solid var(--border-subtle); }
+.bm8__capf:first-child { padding-top: var(--space-3); }
+.bm8__capf.is-bad .bm8__catile { background: var(--fb-negative-bg); color: var(--fb-negative-fg); }
+.bm8__capfalias { margin-top: var(--space-4); gap: var(--space-3); }
+.bm8__capfalias input[aria-invalid='true'] { border-color: var(--fb-negative-border); }
+@keyframes bm8-cain {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bm8__carow.is-fresh, .bm8__capf { animation: none; }
+  .bm8__cadrop { transition: none; }
+}
+
+/* --- Prerequisites, and the grouped form -------------------------------------------
+   RSA is twenty-six fields with two required. Ungrouped it is one scroll where
+   the two that matter are indistinguishable from the twenty-four that ship with
+   defaults — which is what the console does, and why its dialog opens mid-form.
+*/
+/* The kit's `Note` (16 Oct 2026): its card, mark and heading; the checklist under it. */
+.bm8__prereqs ol { margin: var(--space-2) 0 0; padding-left: var(--space-6); display: flex; flex-direction: column; gap: var(--space-2); }
+.bm8__prereqs li { font-size: var(--fs-sm); line-height: 1.5; }
+
+/* One straight form. A group is a plain heading over its fields: no panel,
+   no tinted header, no divider and nothing that collapses. The space above a
+   heading is what separates one group from the next. */
+.bm8__setupgroup { display: flex; flex-direction: column; gap: var(--space-5); }
+.bm8__setupgroup + .bm8__setupgroup { margin-top: var(--space-6); }
+.bm8__setup .bm8__setuphead {
+  margin: 0; font-size: var(--fs-base); font-weight: var(--fw-semibold); letter-spacing: 0; color: var(--text-primary);
+}
+
+/* --- A setup card ------------------------------------------------------------------
+   An authenticator app's whole setup, on one card in the slider: a code app's
+   install, scan and code, or Microsoft Push's server. One card, one step's worth
+   of controls. */
+.bm8__setcard { display: flex; flex-direction: column; gap: 16px; }
+.bm8__setcardtitle { margin: 0; font-size: var(--fs-base); font-weight: var(--fw-semibold); color: var(--text-primary); }
+.bm8__setcardlabel { font-weight: var(--fw-medium); color: var(--text-primary); }
+
+/* --- A setup open in its card (CardSetup) --------------------------------------------
+   Inside a family, Set up opens under the method's own row rather than as a page
+   over the list (owner, 17 Sep 2026). The card wraps: its row stays the first
+   line, and the setup sits under it, starting under the name (logo 36 + gap 16),
+   with the card's Cancel and Save on its last line. No fill and no box of its
+   own — the card's divider already says where it ends. */
+.bm8__card.is-setup { flex-wrap: wrap; row-gap: 16px; }
+.bm8__cardsetup {
+  flex: 1 0 100%; min-width: 0;
+  display: flex; flex-direction: column; gap: 20px;
+  padding-left: 52px;
+  outline: none;
+  animation: bm8-cardsetup var(--dur-normal) var(--ease-standard);
+}
+@keyframes bm8-cardsetup {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+.bm8__cardfoot {
+  display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: var(--space-4);
+  padding-top: 16px;
+  border-top: 1px solid var(--border-subtle);
+}
+/* What still blocks Save, at the line's start. */
+.bm8__cardstatus { margin-right: auto; font-size: var(--fs-sm); color: var(--fb-notice-fg); }
+@media (max-width: 520px) { .bm8__cardsetup { padding-left: 0; } }
+@media (prefers-reduced-motion: reduce) { .bm8__cardsetup { animation: none; } }
+
+.bm8__steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.bm8__step { position: relative; display: flex; gap: 12px; padding-bottom: 20px; }
+.bm8__step:last-child { padding-bottom: 0; }
+/* The rail that joins the numbers, as the console draws it: it says the three
+   are one sequence rather than three separate notes. */
+.bm8__step:not(:last-child)::before {
+  content: ''; position: absolute; left: 11px; top: 28px; bottom: 4px;
+  width: 1px; background: var(--border-subtle);
+}
+.bm8__stepn {
+  flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%;
+  background: var(--surface-inverse); color: var(--text-inverse);
+  font-size: var(--fs-xs); font-weight: var(--fw-semibold); font-variant-numeric: tabular-nums;
+}
+.bm8__stepbody { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; padding-top: 2px; }
+.bm8__stepbody > p, .bm8__stepbody > label { margin: 0; font-size: var(--fs-md); line-height: 1.45; color: var(--text-body); }
+
+.bm8__stores { display: flex; flex-wrap: wrap; gap: 8px; }
+.bm8__store {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: var(--ctl-height-sm); padding: 0 12px;
+  background: var(--int-neutral-bg); border: var(--bw-thin) solid var(--int-neutral-border); border-radius: var(--ctl-radius);
+  font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--text-primary); text-decoration: none;
+  transition: background var(--dur-fast) var(--ease-standard), border-color var(--dur-fast) var(--ease-standard);
+}
+.bm8__store:hover { background: var(--int-neutral-bg-hover); border-color: var(--int-neutral-border-hover); }
+.bm8__store:focus-visible { outline: none; box-shadow: 0 0 0 4px var(--focus-halo); }
+.bm8__store svg { color: var(--text-tertiary); }
+
+.bm8__scan { display: flex; align-items: center; flex-wrap: wrap; gap: 20px; }
+.bm8__qr {
+  flex: none; width: 116px; height: 116px; padding: 4px;
+  color: var(--text-primary); background: var(--surface-raised);
+  border: var(--bw-thin) solid var(--border-subtle); border-radius: var(--radius-md);
+}
+.bm8__key { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.bm8__keylabel { font-size: var(--fs-xs); color: var(--text-tertiary); }
+.bm8__keyrow { display: inline-flex; align-items: center; gap: 4px; }
+.bm8__keyrow code { font-family: var(--font-mono); font-size: var(--fs-md); letter-spacing: 0.06em; color: var(--text-primary); }
+
+/* Six characters wide, not the width of the card: a field sized to what it holds
+   says how much to type before anybody reads the label. */
+.bm8__codefield { max-width: 180px; }
+.bm8__codefield input { font-family: var(--font-mono); letter-spacing: 0.24em; }
+
+/* --- The configured card's two actions ----------------------------------------
+   Edit and the switch share a row, and the row sits where Set up sat before the
+   method was configured — so the card reads as one control that changes its
+   name rather than a button that vanishes and a link that appears somewhere
+   else. Costs one row of card height, which is the right trade for an action
+   that was previously an underlined word inside a line of values. */
+.bm8__ctlrow { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+
+/* --- Funding, in the right-hand column ----------------------------------------
+   The transactions chip used to sit on its own row under the description,
+   because the name already carried an "enabled" chip and a third one across the
+   row pushed the name into wrapping. That chip is gone, so the constraint went
+   with it: funding and enrolment are the two numbers this column reports, and
+   they are read together. */
+.bm8__right .bm8__txn { margin-bottom: 2px; }
+/* How much of a family is on (22 Sep 2026): a grey chip on the name line,
+   after Default, whole rather than clipped. */
+.bm8__name .bm8__state { flex: none; --badge-max: 24ch; }
+
+/* --- One list, and the row that narrows it ---------------------------------------
+   v1's toolbar. It replaces a tab bar, two section heads and their paragraphs:
+   a search, the filter that took over from eleven category cards, and the one
+   button for the tenant policy that is not a method.
+
+   The sentences those headings carried are on tips inside the pills, so the
+   explanation is one gesture away the first time somebody wonders what
+   "primary" means here and off the page every time after. */
+/* The two controls sit together at the left rather than at opposite ends.
+
+   The search used to take every pixel the bar had, which pushed the filter to
+   the far right and left a metre of nothing between two controls that are used
+   in the same breath. Neither needs the width: nobody types a long query into a
+   list of twenty-four names. */
+.bm8__bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.bm8__bar .bx-search { flex: 0 1 300px; width: auto; min-width: 0; }
+
+/* The phishing-resistant pill that stood here is gone: it is a row in the
+   filter menu now, not a second control beside it. */
+
+@media (max-width: 720px) {
+  .bm8__bar { align-items: stretch; }
+  .bm8__bar .bx-search { flex-basis: 100%; }
+}
+
+/* What kind of method a row is, where its surroundings do not already say.
+
+   Brand, and it is the only brand on the list. These three rows sit above
+   eleven cards with no heading between them, so the pill is the whole of what
+   separates "how a session starts" from "what it is stepped up with" — and grey
+   on a grey card was a label you had to go looking for to find the boundary it
+   was drawing. The console's rule is grey at rest and brand for what is
+   current; on this list the current thing is where the session begins.
+
+   The recovery pill stays quiet. It marks a second job a method can also do,
+   which is a footnote on the row rather than the row's identity — two loud
+   pills side by side would make neither of them the answer. */
+/* One use badge left, and it is the quiet one.
+
+   There were two: "Primary sign-in" and "Recovery". The first was brand-tinted,
+   which made it indistinguishable from the Default star beside it — two facts
+   of different sorts painted identically read as one repeated label — so it
+   went info blue, the colour this product already uses for what-kind-of-thing.
+   Then it went entirely: position says it better than a chip repeated down
+   three consecutive rows.
+
+   Recovery is the one that survives, and it is deliberately quiet. It qualifies
+   the row rather than classifying it — a method can be a second factor and a
+   way back in at the same time — so it should not compete with the
+   Phishing-resistant badge, which states a property of the method itself. */
+.bm8__badge.bm8__badge--use {
+  background: var(--surface-inset);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-weight: var(--fw-medium);
+}
+
+/* =============================================================================
+   The one method that runs — the line above the person's catalogue.
+
+   Three versions stood here before this one: a brand-tinted panel with a 56px
+   logo and a fact list, then a bordered full-width row with a live pill and a
+   chevron, then the same row stacked over its label. Each was accurate and each
+   was still competing with the list it introduces. This is a label and a pill
+   on one line — the size a one-word answer should be.
+   ========================================================================== */
+
+.bmact {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin: 2px 0 14px;
+}
+
+/* Two classes, because `.bpage h2` sets 16px semibold at one specificity point
+   more than a bare class — right for a section heading, and this is a label
+   introducing a value on the same line rather than a heading over a block. */
+.bmact .bmact__head {
+  margin: 0;
+  font-size: var(--fs-base); font-weight: var(--fw-regular);
+  letter-spacing: 0; color: var(--text-secondary);
+}
+
+/* The positive tint, not grey (owner, 21 Sep 2026: "make it a little
+   colourful"). Green because the colour has to MEAN something here: this is the
+   method that is on, and green is what every Active status in the console
+   already wears — so it reads as that at a glance, and as the opposite of the
+   amber "No active method" below it. Not orange, which is kept for the primary
+   action, and not blue, which the rebrand spends on selection. */
+.bmact__pill {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 5px 11px; border-radius: var(--radius-md);
+  background: var(--fb-positive-bg);
+  font-size: var(--fs-base); font-weight: var(--fw-semibold); color: var(--fb-positive-fg);
+  white-space: nowrap;
+}
+/* The method's own mark, at the size of the words beside it — and in the pill's
+   green, as a glyph rather than a tile. `.bv5__mico` (recovery.css) paints its
+   own grey glyph on a grey box with a hairline. On the old grey pill that box
+   was grey on grey and invisible; on green it would be a grey square sitting in
+   the pill. A vendor's logo keeps its white ground: a logo needs its own. */
+.bmact__pill .bv5__mico { flex: none; }
+.bmact__pill .bv5__mico:not(.bv5__mico--logo) { background: none; border: 0; color: inherit; }
+
+/* Nothing active is the opposite of this, not a quieter version of it. */
+.bmact__pill.is-none {
+  background: var(--fb-notice-bg); color: var(--fb-notice-fg);
+  font-weight: var(--fw-medium);
+}
+.bmact__pill.is-none > svg { flex: none; }
+
+/* The filter sits at the far end of the bar; the search keeps its 300px at the
+   near end. They are used in the same breath but they are not the same control,
+   and the gap is what says so. */
+.bm8__bar .bx-menu { margin-left: auto; }
+
+/* =============================================================================
+   The end-user point of view, and the family balance.
+
+   Moved here when auth-methods-v2.css was deleted. Neither block was ever v2's:
+   `.bmu__*` styles `UserMethodCard`, which v1 renders for a person, and the
+   balance rules undo two defaults so the tag survives in a panel header. They
+   lived in that file because that is where the end-user view was built.
+   ========================================================================== */
+
+/* -----------------------------------------------------------------------------
+   The end-user point of view.
+
+   Everything here is additive: the card, the tile, the name row and the control
+   corner are the admin's, unchanged. What is added is the inline form, the
+   Configured badge and the active-method line — the three things the live
+   end-user page has that the admin console does not.
+   -------------------------------------------------------------------------- */
+
+/* `.bmu__hero` and everything under it stood here — the brand-tinted panel that
+   stated the person's active method. It is `.bmact` in auth-methods.css now: one
+   row rather than a section, in the page's own colours, and owned by the screen
+   that renders it. Both views share the component, so both got smaller. */
+
+/* The card grows to hold its form rather than opening a dialog over the list,
+   which is what the live page does and the right call for a form this small. */
+.bmu__card { flex-direction: column; align-items: stretch; gap: 0; }
+.bmu__head { display: flex; align-items: flex-start; gap: 14px; }
+.bmu__card.is-open { border-color: var(--accent-soft-border); background: var(--surface-raised); }
+
+/* --- The inline form ---------------------------------------------------------- */
+
+.bmu__form {
+  margin-top: 14px; padding-top: 14px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex; flex-direction: column; gap: 12px;
+}
+
+.bmu__changelink { margin: 0; font-size: var(--fs-sm); color: var(--text-link); cursor: pointer; }
+.bmu__hint { margin: 0; font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.55; max-width: 62ch; }
+
+.bmu__field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+/* What is wrong with a typed value, under it. */
+.bmu__error { margin: 0; font-size: var(--fs-sm); line-height: 1.45; color: var(--fb-negative-fg); }
+.bmu__field > span { font-size: var(--fs-xs); font-weight: var(--fw-medium); color: var(--text-secondary); }
+/* Scoped to the block so the kit default wins over nothing else — these sit
+   inside a card that already sets its own type scale. */
+.bmu__form .bmu__field input,
+.bmu__form .bmu__field select {
+  height: var(--ctl-height-md); padding: 0 11px;
+  background: var(--ctl-bg);
+  border: var(--bw-thin) solid var(--ctl-border); border-radius: var(--ctl-radius);
+  font-size: var(--fs-md); color: var(--text-primary); font-family: inherit;
+}
+.bmu__form .bmu__field input:focus-visible,
+.bmu__form .bmu__field select:focus-visible {
+  outline: none; border-color: var(--ctl-border-focus); box-shadow: 0 0 0 4px var(--focus-halo);
+}
+.bmu__field--code input { max-width: 140px; font-family: var(--font-mono); letter-spacing: 0.18em; }
+
+/* Two columns where the two halves are one answer — a question and its answer,
+   a phone and the email it falls back to. */
+.bmu__pair { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 10px; }
+
+/* The enrolment ceremonies: something to point a phone at, beside what to do. */
+.bmu__scan { display: flex; align-items: flex-start; gap: 18px; }
+.bmu__qr {
+  flex: none; display: grid; place-items: center;
+  width: 124px; height: 124px; border-radius: var(--radius-md);
+  background: var(--surface-sunken); border: 1px solid var(--border-subtle);
+  color: var(--text-tertiary);
+}
+
+.bmu__foot { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+
+@media (max-width: 720px) {
+  .bmu__pair { grid-template-columns: minmax(0, 1fr); }
+  .bmu__scan { flex-direction: column; }}
+
+/* --- What moved (tour/methods-tour.ts, 7 Oct 2026) ----------------------------
+   The announcement sits between the head and the tabs. It is the kit's `Note`
+   now (owner, 16 Oct 2026: "use this as a common note component"), so the
+   card, the mark, the blue heading, Read more and the tour's place in the row
+   are all kit.css `.bx-note*`; what is here is only where it sits on the page.
+   A setting that moved says where it was beside its label, quiet: it answers a
+   returning admin, and a new one reads past it. */
+.bm8__news { margin: calc(-1 * var(--space-4)) 0 var(--space-6); }
+.bm8__was { font-size: var(--fs-xs); font-weight: var(--fw-regular); color: var(--text-muted); }
+
+/* A person's family of one, its form open: the slider is the method's own page — no card around it, each question and
+   its answer on a row of their own. */
+.bm8__list.is-bare { border: 0; background: none; box-shadow: none; }
+.bmu__form--bare { margin: 0; padding: 0; border: 0; gap: var(--space-4); }
+.bmu__form--bare .bmu__pair { grid-template-columns: minmax(0, 1fr); gap: var(--space-3); }
+
+/* What the profile holds for a panel's methods, read only (user-config.tsx `ProfileFacts`). */
+.bmu__profile { margin: 0 0 var(--space-5); padding: var(--space-5); border: var(--bw-thin) solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface-sunken); }
+.bmu__profilebar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin: 0 0 var(--space-3); }
+.bmu__profilebar .bmu__profilehead { margin: 0; }
+.bmu__profilehead { margin: 0 0 var(--space-3); font-size: var(--fs-sm); font-weight: var(--fw-semibold); color: var(--text-secondary); }
+.bmu__profilegrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--space-4); margin: 0; }
+.bmu__profilegrid dt { font-size: var(--fs-xs); color: var(--text-secondary); }
+.bmu__profilegrid dd { margin: 2px 0 0; font-size: var(--fs-md); color: var(--text-primary); overflow-wrap: anywhere; }
+.bmu__profilegrid dd.is-empty { color: var(--text-tertiary); }
+
+/* The setup steps of the apps, tokens and passkeys, as the live end-user page numbers them (user-config.tsx `Steps`). */
+.bmu__steps { display: grid; gap: var(--space-5); margin: 0; padding: 0; list-style: none; }
+.bmu__step { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: var(--space-4); align-items: start; }
+.bmu__stepn { display: grid; place-items: center; width: 24px; height: 24px; border-radius: var(--radius-full); background: var(--surface-sunken); font-size: var(--fs-sm); font-weight: var(--fw-semibold); color: var(--text-secondary); }
+.bmu__stepbody { display: grid; gap: var(--space-3); min-width: 0; }
+.bmu__stores { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.bmu__secret { display: grid; gap: var(--space-2); align-content: start; font-size: var(--fs-sm); color: var(--text-secondary); }
+.bmu__secret code { font-family: var(--font-mono); font-size: var(--fs-md); letter-spacing: 0.08em; color: var(--text-primary); }
+.bmu__pkgroup { display: grid; gap: var(--space-3); }
+.bmu__pkgroup h4 { margin: 0; font-size: var(--fs-md); font-weight: var(--fw-semibold); }
+.bmu__pkopts { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.bmu__pkopt { padding: 6px 12px; border: var(--bw-thin) solid var(--border-default); border-radius: var(--radius-md); background: var(--surface-raised); font: inherit; font-size: var(--fs-sm); color: var(--text-primary); cursor: pointer; }
+.bmu__pkopt:hover { background: var(--surface-sunken); }
+.bmu__pkopt.is-on { border-color: var(--blue, var(--accent)); background: var(--blue-soft, var(--surface-sunken)); }
+.bmu__pkopt:focus-visible { outline: var(--bw-thick) solid var(--focus-ring); outline-offset: 1px; }
+
+/* Security Questions, bare: a question and its answer sit close, and each set
+   is ruled off from the next, so the list reads as sets, not six fields in a
+   row (owner, 9 Oct 2026). */
+.bmu__form--bare { gap: var(--space-6); }
+.bmu__form--bare .bmu__pair { gap: var(--space-2); }
+.bmu__form--bare .bmu__pair + .bmu__pair { padding-top: var(--space-6); border-top: var(--bw-thin) solid var(--border-subtle); }
+
+/* The enrolment steps, one line each (owner, 9 Oct 2026): a short title, with
+   the step's control on the same line, and only the QR step taller. */
+.bmu__steps { gap: var(--space-6); }
+.bmu__stepbody { gap: var(--space-4); }
+.bmu__steprow { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3) var(--space-5); min-height: 24px; }
+.bmu__steptitle { margin: 0; font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--text-primary); }
+.bmu__scan { align-items: center; gap: var(--space-6); }
+.bmu__qr { width: 96px; height: 96px; }
+.bmu__or { font-size: var(--fs-sm); color: var(--text-tertiary); }
+.bmu__secret { gap: var(--space-2); justify-items: start; }
+.bmu__secret code { font-size: var(--fs-md); }
+.bmu__code { width: 120px; font-family: var(--font-mono); letter-spacing: 0.18em; }
+.bmu__code--wide { width: 200px; letter-spacing: normal; }
+
+/* --- Authenticator setup, 9 Oct: a stepper with a connector, QR and key as one block, six code boxes. */
+.bmu__step { position: relative; }
+.bmu__step:not(:last-child)::before {
+  content: ''; position: absolute; left: 11.5px; top: 30px; bottom: calc(-1 * var(--space-6) + 6px);
+  width: var(--bw-thin); background: var(--border-default);
+}
+.bmu__stepn { background: var(--surface-raised); border: var(--bw-thin) solid var(--border-default); font-size: var(--fs-xs); }
+.bmu__steptitle { font-size: var(--fs-md); }
+.bmu__scan {
+  align-items: stretch; gap: 0; width: fit-content; max-width: 100%;
+  border: var(--bw-thin) solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface-raised); overflow: hidden;
+}
+.bmu__scan .bmu__qr { width: 120px; height: 120px; margin: var(--space-4); border: 0; background: var(--surface-sunken); }
+.bmu__secret {
+  display: grid; align-content: center; gap: var(--space-2); padding: var(--space-4) var(--space-5);
+  border-left: var(--bw-thin) solid var(--border-subtle); background: var(--surface-sunken);
+}
+.bmu__secretlabel { font-size: var(--fs-xs); font-weight: var(--fw-medium); color: var(--text-secondary); }
+.bmu__secretrow { display: flex; align-items: center; gap: var(--space-2); }
+.bmu__secret code { font-family: var(--font-mono); font-size: var(--fs-md); letter-spacing: 0.06em; word-spacing: 0.3em; color: var(--text-primary); white-space: nowrap; }
+.bmu__codes { display: flex; gap: var(--space-2); }
+.bmu__codes .bmu__codebox:nth-child(3) { margin-right: var(--space-3); }
+.bmu__codebox {
+  width: 40px; height: 44px; padding: 0; text-align: center;
+  font-family: var(--font-mono); font-size: var(--fs-lg); color: var(--text-primary);
+  border: var(--bw-thin) solid var(--border-default); border-radius: var(--radius-md); background: var(--surface-raised);
+}
+.bmu__codebox:focus-visible { outline: var(--bw-thick) solid var(--focus-ring); outline-offset: 1px; border-color: var(--accent-soft-border); }
+@media (max-width: 640px) {
+  .bmu__scan { flex-direction: column; width: 100%; }
+  .bmu__secret { border-left: 0; border-top: var(--bw-thin) solid var(--border-subtle); }
+}
+
+/* Grid Pattern's panel (21 Oct 2026): a 4 x 4 grid of numbers to pick four tiles from. */
+.bmu__grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3); max-width: 28ch; }
+.bmu__tile { aspect-ratio: 1; border: var(--bw-thin) solid var(--border-default); border-radius: var(--radius-md); background: var(--surface-raised); font: inherit; font-size: var(--fs-lg); font-weight: var(--fw-medium); color: var(--text-primary); cursor: pointer; }
+.bmu__tile:hover { background: var(--surface-sunken); }
+.bmu__tile.is-on { border-color: var(--blue); background: var(--blue); color: var(--text-on-brand); font-weight: var(--fw-semibold); }
+.bmu__tile.is-on:hover { background: var(--blue-hover, var(--blue)); }
+.bmu__tile:focus-visible { outline: none; box-shadow: 0 0 0 var(--bw-thick) var(--focus-ring); }
+
+/* General settings (21 Oct 2026): the button at the tab bar's end, and the panel's rows. */
+.bm8__gen { display: flex; flex-direction: column; gap: var(--space-8); }
+.bm8__gen h3 { margin: 0 0 var(--space-3); font-size: var(--fs-md); font-weight: var(--fw-semibold); color: var(--text-primary); }
+.bm8__grow { display: flex; align-items: center; justify-content: space-between; gap: var(--space-6); padding: var(--space-4) 0; border-top: var(--bw-thin) solid var(--border-subtle); }
+.bm8__gtext { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.bm8__gtext b { font-weight: var(--fw-medium); color: var(--text-primary); }
+.bm8__gtext span { font-size: var(--fs-sm); color: var(--text-tertiary); }
+.bm8__gctl { flex: none; }
+
+/* The general settings on the page's own tab (owner, 21 Oct 2026), the same rows the slide-over draws.
+
+   Held to a column: the rows put the label at one end and the control at the other, and on a full-width page that is a
+   switch half a screen from the words it answers. The measure is the blurb's, so the tab's text column lines up with
+   the page's own. */
+/* Full width (owner, 18 Nov 2026: "push the options to the right, take the full space"): the rows run the page's width
+   with each switch at the far end, as the Methods and Recovery tabs do. Was held to 68ch (21 Oct 2026). */
+.bm8__genpane { max-width: none; }

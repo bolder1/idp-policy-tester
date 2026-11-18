@@ -1,0 +1,1132 @@
+import { renderToStaticMarkup } from 'react-dom/server'
+import type { ReactNode } from 'react'
+import { describe, expect, it } from 'vitest'
+
+import { BrandProvider } from '../store'
+import { apps } from '../data'
+import { showcaseTenant } from '../fixtures'
+import { AddExistingPolicy } from './AddExistingPolicy'
+import { SharedPolicyFork } from './shared-policy-fork'
+import { ApplicationPage, NewApplicationPage } from './ApplicationPage'
+import { TestingSessionProvider } from './testing/session'
+import { AppActivity } from './app-activity'
+import { GLANCE_ROWS } from './app-policy-model'
+import { AppPolicyFocusOverride } from './app-policy-focus'
+import { APP_POLICY_GLANCE, PolicyChain } from './app-policy-view'
+import { appStanding } from './app-standing'
+import { replaceFacts } from './applications-model'
+import { ReplaceCard } from './replace-dialog'
+import { policyOption } from './policy-option'
+import { PolicyFact, PolicyFacts } from './app-facts'
+import { HEAD_REPLACE_ON_HOLD, HEAD_SPLIT_EDIT } from './app-policies'
+import { PolicyPage } from './sign-in-tests/InspectPanel'
+import type { Policy } from '../data'
+import kitSrc from '../kit.tsx?raw'
+import kitCss from '../kit.css?raw'
+import toneMarkSrc from '../tone-mark.tsx?raw'
+import activitySrc from './app-activity.tsx?raw'
+import viewSrc from './app-policy-view.tsx?raw'
+import appPageSrc from './ApplicationPage.tsx?raw'
+import addExistingSrc from './AddExistingPolicy.tsx?raw'
+
+/* Every screen's source, to read which popups name a policy and how. */
+const screenSrc = import.meta.glob('./*.tsx', { query: '?raw', import: 'default', eager: true }) as Record<string, string>
+
+/* -----------------------------------------------------------------------------
+   An application's page and its Add existing policy drawer, drawn once as
+   static markup on the showcase tenant: the head, the tabs, the Policies list
+   in the engine's order, the setup forms, the values the service provider is
+   given, and the same page for an application not stored yet. Where each
+   policy stands is pinned in app-standing.test.ts, and the page's decisions in
+   app-page-model.test.ts; nothing here presses anything.
+   -------------------------------------------------------------------------- */
+
+/* The tab is drawn at a glance here (the layout of 20 Oct 2026); the policy-alone layout (21 Oct) has its own tests below. */
+const renderIn = (focus: boolean, node: ReactNode) =>
+  renderToStaticMarkup(
+    <BrandProvider>
+      <TestingSessionProvider>
+        <AppPolicyFocusOverride.Provider value={focus}>{node}</AppPolicyFocusOverride.Provider>
+      </TestingSessionProvider>
+    </BrandProvider>,
+  )
+const render = (node: ReactNode) => renderIn(false, node)
+/* The word Policy in a policy tag (app-facts.tsx `PolicyFact`) is the marker, not part of the sentence round it, so a
+   sentence is read without it; the marker itself is asserted where it is drawn. */
+const text = (html: string) => html.replace(/<span class="bx-confirm__kind">.*?<\/span>/g, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
+const count = (html: string, needle: string) => html.split(needle).length - 1
+/* The view's orange CONTROLS, which is what "one orange button per view" counts. A split button (kit `SplitButton`)
+   is one object drawn in two halves — the action, and the chevron holding the rest of what can be done to it — and
+   both halves wear the action's fill, so the chevron is not a second orange button and is not counted as one. */
+const orange = (html: string) => count(html, 'bx-btn--brand') - [...html.matchAll(/class="[^"]*bx-btn--brand[^"]*bx-menu__trigger--icon/g)].length
+const tabsOf = (html: string) => [...html.matchAll(/role="tab"[^>]*>(.*?)<\/button>/g)].map((m) => text(m[1]).trim())
+const selected = (html: string) => text(html.match(/role="tab"[^>]*aria-selected="true"[^>]*>(.*?)<\/button>/)?.[1] ?? '').trim()
+
+describe('an application page', () => {
+  const out = render(<ApplicationPage appId="slack" />)
+
+  it('heads it as a detail page: the way back, the name with its pencil, the type, Documentation', () => {
+    const t = text(out)
+    expect(t).toContain('All applications')
+    expect(out).toMatch(/<h1[^>]*>Slack<\/h1>/)
+    expect(out).toContain('aria-label="Rename"')
+    expect(t).toContain('Desktop')
+    expect(t).toContain('Documentation')
+  })
+
+  it('has the live tabs with ours between, no counts, and opens on Policies', () => {
+    expect(tabsOf(out)).toEqual(['Basic', 'Advanced', 'Sign-in options', 'Attributes', 'Policies', 'Post sign-in', 'Users', 'Groups', 'Metadata'])
+    expect(selected(out)).toBe('Policies')
+    expect(out).toContain('aria-label="Policies"')
+  })
+
+  it('ends an OAuth application’s tabs with Endpoints, chosen by protocol', () => {
+    expect(tabsOf(render(<ApplicationPage appId="github" />)).at(-1)).toBe('Endpoints')
+  })
+
+  it('lands a tab this application does not have on Policies', () => {
+    expect(selected(render(<ApplicationPage appId="slack" tab="endpoints" />))).toBe('Policies')
+  })
+
+  it('numbers the policies the way the engine ranks them, the tenant default under them', () => {
+    const t = text(out)
+    /* One application has one policy: Slack access, then the default under it. */
+    const all = t.indexOf('Slack access')
+    expect(all).toBeGreaterThan(-1)
+    expect(t).toContain('Global Default Policy')
+    expect(t.indexOf('Global Default Policy')).toBeGreaterThan(all)
+  })
+
+  it('has no second policy to add once it has its one, and no explaining sentence over the list', () => {
+    /* One application has at most one sign-in policy, and nothing adds another. Since 3 Nov 2026 Edit policy is a
+       secondary, so the tab has no orange until a save bar is up. */
+    expect(orange(out)).toBe(0)
+    expect(text(out)).not.toContain('Create new policy')
+    expect(text(out)).not.toContain('Add existing policy')
+    expect(text(out)).not.toContain('Checked top to bottom')
+  })
+
+  it('has one orange button, Create new policy, where the application has no policy yet', () => {
+    const none = render(<ApplicationPage appId="salesforce" />)
+    expect(count(none, 'bx-btn--brand')).toBe(1)
+    expect(text(none)).toContain('Create new policy')
+  })
+})
+
+/* The Policies tab (spec APP-POLICY-TAB.md §8.3): the policy read in the page — its head with two buttons, the chain
+   down to the Global Default, the application's sign-ins and the policy's changes — and, with no policy, what the
+   application gets now. Static markup: nothing here opens a row or a menu. */
+describe('the Policies tab', () => {
+  const box = render(<ApplicationPage appId="box" />)
+  const t = text(box)
+  /* The head's own buttons: its actions slot, which ends before the fact line's links can be counted with it. */
+  const acts = (html: string) => html.slice(html.indexOf('apol__acts'), html.indexOf('</div>', html.indexOf('apol__acts')))
+  const buttonsIn = (html: string) => [...html.matchAll(/<button[^>]*>(.*?)<\/button>/g)].map((m) => text(m[1]).trim())
+
+  it('heads a policy this application has to itself with the split alone and a ⋯ trail, and nothing orange in the view', () => {
+    expect(box).toMatch(/<h2[^>]*>Box access<\/h2>/)
+    /* Since 27 Oct 2026 (HEAD_SPLIT_EDIT) the head is a split button — Edit policy and its chevron, which holds Replace
+       policy, on hold — and the ⋯, which static markup never opens. Box's policy is on Box alone, so there is no
+       "all" to edit and no Edit all (the shared case is below). */
+    expect(buttonsIn(acts(box))).toEqual(['Edit policy', '', ''])
+    expect(acts(box)).toContain('aria-label="More ways to change this policy"')
+    expect(acts(box)).toContain('aria-label="More for this policy"')
+    expect(acts(box)).not.toContain('Edit all')
+    expect(orange(box)).toBe(0)
+    expect(orange(acts(box))).toBe(0)
+  })
+
+  it('says the status in a plain chip, with every switch in the head\'s one menu', () => {
+    /* The pill was the trigger until 22 Oct 2026, when the owner gave up on making a tinted tag read as pressable
+       ("make it a chip only now, no action, and move the action to the main action button"). So: a chip that is
+       not a button, and the switches it used to hold are items of the head\'s menu, which static markup does not
+       open — hence none of their words appear below. */
+    expect(box).toContain('class="apol__status"')
+    expect(box).not.toContain('aria-label="Status: Active. Change status"')
+    const all = buttonsIn(box)
+    for (const word of ['Turn off', 'Monitor', 'Turn on', 'Remove', 'Remove from Box', 'Show in builder', 'Delete draft']) expect(all).not.toContain(word)
+    expect(t).not.toContain('Show in builder')
+  })
+
+  it('says what it covers and links the groups to the Users tab, read only', () => {
+    expect(t).toContain('Who it covers')
+    // One chip per group, face then name, then the count (20 Oct 2026: no commas or middle dot between them).
+    expect(t).toMatch(/Engineering\s*\S*\s*Design\s*\d+ people/)
+    expect(box).toMatch(/class="bx-chip[^"]*is-clickable[^"]*"><button[^>]*class="bx-chip__main"><span class="bx-face is-group/)
+    // When it changed is said once, in Changes, not again in the fact line.
+    expect(t).not.toMatch(/Changed \d+ days? ago/)
+    expect(t).not.toContain('Change in policy')
+  })
+
+  it('lists the chain to the Global Default: the rules, Nothing else matched, then outside the policy', () => {
+    const rules = t.indexOf('Engineers, where we operate')
+    const last = t.indexOf('Nothing else matched')
+    const outside = t.indexOf('Outside Box access')
+    const gd = t.lastIndexOf('Global Default Policy')
+    expect(rules).toBeGreaterThan(-1)
+    expect(last).toBeGreaterThan(rules)
+    expect(outside).toBeGreaterThan(last)
+    expect(gd).toBeGreaterThan(outside)
+    /* The policy's own rules are the builder's read-only canvas (19 Oct 2026). At a glance (20 Oct 2026) the Global
+       Default is the rules panel's foot strip, after the canvas's last card, and Sample sits in Sign-in activity's
+       head, since the canvas shows no modelled figure; the order and the words hold in both layouts. */
+    expect(box).toContain('insp__canvas')
+    expect(t).toContain('Sample')
+  })
+
+  it('makes every row that opens a real button that says it is closed and names what it opens', () => {
+    if (APP_POLICY_GLANCE) {
+      /* At a glance the Global Default's row became the rules panel's foot strip (20 Oct 2026): one button, closed,
+         naming the sheet it opens. A class of its own, so the chain's row grid never reaches it; no chain rows remain. */
+      const strips = [...box.matchAll(/<button[^>]*class="apol__gdstrip[^"]*"[^>]*>/g)].map((m) => m[0])
+      expect(strips).toHaveLength(1)
+      expect(strips[0]).toContain('aria-expanded="false"')
+      expect(strips[0]).toContain('aria-controls="apol-gdsheet"')
+      expect(box).not.toMatch(/<button[^>]*class="apol__row/)
+      return
+    }
+    const rows = [...box.matchAll(/<button[^>]*class="apol__row[^"]*"[^>]*>/g)].map((m) => m[0])
+    /* The rules are on the canvas now; the Global Default, which decides for everyone Box access does not cover, keeps its row. */
+    expect(rows).toHaveLength(1)
+    for (const r of rows) {
+      expect(r).toContain('aria-expanded="false"')
+      expect(r).toMatch(/aria-controls="apol-row-[^"]+"/)
+    }
+  })
+
+  it('draws no frozen picture of the builder', () => {
+    expect(box).not.toContain('insp__frozen')
+    expect(box).not.toContain('bento')
+  })
+
+  it('has Sign-in activity tied to the rules, and the policy’s changes beside it', () => {
+    expect(t).toContain('Sign-in activity')
+    expect(box).toContain('aria-label="Find a person in Box sign-ins"')
+    /* Changes left the tab, 19 Oct 2026. */
+    expect(box).not.toContain('apol-changes')
+    expect(t).toContain('Designers, where we operate')
+    expect(box).not.toMatch(/Show all \d/)
+  })
+
+  it('says why an inactive policy decides nothing, with Turn on', () => {
+    /* The state line is the kit's Note (owner, 16 Oct 2026): the state its heading, the sentence under it. */
+    const out = render(<ApplicationPage appId="hrms" />)
+    const at = out.indexOf('class="apol__state"')
+    expect(at).toBeGreaterThan(-1)
+    const state = out.slice(at, out.indexOf('</button>', at))
+    expect(state).toMatch(/<div class="bx-note" role="note" aria-labelledby="[^"]+">/)
+    expect(state).toMatch(/<h3 id="[^"]+" class="bx-note__title">Inactive<\/h3>/)
+    expect(text(state)).toContain('Inactive It decides no sign-ins. Turn on')
+    expect(state).not.toContain('bx-callout')
+  })
+
+  it('says a shared policy is shared, in the fact line', () => {
+    const outlook = text(render(<ApplicationPage appId="outlook" />))
+    expect(outlook).toContain('Other applications')
+  })
+
+  it('shows what an application with no policy gets: the Global Default’s own rules, and one orange button', () => {
+    const none = render(<ApplicationPage appId="salesforce" />)
+    const n = text(none)
+    expect(n).toContain('No policy on Salesforce')
+    const gd = showcaseTenant().policies.find((p) => p.isSystem)!
+    for (const r of gd.rules) expect(n).toContain(r.name)
+    expect(n).toContain('Nothing else matched')
+    expect(n).not.toContain('Edit rule')
+    expect(n).not.toContain('Outside')
+    expect(count(none, 'bx-btn--brand')).toBe(1)
+    /* A primary, a secondary and a ⋯ (owner, 23 Oct 2026): Create new policy leads. */
+    expect(buttonsIn(acts(none))[0]).toBe('Create new policy')
+  })
+
+  it('keeps counts off the tabs', () => {
+    for (const label of tabsOf(box)) expect(label).not.toMatch(/\d/)
+  })
+
+  /* Review, 15 Oct 2026. */
+  it('tells its same-worded buttons apart: each View all says where it goes', () => {
+    expect(t).toContain('View all sign-ins on Box')
+  })
+
+  it('fills Access checks in from the tab and plays nothing: a prefill, never a load or a patch of the run', () => {
+    const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(code(viewSrc)).toContain('session.prefill(appCheckForm(app.id, session, policies, todayIn(), nowIn()))')
+    expect(code(viewSrc)).not.toContain('session.patch(')
+    expect(code(viewSrc)).not.toContain('session.load(')
+    expect(code(activitySrc)).toContain('session.prefill(checkFormFor(app.id, policy, users, apps, todayIn(), personId))')
+    /* A past sign-in's Open in Check access plays it, as the Sign-in activity page's does. */
+    expect(code(activitySrc).match(/session\.load\(/g)).toHaveLength(1)
+    expect(code(activitySrc)).toContain('session.load(formOf(r.facts, zones))')
+  })
+
+  it('goes back from either View all to the application it came from', () => {
+    const code = activitySrc.replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(code).toContain("go({ name: 'sign-in-activity', appId: app.id, from: { appId: app.id } })")
+    expect(code).toContain("go({ name: 'sign-in-activity', view: 'changes', q: policy.name, from: { appId } })")
+  })
+})
+
+/* The Policies tab at a glance (app-policy-view.tsx `APP_POLICY_GLANCE`, 20 Oct 2026): the rules and Sign-in activity as
+   two panels of one fixed height, the sign-ins paged, a sign-in picked rather than opened in place. Static markup, so
+   these pin what is drawn on arrival — the browser check covers the presses. */
+describe.runIf(APP_POLICY_GLANCE)('the Policies tab at a glance', () => {
+  const box = render(<ApplicationPage appId="box" />)
+  const aws = render(<ApplicationPage appId="aws" />)
+  const rulesOf = (html: string) => html.slice(html.indexOf('id="apol-rules"'), html.indexOf('id="apol-activity"'))
+  const tags = (html: string, cls: string) => [...html.matchAll(new RegExp(`<button[^>]*class="${cls}[^"]*"[^>]*>`, 'g'))].map((m) => m[0])
+
+  it('draws two fixed frames, their height from the one page size', () => {
+    /* The frame is what keeps both panels one height whatever opens inside them, and GLANCE_ROWS is its only source. */
+    for (const html of [box, aws]) {
+      expect(html).toContain('class="apol__pair is-glance"')
+      expect(count(html, 'apol__frame')).toBe(2)
+      expect(html).toContain(`style="--apol-rows:${GLANCE_ROWS}"`)
+      expect(html).toContain('insp__canvas is-framed')
+    }
+  })
+
+  it('has no way to grow: no Show more, no row opened in place, one page of rows and one stop for the table', () => {
+    /* The owner's ask (19 Oct 2026): expanding moved everything. Rows are picked now, a page at a time. */
+    const t = text(aws)
+    expect(t).not.toContain('Show more')
+    expect(t).not.toContain('Show fewer')
+    expect(aws).not.toContain('sia__toggle')
+    expect(aws).not.toContain('sia__detail')
+    const picks = tags(aws, 'apol__pick')
+    expect(picks.length).toBeGreaterThanOrEqual(1)
+    expect(picks.length).toBeLessThanOrEqual(GLANCE_ROWS)
+    for (const p of picks) expect(p).toContain('aria-pressed="false"')
+    expect(picks.filter((p) => p.includes('tabindex="0"'))).toHaveLength(1)
+  })
+
+  it('reads each sign-in in the Sign-in activity page’s order, the row’s menu last', () => {
+    /* Owner, 20 Oct 2026: "fix the order of each item in the row": When, Person, From, Result, Rule, as the page. */
+    const at = aws.indexOf('apol__gtable')
+    const head = aws.slice(at, aws.indexOf('</thead>', at))
+    expect([...head.matchAll(/<th[^>]*>(.*?)<\/th>/g)].map((m) => text(m[1]).trim())).toEqual(['When', 'Person', 'From', 'Result', 'Rule', 'Actions'])
+    expect(head).toMatch(/<th scope="col" class="[^"]*apol__c-menu"><span class="u-sr-only">Actions<\/span><\/th>/)
+    /* The person is the row's keyboard stop, in the second cell; the place third, the outcome fourth, the menu last. */
+    const from = aws.indexOf('<tr data-row=')
+    const row = aws.slice(from, aws.indexOf('</tr>', from))
+    const cells = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((m) => m[0])
+    expect(cells).toHaveLength(6)
+    expect(text(cells[0]).trim()).toMatch(/^\w{3} \d{1,2} \w{3}, \d{2}:\d{2}$/)
+    expect(cells[1]).toContain('class="apol__pick"')
+    expect(cells[2]).toContain('apol__from')
+    expect(cells[3]).toMatch(/bx-decision-badge|Can/)
+    expect(cells[5]).toContain('bx-rowmenu')
+  })
+
+  it('ends every sign-in in its own menu, named for the row, and only the stop’s in the tab order', () => {
+    /* Owner, 20 Oct 2026: "add it to each list item on hover; use it as icon menu button". */
+    /* The sign-ins' table alone: the page has other kebabs. */
+    const table = aws.slice(aws.indexOf('apol__gtable'), aws.indexOf('</table>', aws.indexOf('apol__gtable')))
+    const picks = tags(table, 'apol__pick')
+    const menus = tags(table, 'bx-rowmenu')
+    expect(picks.length).toBeGreaterThanOrEqual(1)
+    expect(menus).toHaveLength(picks.length)
+    for (const m of menus) {
+      expect(m).toContain('aria-haspopup="menu"')
+      expect(m).toMatch(/aria-label="Actions for [^",]+, \w{3} \d{1,2} \w{3}, \d{2}:\d{2}"/)
+    }
+    /* One stop for the table, then its row's menu: the two tabindex="0" share a row, every other kebab is out. */
+    expect(menus.filter((m) => m.includes('tabindex="0"'))).toHaveLength(1)
+    expect(menus.filter((m) => m.includes('tabindex="-1"'))).toHaveLength(menus.length - 1)
+    const rows = [...table.matchAll(/<tr data-row=[\s\S]*?<\/tr>/g)].map((m) => m[0])
+    const stopRows = rows.filter((r) => /class="apol__pick"[^>]*tabindex="0"/.test(r))
+    expect(stopRows).toHaveLength(1)
+    expect(stopRows[0]).toMatch(/class="bx-rowmenu[^"]*"[^>]*tabindex="0"/)
+  })
+
+  it('keeps the foot to the pick and the pager: its ways on are in each row’s menu', () => {
+    const code = activitySrc.replace(/\/\*[\s\S]*?\*\//g, '')
+    const glance = code.slice(code.indexOf('export function GlanceActivity'), code.indexOf('export function AppChanges'))
+    const foot = glance.slice(glance.indexOf('apol__actfoot'))
+    expect(foot).not.toContain('CopyText')
+    expect(foot).not.toContain('openInChecks')
+    expect(foot).toContain('Clear selection')
+    expect(foot).toContain('<ListPager')
+    /* The menu's two items: Check access's own name, and Copy details with the toast that says it was copied. */
+    expect(glance).toContain('label: `Open in ${ACCESS_CHECK}`')
+    expect(glance).toContain("label: 'Copy details'")
+    expect(glance).toContain("showToast(ok ? 'Copied'")
+    expect(text(aws)).not.toContain('Open in Check access')
+    expect(aws).not.toContain('sia__copy')
+  })
+
+  it('pages the sign-ins with the console’s pager, named', () => {
+    expect(aws).toContain('aria-label="Sign-in pages"')
+    expect(text(aws)).toMatch(/\d+–\d+ of \d+/)
+  })
+
+  it('narrows the sign-ins by rule', () => {
+    expect(aws).toContain('aria-label="Filter by rule"')
+    expect(text(aws)).toContain('All rules')
+  })
+
+  it('says each card’s outcome where its state pill was', () => {
+    /* At a glance: Allow, 2FA or Deny on every card, not "Complete" or the last row's "Always on". Counted on the
+       canvas alone (the Global Default's strip below it has a badge of its own), card for card against the policy. */
+    const rules = rulesOf(aws)
+    const canvas = rules.slice(0, rules.indexOf('apol__rulesfoot'))
+    const own = showcaseTenant().policies.find((p) => p.id === 'sc-aws-engineering')!
+    /* NO outcome badge on these cards since 22 Oct 2026 (owner: "the user can open and see the result, so I
+       don't want to showcase that twice"), and no state pill either ("remove this as well"). The head is the
+       number and the name; the decision is read by opening the rule. */
+    expect(own.rules.length).toBeGreaterThanOrEqual(2)
+    expect(count(canvas, 'class="bb__said"')).toBe(0)
+    /* This is the GLANCE layout (FOCUS off), which the owner does not use. With no outcome badge to stand in its
+       place, the builder's own state pill is what its heads carry again. On the layout he does use, the pill is
+       hidden in applications.css; nothing here asserts on that, because hiding is not removing. */
+    expect(rules).toContain('>Complete<')
+  })
+
+  it('gives each card one keyboard stop, its title, which says what it opens', () => {
+    /* One tab stop per card; the fold mark is the pointer's, and the reorder number is out of the order (`locked`). */
+    const rules = rulesOf(aws)
+    const titles = tags(rules, 'bb__titlebtn')
+    expect(titles.length).toBeGreaterThanOrEqual(7)
+    for (const b of titles) expect(b).toContain('aria-controls="bb-')
+    for (const b of [...tags(rules, 'bb__act bb__fold__btn'), ...tags(rules, 'bb__idx')]) expect(b).toContain('tabindex="-1"')
+  })
+
+  it('moves Sample to Sign-in activity’s head, the panel whose rows are the sample', () => {
+    const at = aws.indexOf('id="apol-activity"')
+    expect(text(aws.slice(at, aws.indexOf('class="apol__bar"', at)))).toContain('Sample')
+    expect(text(rulesOf(aws))).not.toContain('Sample')
+  })
+
+  it('draws an application with no policy in the same frame, with no Global Default foot and the rail under it', () => {
+    /* The same canvas as a policy's tab (owner, 23 Oct 2026: remove sign-in activity, use the current canvas for the
+       Global Default as well): wide, with nothing beside it, and no Global Default foot. */
+    const none = render(<ApplicationPage appId="salesforce" />)
+    expect(none).toContain('class="apol__focus"')
+    expect(none).not.toContain('apol__pair')
+    expect(none).not.toContain('id="apol-activity"')
+    expect(none).not.toContain('apol__gdstrip')
+    expect(none).not.toContain('apol__foot')
+  })
+})
+
+/* The 19 Oct layout the glance replaces is kept behind `APP_POLICY_GLANCE` (flags are kept, not dead), so its own
+   contracts stay pinned whichever way the flag stands: the chain's Global Default row, the sign-ins that open in place,
+   and Show more. Drawn straight from its parts, as the tab draws them with the flag off. */
+describe('the Policies tab with the glance off', () => {
+  const tenant = showcaseTenant()
+  const box = tenant.apps.find((a) => a.id === 'box')!
+  const st = appStanding('box', tenant.policies, tenant.directory.people)
+  const shown = st.rows.find((r) => r.state === 'decides') ?? st.rows[0]
+  const chain = render(
+    <PolicyChain
+      app={box}
+      policy={shown.policy}
+      globalDefault={st.fallback}
+      everyoneElse={st.everyoneElse}
+      open={null}
+      onToggle={() => {}}
+      itemRef={() => {}}
+      editable
+      everyoneElseCount={21}
+    />,
+  )
+  const activity = render(<AppActivity app={box} policy={shown.policy} globalDefault={st.fallback} onRule={() => {}} reduced={false} />)
+
+  it('makes the Global Default’s row a real button that says it is closed and names what it opens', () => {
+    const rows = [...chain.matchAll(/<button[^>]*class="apol__row[^"]*"[^>]*>/g)].map((m) => m[0])
+    /* The rules are on the canvas; the Global Default, which decides for everyone Box access does not cover, keeps its row. */
+    expect(rows).toHaveLength(1)
+    for (const r of rows) {
+      expect(r).toContain('aria-expanded="false"')
+      expect(r).toMatch(/aria-controls="apol-row-[^"]+"/)
+    }
+    expect(chain).toContain('insp__canvas')
+    expect(chain).not.toContain('is-framed')
+  })
+
+  it('opens each sign-in in place from its own toggle, five at a time with Show more', () => {
+    const toggles = [...activity.matchAll(/<button[^>]*class="sia__toggle"[^>]*>/g)].map((m) => m[0])
+    expect(toggles.length).toBeGreaterThanOrEqual(1)
+    expect(toggles.length).toBeLessThanOrEqual(5)
+    for (const b of toggles) expect(b).toContain('aria-expanded="false"')
+    if (toggles.length === 5) expect(text(activity)).toContain('Show more')
+    expect(activity).toContain('aria-label="Find a person in Box sign-ins"')
+    expect(text(activity)).toContain('View all sign-ins on Box')
+    expect(activity).not.toContain('apol__gtable')
+  })
+})
+
+describe('an application page on Basic', () => {
+  it('asks an OAuth application the live Basic, its client secret masked, and names it Client secret', () => {
+    const out = render(<ApplicationPage appId="github" tab="basic" />)
+    const t = text(out)
+    for (const label of ['Redirect URL', 'Client ID', 'Client secret', 'Subject', 'Description', 'Add redirect URL']) expect(t).toContain(label)
+    expect(t).not.toContain('App secret')
+    expect(out).toContain('type="password"')
+    expect(out).toContain('aria-label="Show client secret"')
+    expect(out).toContain('aria-label="Copy client secret"')
+    expect(out).toContain('aria-label="Copy client ID"')
+    expect(count(t, 'Regenerate')).toBe(2)
+    /* The static note beside it, and the Email address the console says everywhere. */
+    expect(t).toContain('Client ID and secret')
+    expect(t).toContain('Email address')
+  })
+
+  it('asks a SAML application for its identifiers, and for no secret or name', () => {
+    const t = text(render(<ApplicationPage appId="slack" tab="basic" />))
+    for (const label of ['SP entity ID or issuer', 'ACS URL', 'Audience URI', 'Single logout URL']) expect(t).toContain(label)
+    expect(t).not.toContain('Client secret')
+    /* The head's pencil renames a stored application. */
+    expect(t).not.toContain('Display name')
+  })
+
+  it('opens clean: a seed application shows no save footer and no unsaved pill', () => {
+    const out = render(<ApplicationPage appId="slack" tab="basic" />)
+    expect(out).not.toContain('bx-savebar')
+    expect(text(out)).not.toContain('Unsaved changes')
+  })
+
+  it('draws the live defaults as switches and pickers on Advanced, with a tip only where a wrong choice is likely', () => {
+    const out = render(<ApplicationPage appId="slack" tab="advanced" />)
+    const t = text(out)
+    expect(count(out, 'role="switch"')).toBe(6)
+    for (const label of ['Signature algorithm', 'RSA-SHA256', 'Relay state', 'SAML authentication validity period', 'PasswordProtectedTransport']) {
+      expect(t).toContain(label)
+    }
+    /* None picked, so no value box for it. */
+    expect(t).not.toContain('Relay state value')
+    expect(out).toContain('aria-label="About Relay state"')
+    expect(out).not.toContain('aria-label="About Sign response"')
+  })
+
+  it('says sign-in on Sign-in options, never login', () => {
+    const t = text(render(<ApplicationPage appId="github" tab="sign-in" />))
+    for (const label of ['Show on end user dashboard', 'Force authentication', 'Allowed logout URIs', 'Single logout enabled']) expect(t).toContain(label)
+    expect(t).not.toMatch(/\blog ?in\b/i)
+  })
+
+  it('maps attributes on Attributes, the Name ID format by its readable end', () => {
+    const t = text(render(<ApplicationPage appId="slack" tab="attributes" />))
+    for (const label of ['Name ID', 'Name ID format', 'unspecified', 'Add name format', 'Enable multi-valued attributes', 'Add attribute']) {
+      expect(t).toContain(label)
+    }
+    expect(t).not.toContain('urn:oasis')
+  })
+
+  it('gives the service provider its values with Copy, and the certificate as a download', () => {
+    const out = render(<ApplicationPage appId="slack" tab="metadata" />)
+    const t = text(out)
+    for (const label of ['IdP entity ID', 'SAML sign-in URL', 'SAML sign-out URL', 'Metadata URL', 'Download certificate']) expect(t).toContain(label)
+    expect(out).toContain('aria-label="Copy Metadata URL"')
+    expect(count(out, 'bx-btn--brand')).toBe(0)
+    expect(text(render(<ApplicationPage appId="github" tab="endpoints" />))).toContain('Authorization endpoint')
+  })
+})
+
+describe('an application that is not there', () => {
+  it('says so, with the way back and no head', () => {
+    const out = render(<ApplicationPage appId="no-such-app" />)
+    expect(text(out)).toContain('Application not found')
+    expect(text(out)).toContain('Back to applications')
+    expect(out).not.toContain('<h1')
+  })
+})
+
+describe('an application not stored yet', () => {
+  const out = render(<NewApplicationPage catalogId="salesforce" />)
+
+  it('is the same page: the way back to the catalogue, the Display name as the heading, the protocol', () => {
+    const t = text(out)
+    expect(t).toContain('Choose application')
+    /* The tenant has Salesforce, so the name is freed. */
+    expect(out).toMatch(/<h1[^>]*>Salesforce 2<\/h1>/)
+    expect(t).toContain('SAML')
+    expect(t).toContain('Documentation')
+    expect(out).not.toContain('aria-label="Rename"')
+  })
+
+  it('has the tabs less Post sign-in, Users and Groups, and opens on Basic with the Display name first', () => {
+    expect(tabsOf(out)).toEqual(['Basic', 'Advanced', 'Sign-in options', 'Attributes', 'Policies', 'Metadata'])
+    expect(selected(out)).toBe('Basic')
+    const t = text(out)
+    expect(t.indexOf('Display name')).toBeGreaterThan(-1)
+    expect(t.indexOf('Display name')).toBeLessThan(t.indexOf('SP entity ID or issuer'))
+    expect(out).toContain('value="Salesforce 2"')
+  })
+
+  it('has the live footer — Cancel, Next, Save — with Save the one orange button, and nothing disabled', () => {
+    const foot = out.slice(out.indexOf('bdpw__foot'))
+    const t = text(foot)
+    expect(t.indexOf('Cancel')).toBeLessThan(t.indexOf('Next'))
+    expect(t.indexOf('Next')).toBeLessThan(t.indexOf('Save'))
+    /* No Back on the first tab. */
+    expect(t).not.toMatch(/\bBack\b/)
+    expect(count(out, 'bx-btn--brand')).toBe(1)
+    expect(foot).not.toContain('disabled')
+    /* Nothing is said under a field before Save is pressed. */
+    expect(out).not.toContain('bmc__error')
+  })
+
+  it('makes an OAuth application its client ID and secret, and ends on Endpoints', () => {
+    const oauth = render(<NewApplicationPage catalogId="oauth" />)
+    expect(tabsOf(oauth).at(-1)).toBe('Endpoints')
+    expect(text(oauth)).toContain('Client secret')
+    expect(text(oauth)).toContain('OAuth/OpenID')
+    expect(oauth).toMatch(/value="[0-9a-f]{32}"/)
+  })
+
+  it('says an entry the catalogue does not have is not found, with the way back', () => {
+    const missing = render(<NewApplicationPage catalogId="no-such-entry" />)
+    expect(text(missing)).toContain('Application not found')
+    expect(text(missing)).toContain('Choose application')
+    expect(missing).not.toContain('<h1')
+  })
+})
+
+describe('Add existing policy', () => {
+  const slack = apps.find((a) => a.id === 'slack')!
+  const out = render(<AddExistingPolicy open app={slack} onClose={() => {}} onAdd={() => true} onCopy={() => true} />)
+
+  it('is a list of the policies, nothing picked, and Add waiting for a pick', () => {
+    const t = text(out)
+    expect(t).toContain('Add existing policy')
+    expect(t).toContain('On other applications')
+    /* Waiting for a pick is a reason, so Add stays in the tab order with it announced (Button `blocked`), never
+       natively disabled (review, 24 Oct 2026). */
+    const add = out.match(/<button[^>]*>Add this policy<\/button>/)?.[0] ?? ''
+    expect(add).toContain('aria-disabled="true"')
+    expect(add).not.toContain('disabled=""')
+    const why = add.match(/aria-describedby="([^"]+)"/)?.[1]
+    expect(out).toContain(`id="${why}" class="u-sr-only">Pick a policy</span>`)
+    expect(t).not.toContain('Add a copy')
+    expect(out).not.toContain('bapr__stack')
+  })
+})
+
+/* Replace policy, option A (owner, 24 Oct 2026: "pick a policy in a slider, one confirm that swaps it live on this app,
+   with Undo. No copy, no draft"). The slider is static markup here; the confirm renders nothing without a document,
+   so its card is drawn on its own, from the same facts the dialog reads. Pressing through is the browser check's. */
+describe('Replace policy', () => {
+  const t = showcaseTenant()
+  const byName = (name: string) => t.policies.find((p) => p.name === name)!
+  const box = t.apps.find((a) => a.id === 'box')!
+  const boxAccess = byName('Box access')
+  const slackAccess = byName('Slack access')
+
+  describe('the slider', () => {
+    const out = render(<AddExistingPolicy open app={box} onClose={() => {}} onAdd={() => 'confirming'} onCopy={() => true} replacing={boxAccess} asPopup={false} />)
+    const foot = out.slice(out.indexOf('bx-drawer__foot'), out.indexOf('</footer>', out.indexOf('bx-drawer__foot')))
+
+    it('is named for the replace and footed with two buttons, Cancel and Replace, Replace waiting for a pick', () => {
+      expect(text(out)).toContain('Replace policy')
+      expect([...foot.matchAll(/<button[^>]*>(.*?)<\/button>/g)].map((m) => text(m[1]).trim())).toEqual(['Cancel', 'Replace'])
+      /* Blocked, not disabled: in the tab order, with the reason announced (review, 24 Oct 2026). */
+      const replace = foot.match(/<button[^>]*>Replace<\/button>/)?.[0] ?? ''
+      expect(replace).toContain('aria-disabled="true"')
+      expect(replace).not.toContain('disabled=""')
+      expect(foot).toContain(`id="${replace.match(/aria-describedby="([^"]+)"/)?.[1]}" class="u-sr-only">Pick a policy</span>`)
+      expect(count(foot, 'bx-btn--brand')).toBe(1)
+      /* No draft copy, and no second way forward. */
+      expect(text(out)).not.toContain('Add as a draft')
+      expect(text(out)).not.toContain('Duplicate and add')
+      expect(text(out)).not.toContain('Takes over from')
+    })
+
+    it('names the policy it replaces in its head, once', () => {
+      const head = out.slice(out.indexOf('bx-drawer__head'), out.indexOf('</header>', out.indexOf('bx-drawer__head')))
+      expect(text(head)).toContain('On Box, in place of Box access')
+      expect(count(text(out), 'Box access')).toBe(1)
+    })
+
+    it('never offers the policy being replaced back', () => {
+      expect(out).toContain('<b>Slack access</b>')
+      expect(out).not.toContain('<b>Box access</b>')
+    })
+
+    it('steps its Replace down while the confirm is up over it, so the confirm holds the one orange button', () => {
+      const under = render(
+        <AddExistingPolicy open app={box} onClose={() => {}} onAdd={() => 'confirming'} onCopy={() => true} replacing={boxAccess} confirming asPopup={false} />,
+      )
+      const f = under.slice(under.indexOf('bx-drawer__foot'), under.indexOf('</footer>', under.indexOf('bx-drawer__foot')))
+      expect(count(f, 'bx-btn--brand')).toBe(0)
+      /* `secondary` is drawn in the kit's neutral role (kit.tsx `ROLE`). */
+      expect(f).toMatch(/<button[^>]*bx-btn--neutral[^>]*>Replace<\/button>/)
+    })
+  })
+
+
+  /* REPLACE AS ONE POPUP (REPLACE_IN_POPUP, owner, 26 Oct 2026): the list and, once one is picked, its context in the
+     same place; Cancel and Replace are the whole footer, and no second confirm is drawn over it. Drawn in place
+     (inline): a Modal renders nothing without a document. */
+  describe('the popup', () => {
+    const out = render(<AddExistingPolicy open app={box} onClose={() => {}} onAdd={() => true} onCopy={() => true} replacing={boxAccess} asPopup inline />)
+    const foot = out.slice(out.indexOf('bx-modal__foot'), out.indexOf('</footer>', out.indexOf('bx-modal__foot')))
+
+    it('is on by default, and the slider and its confirm stay behind the flag', () => {
+      expect(addExistingSrc).toMatch(/\(asPopup \?\? REPLACE_IN_POPUP\)/)
+      expect(appPageSrc).toMatch(/if \(REPLACE_IN_POPUP\) return REPLACE_RUNS_CHECKS \? checkThenPutOn\(live\) : putOn\(policyId\)/)
+      expect(appPageSrc).toContain('<ReplaceDialog')
+    })
+
+    it('is named for the replace and says what it replaces, once, before the list', () => {
+      expect(out).toContain('role="dialog"')
+      expect(text(out)).toContain('Replace policy')
+      expect(text(out)).toContain('in place of Box access')
+      expect(count(text(out), 'Box access')).toBe(1)
+    })
+
+    it('lists the other policies and never offers the one being replaced back', () => {
+      expect(out).toContain('<b>Slack access</b>')
+      /* Box access is named once, as a policy tag in the line that says what is replaced, and is not a row in the list. */
+      expect(count(out, 'bx-confirm__factname">Box access<')).toBe(1)
+      expect(out).not.toContain('bapp__picktext"><b>Box access</b>')
+      expect(out).toContain('placeholder="Search policies"')
+    })
+
+    it('is footed with two buttons, Cancel and Replace, Replace waiting for a pick, and nothing else', () => {
+      expect([...foot.matchAll(/<button[^>]*>(.*?)<\/button>/g)].map((m) => text(m[1]).trim())).toEqual(['Cancel', 'Replace'])
+      const replace = foot.match(/<button[^>]*>Replace<\/button>/)?.[0] ?? ''
+      expect(replace).toContain('aria-disabled="true"')
+      expect(foot).toContain('Pick a policy</span>')
+      expect(count(foot, 'bx-btn--brand')).toBe(1)
+      expect(text(out)).not.toContain('Add as a draft')
+      expect(text(out)).not.toContain('Duplicate and add')
+      expect(text(out)).not.toContain('Takes over from')
+    })
+
+    it('writes straight from its own button: the page skips the second confirm while the popup is the confirm', () => {
+      const code = appPageSrc.replace(/\/\*[\s\S]*?\*\//g, '')
+      expect(code).toMatch(/if \(REPLACE_IN_POPUP\) return/)
+    })
+  })
+
+  /* The card the popup shows as its context says what the second confirm used to say, on its own: what comes off, and what takes its place. */
+  it('says, in the popup context card, what the second confirm used to say', () => {
+    const from = byName('Box access')
+    const to = byName('Slack access')
+    const facts = replaceFacts(from, to, box, { policies: t.policies, apps: t.apps, users: t.directory.people, groups: t.groups })
+    const card = text(render(<ReplaceCard from={from} to={to} app={box} facts={facts} />))
+    expect(card).toContain('Box access comes off')
+    expect(card).toContain('Slack access takes its place')
+  })
+
+  /* A draft Duplicate for {app} parked on the application can be the pick: it is how an edited copy is put in charge. */
+  it('lets a replace pick a draft already on the application, and nothing else already there', () => {
+    const tenant = { apps: t.apps, groups: t.groups, users: t.directory.people }
+    const parked: Policy = { ...slackAccess, id: 'parked', status: 'draft', appIds: ['box'] }
+    const here = policyOption(parked, box, tenant, { here: true })
+    expect(here).toMatchObject({ disabled: false, group: 'On Box' })
+    expect(here.meta).not.toBe('Already on this application')
+    expect(policyOption(parked, box, tenant)).toMatchObject({ disabled: true, meta: 'Already on this application' })
+    /* The slider offers `here` only while replacing, and only for a draft. */
+    const code = addExistingSrc.replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(code).toMatch(/here: !!replacing && p\.status === 'draft' && kind === 'already-here'/)
+  })
+
+  it('opens its one confirm before any write, and runs no checks while REPLACE_RUNS_CHECKS is off', () => {
+    const code = appPageSrc.replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(code).toMatch(/if \(replacing\) \{[^}]*setSwapping\(\{ from: from\.id, to: policyId \}\)\s+return 'confirming'/)
+    expect(code).toMatch(/if \(!REPLACE_RUNS_CHECKS\) \{\s+if \(putOn\(s\.to\)\) setAdding\(false\)/)
+    expect(code).toContain('<ReplaceDialog')
+  })
+
+  /* A press the static render cannot make: the closing confirm's footer stays clickable through its exit. */
+  it('presses once per confirm, clearing it before anything is written, and re-reads the policy on the application', () => {
+    const code = appPageSrc.replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(code).toMatch(/const s = swapping\s+if \(!s \|\| spent\.current === s\) return\s+spent\.current = s\s+setSwapping\(null\)\s+if \(!replacing \|\| replacing\.id !== s\.from\) return/)
+    /* What it replaces is read from the tab on every render, never held from the press that opened it. */
+    expect(code).toMatch(/const replacing = replaceOpen \? \(shown\?\.policy \?\? null\) : null/)
+    expect(code).not.toContain('setReplacing(')
+  })
+
+  it('runs the checks, when they are on, if either policy decides here — the one coming off as much as the one going on', () => {
+    const code = appPageSrc.replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(code).toMatch(/if \(!appsGuard\.guards\(live\) && !\(off && !off\.isSystem && appsGuard\.guards\(off\)\)\) return putOn\(live\.id\)/)
+  })
+
+  describe('the confirm card', () => {
+    const tenant = { policies: t.policies, apps: t.apps, users: t.directory.people, groups: t.groups }
+    const card = (from: Policy, to: Policy, policies: readonly Policy[] = t.policies) =>
+      renderToStaticMarkup(<ReplaceCard from={from} to={to} app={box} facts={replaceFacts(from, to, box, { ...tenant, policies })} />)
+    const said = (html: string) => text(html).replace(/\s+([.,:])/g, '$1').trim()
+    const others = (p: Policy) => t.policies.filter((x) => x.id !== p.id)
+
+    it('reads from the policy coming off to the one going on, each named once as a policy tag, the applications with their logos', () => {
+      const html = card(boxAccess, slackAccess)
+      expect(said(html)).toBe('Box access comes off Box and becomes a draft. Slack access takes its place. Slack keeps it unchanged.')
+      expect(count(html, 'bx-confirm__factname">Box access<')).toBe(1)
+      expect(count(html, 'bx-confirm__factname">Slack access<')).toBe(1)
+      expect(html.indexOf('bx-confirm__factname">Box access<')).toBeLessThan(html.indexOf('bx-confirm__factname">Slack access<'))
+      /* Two applications with their logos, two policies with the shield and the word. */
+      expect(count(html, 'class="bx-confirm__fact"')).toBe(2)
+      expect(count(html, 'bx-confirm__fact--policy')).toBe(2)
+      expect(count(html, '<span class="bx-confirm__kind">')).toBe(2)
+    })
+
+    it('says the old policy stays on its other applications, by their logos', () => {
+      const shared = { ...boxAccess, appIds: ['box', 'slack'] }
+      const html = card(shared, byName('AWS access'), [...others(shared), shared])
+      expect(said(html)).toMatch(/^Box access comes off Box\. It stays on Slack\. AWS access takes its place\./)
+    })
+
+    it('says plainly when the old policy’s saved draft will replace its published rules', () => {
+      const pending: Policy = { ...boxAccess, pendingDraft: { rules: [], savedAt: 'now', savedBy: 'You' } }
+      expect(said(card(pending, slackAccess, [...others(pending), pending]))).toContain(
+        'Box access comes off Box and becomes a draft. Its saved draft replaces the published rules.',
+      )
+    })
+
+    it('says, on its own line, where sign-ins go while the new one decides nothing', () => {
+      const html = card(boxAccess, byName('HRMS access from corporate offices'))
+      expect(said(html)).toBe(
+        'Box access comes off Box and becomes a draft. HRMS access from corporate offices takes its place. HRMS keeps it unchanged. It is inactive, so Global Default Policy decides here until it is turned on.',
+      )
+      expect(count(html, '<p>')).toBe(3)
+      const draft = { ...slackAccess, status: 'draft' as const, appIds: [] }
+      expect(said(card(boxAccess, draft, [...others(draft), draft]))).toBe(
+        'Box access comes off Box and becomes a draft. Slack access takes its place. It is a draft, so Global Default Policy decides here until it is turned on.',
+      )
+    })
+
+    /* Review, 24 Oct 2026: the new policy decides for some of the people the old one did, and the rest fall through. */
+    it('says where everybody else goes when the new policy names fewer people than the old one', () => {
+      const html = card(boxAccess, byName('AWS access'))
+      expect(said(html)).toBe(
+        'Box access comes off Box and becomes a draft. AWS access takes its place. AWS Console keeps it unchanged. Everyone else here goes to Global Default Policy.',
+      )
+      expect(count(html, 'bx-confirm__factname">Global Default Policy<')).toBe(1)
+      /* Not when the new one takes everybody: Slack access is for everyone. */
+      expect(said(card(boxAccess, slackAccess))).not.toContain('Everyone else')
+    })
+
+    it('never says the Global Default "decides first"', () => {
+      const nobody = { ...slackAccess, audience: { everyone: false, groupIds: [], userIds: [] } }
+      const s = said(card(boxAccess, nobody, [...others(nobody), nobody]))
+      expect(s).toContain('It never decides here, so Global Default Policy decides.')
+      expect(s).not.toContain('decides first')
+    })
+
+    it('reads right for a draft parked on the application being put in charge', () => {
+      const parked: Policy = { ...slackAccess, id: 'parked', name: 'Box access (copy)', status: 'draft', appIds: ['box'] }
+      const html = card(boxAccess, parked, [...t.policies, parked])
+      /* On this application alone, so no other application keeps it; a draft, so the Global Default decides meanwhile. */
+      expect(said(html)).toBe(
+        'Box access comes off Box and becomes a draft. Box access (copy) takes its place. It is a draft, so Global Default Policy decides here until it is turned on.',
+      )
+      expect(replaceFacts(boxAccess, parked, box, { ...tenant, policies: [...t.policies, parked] })).toMatchObject({ alsoOn: [], drops: true })
+    })
+  })
+
+  /* The pick's preview (review, 24 Oct 2026): nothing on it edits, and its ids are not the page canvas's. */
+  describe('the preview of the pick', () => {
+    const page = (preview: boolean) =>
+      render(<PolicyPage policyId={boxAccess.id} focus={undefined} plan={null} onOpenOne={() => {}} canvas {...(preview ? { preview } : { onEdit: () => {} })} />)
+    const out = page(true)
+
+    it('draws the start node as its sentence, not a button to a pane that is not there', () => {
+      expect(out).toMatch(/<div id="preview-bb-start" class="bb__start ?">/)
+      expect(out).not.toContain('bb__start__go')
+      expect(out).not.toContain('aria-controls="bb-insp-body"')
+    })
+
+    it('has ids of its own, so the page canvas under the drawer keeps its', () => {
+      expect(out).toContain('id="preview-bb-terminal-title"')
+      expect(out).toContain('id="preview-bb-terminal-body"')
+      for (const id of ['bb-start', 'bb-terminal-title', 'bb-terminal-body']) expect(out).not.toContain(`id="${id}"`)
+    })
+
+    it('folds a card on its title, the one thing a press does here', () => {
+      const titles = [...out.matchAll(/<button[^>]*class="bb__titlebtn"[^>]*>/g)].map((m) => m[0])
+      expect(titles.length).toBeGreaterThan(1)
+      for (const b of titles) expect(b).toMatch(/aria-controls="preview-bb-(rule-[^"]+|terminal)-body"/)
+    })
+
+    it('leaves the details slider as it was: the start node a button, the ids unprefixed', () => {
+      const own = page(false)
+      expect(own).toMatch(/<button type="button" id="bb-start"/)
+      expect(own).toContain('id="bb-terminal-title"')
+    })
+  })
+})
+
+/* The Policies tab on the policy alone (21 Oct 2026): the rules wide, the facts beside them, Sign-in activity a button
+   that opens it in a panel. */
+describe('the Policies tab on the policy alone', () => {
+  const box = renderIn(true, <ApplicationPage appId="box" />)
+
+  it('heads the policy with the split (Edit policy and its chevron) and a ⋯ holding the rest, and no orange', () => {
+    const acts = box.slice(box.indexOf('apol__acts'), box.indexOf('</div>', box.indexOf('apol__acts')))
+    /* Sign-in activity and Check access are inside the ⋯ menu; Replace policy, on hold, is inside the split's chevron. */
+    expect([...acts.matchAll(/<button[^>]*>(.*?)<\/button>/g)].map((m) => text(m[1]).trim())).toEqual(['Edit policy', '', ''])
+    expect(acts).toContain('aria-label="More for this policy"')
+    expect(orange(box)).toBe(0)
+  })
+
+  it('draws the rules wide straight under the policy name and buttons, and the activity table not at all until the button is pressed', () => {
+    expect(box).toContain('class="apol__focus"')
+    expect(box).not.toContain('insp__hero')
+    expect(box).not.toContain('aria-label="Find a person in Box sign')
+    expect(box).not.toContain('apol__pair')
+  })
+})
+
+/* EDITING A SHARED POLICY, AS A POPUP (FORK_IN_POPUP, owner, 26 Oct 2026): two ways, one picked, and the heading over
+   the list says what the pick does to it. The slider stays behind the flag. Drawn in place (inline). */
+describe('the shared-policy popup', () => {
+  const t = showcaseTenant()
+  const shared = t.policies.find((p) => p.name === 'Device compliance for Outlook and Dropbox')!
+  const dropbox = t.apps.find((a) => a.id === 'dropbox')!
+  const popup = render(<SharedPolicyFork open policy={shared} app={dropbox} onClose={() => {}} onEdit={() => {}} onDuplicate={() => {}} asPopup inline />)
+  const slider = render(<SharedPolicyFork open policy={shared} app={dropbox} onClose={() => {}} onEdit={() => {}} onDuplicate={() => {}} asPopup={false} />)
+
+  it('is on by default, the slider kept behind the flag', () => {
+    expect(viewSrc).toContain('<SharedPolicyFork')
+    expect(slider).toContain('bx-drawer')
+  })
+
+  it('names the policy, offers Edit for all and Duplicate for this application, and starts on Edit for all', () => {
+    expect(text(popup)).toContain('Edit shared policy')
+    expect(text(popup)).toContain('Device compliance for Outlook and Dropbox')
+    expect(text(popup)).toContain('Edit for all')
+    expect(text(popup)).toContain('Duplicate for')
+    expect(popup).toMatch(/role="radio" aria-checked="true"[^>]*>[\s\S]*?Edit for all/)
+  })
+
+  it('says what the pick does to the applications under it: these change, each marked Changes', () => {
+    expect(text(popup)).toContain('These change')
+    expect(text(popup)).not.toContain('Who gets the copy')
+    expect(count(text(popup), 'Changes')).toBeGreaterThanOrEqual(2)
+    expect(text(popup)).toContain('Microsoft Outlook')
+  })
+
+  it('is footed with two buttons, Cancel and the pick verb', () => {
+    const foot = popup.slice(popup.indexOf('bx-modal__foot'), popup.indexOf('</footer>', popup.indexOf('bx-modal__foot')))
+    expect([...foot.matchAll(/<button[^>]*>(.*?)<\/button>/g)].map((m) => text(m[1]).trim())).toEqual(['Cancel', 'Edit for all'])
+    expect(count(foot, 'bx-btn--brand')).toBe(1)
+  })
+
+  it('has no side slider in it', () => {
+    expect(popup).not.toContain('bx-drawer')
+  })
+})
+
+/* THREE BUTTONS, ONE CARD EACH (HEAD_THREE_BUTTONS, owner, 26 Oct 2026): the choice is made in the head, so a popup has
+   nothing to choose between; and it is the Remove dialog's card, a sentence and a row of logos with a count, because a
+   row per application does not scale to a policy on 100 applications. */
+describe('the head\'s Edit and Duplicate popups', () => {
+  const t = showcaseTenant()
+  const shared = t.policies.find((p) => p.name === 'Device compliance for Outlook and Dropbox')!
+  const dropbox = t.apps.find((a) => a.id === 'dropbox')!
+  const alone = t.policies.find((p) => p.name === 'Box access')!
+  const box = t.apps.find((a) => a.id === 'box')!
+  /* The same policy on every application the tenant has: the most a showcase can do toward "100+". */
+  const everywhere = { ...shared, appIds: t.apps.map((a) => a.id) }
+  const draw = (way: 'edit' | 'duplicate', policy = shared, app = dropbox) =>
+    render(<SharedPolicyFork open policy={policy} app={app} onClose={() => {}} onEdit={() => {}} onDuplicate={() => {}} only={way} inline />)
+  const foot = (html: string) => html.slice(html.indexOf('bx-modal__foot'), html.indexOf('</footer>', html.indexOf('bx-modal__foot')))
+  const buttons = (html: string) => [...html.matchAll(/<button[^>]*>(.*?)<\/button>/g)].map((m) => text(m[1]).trim())
+  const logosIn = (html: string) => count(html.slice(html.indexOf('bapr__keeps')), 'class="applogo ')
+
+  it('keeps the three buttons in the head, in the page source, behind their flag (the split has taken the default)', () => {
+    const code = viewSrc.replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(code).toContain('HEAD_THREE_BUTTONS')
+    expect(code).toMatch(/Duplicate policy/)
+    expect(code).toMatch(/only=\{HEAD_THREE_BUTTONS \|\| HEAD_SPLIT_EDIT \? forkWay : undefined\}/)
+  })
+
+  it('Edit policy: the Remove dialog\'s card, one sentence of reach and the others as logos', () => {
+    const out = draw('edit')
+    expect(text(out)).toContain('Edit shared policy?')
+    expect(text(out)).toContain('Changes to Device compliance for Outlook and Dropbox reach both applications.')
+    expect(out).toContain('bapr__confirm is-card')
+    expect(text(out)).toContain('Also on')
+    expect(logosIn(out)).toBe(1)
+    expect(out).not.toContain('role="radiogroup"')
+    expect(out).not.toContain('bfork__list')
+    expect(buttons(foot(out))).toEqual(['Cancel', 'Edit for all'])
+    expect(count(foot(out), 'bx-btn--brand')).toBe(1)
+  })
+
+  it('Duplicate policy: names the application, says the others keep the original, and shows them as logos', () => {
+    const out = draw('duplicate')
+    expect(text(out)).toContain('Duplicate for Dropbox?')
+    expect(text(out)).toContain('A copy of Device compliance for Outlook and Dropbox for Dropbox only.')
+    expect(text(out)).toContain('The others keep the original.')
+    expect(text(out)).toContain('Still on')
+    expect(out).not.toContain('bfork__list')
+    expect(buttons(foot(out))).toEqual(['Cancel', 'Duplicate'])
+  })
+
+  it('Duplicate policy on a policy this application has to itself says what the draft is and shows nobody', () => {
+    const out = draw('duplicate', alone, box)
+    expect(text(out)).toMatch(/A draft copy of Box access for Box ?./)
+    expect(text(out)).toContain('It decides nothing until you replace this policy with it.')
+    expect(out).not.toContain('bapr__keeps')
+    expect(buttons(foot(out))).toEqual(['Cancel', 'Duplicate'])
+  })
+
+  it('scales: on every application the tenant has, the card stays one sentence and five logos with a count', () => {
+    for (const way of ['edit', 'duplicate'] as const) {
+      const out = draw(way, everywhere, dropbox)
+      const n = t.apps.length
+      expect(logosIn(out)).toBe(5)
+      expect(text(out)).toContain('+' + (n - 1 - 5))
+      expect(out).not.toContain('bfork__list')
+      expect(out).not.toContain('Search applications')
+    }
+    expect(text(draw('edit', everywhere, dropbox))).toContain('reach all ' + t.apps.length + ' applications.')
+  })
+})
+
+/* ONE SPLIT BUTTON (HEAD_SPLIT_EDIT, owner, 27 Oct 2026: "instead of three buttons, we need two, so the replace policy
+   option will be on hold", then "move this button as well inside the split button"). The head is the split (Edit for
+   this app, orange) and the ⋯; its chevron holds Edit all, on a policy more than one application shares, and Replace
+   policy, on hold. A policy this application has to itself reads Edit policy and has no Edit all. The static markup never
+   opens a menu or a popup, so the rows and the pill are read from the page source and the kit, and the popups' words
+   from the card drawn in place. */
+describe('the head\'s split button', () => {
+  const shared = render(<ApplicationPage appId="dropbox" />)
+  const acts = (html: string) => html.slice(html.indexOf('apol__acts'), html.indexOf('</div>', html.indexOf('apol__acts')))
+  const buttonsIn = (html: string) => [...html.matchAll(/<button[^>]*>(.*?)<\/button>/g)].map((m) => text(m[1]).trim())
+  const code = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '')
+
+  it('is on by default, with Replace on hold', () => {
+    expect(HEAD_SPLIT_EDIT).toBe(true)
+    expect(HEAD_REPLACE_ON_HOLD).toBe(true)
+  })
+
+  it('on a shared policy draws the split and the ⋯ and nothing else: Edit all is in the split\'s menu, not beside it', () => {
+    expect(shared).toMatch(/<h2[^>]*>Device compliance for Outlook and Dropbox<\/h2>/)
+    expect(buttonsIn(acts(shared))).toEqual(['Edit for this app', '', ''])
+    expect(acts(shared)).toContain('class="bx-split"')
+    expect(acts(shared)).toContain('aria-label="More ways to change this policy"')
+    for (const gone of ['Edit all', 'Duplicate policy', 'Replace policy']) expect(text(acts(shared))).not.toContain(gone)
+  })
+
+  /* 3 Nov 2026 (owner: "we might not want to promote this button so much"): the split is a secondary, so no orange. */
+  it('keeps the split quiet: a secondary, and no orange in the view', () => {
+    expect(orange(shared)).toBe(0)
+    const tags = [...acts(shared).matchAll(/<button([^>]*)>(.*?)<\/button>/g)].map((m) => ({ attrs: m[1], label: text(m[2]).trim() }))
+    expect(tags.find((b) => b.label === 'Edit for this app')!.attrs).toContain('bx-btn--neutral')
+    expect(tags.filter((b) => b.attrs.includes('bx-btn--neutral'))).toHaveLength(2) // the action and its chevron: one control // the action and its chevron: one control
+  })
+
+  it('lists the edit-for-all row above Replace policy in the split menu, on a shared policy only', () => {
+    const view = code(viewSrc)
+    expect(view).toMatch(/\.\.\.\(shared \? \[\{ id: 'edit-all', label: editAllLabel, icon: Layers \}\] : \[\]\)/)
+    expect(view.indexOf("id: 'edit-all'")).toBeLessThan(view.indexOf("id: 'replace'"))
+    expect(view).toMatch(/if \(id === 'edit-all'\) openFork\('edit'\)/)
+  })
+
+  it('names the row as an option, the pair of Edit for this app: no count, no sentence', () => {
+    const view = code(viewSrc)
+    /* Two applications read "both", more read "all" (owner, 3 Nov 2026: "this is just an option"). The popup it opens
+       counts the applications the change reaches. */
+    expect(view).toMatch(/row\.policy\.appIds\.length === 2 \? 'Edit for both apps' : 'Edit for all apps'/)
+    /* One line, so the menu widens to the label rather than breaking it at the menu's minimum width. */
+    expect(kitCss).toMatch(/\.bx-split \.bx-menu__item strong\s*\{\s*white-space:\s*nowrap;\s*\}/)
+  })
+
+  it('keeps Replace policy in the split menu, disabled and marked On hold, with the Replace popup still wired', () => {
+    const view = code(viewSrc)
+    expect(view).toMatch(/label: 'Replace policy', icon: Replace/)
+    expect(view).toMatch(/HEAD_REPLACE_ON_HOLD \? \{ pill: 'On hold', disabled: true \}/)
+    expect(view).toMatch(/else if \(id === 'replace'\) onReplace\(\)/)
+  })
+
+  it('draws a menu item\'s pill after its label, full strength on a disabled row', () => {
+    expect(code(kitSrc)).toMatch(/item\.pill && <Badge className="bx-menu__pill">\{item\.pill\}<\/Badge>/)
+    expect(code(kitSrc)).toContain("item.pill ? ' has-pill' : ''")
+    expect(kitCss).toMatch(/\.bx-menu__item\.has-pill:disabled\s*\{\s*opacity:\s*1;\s*\}/)
+    expect(kitCss).toMatch(/\.bx-menu__item\s*>\s*\.bx-menu__pill/)
+  })
+
+  describe('a policy named in a popup (owner, 27 Oct 2026: "add a policy word and an icon … for all the popups")', () => {
+    /* The popups that say a policy's name in a sentence, each drawing it through the one tag. */
+    const POPUPS = ['shared-policy-fork', 'replace-dialog', 'AppProtection', 'AppPostSignIn', 'status-scope-dialog', 'use-status-change', 'AddExistingPolicy', 'Policies', 'confirm-delete']
+
+    it('draws every one of them with the tag, none with a bold name', () => {
+      for (const f of POPUPS) {
+        const src = code(screenSrc[`./${f}.tsx`] ?? '')
+        expect(src.length, f).toBeGreaterThan(0)
+        expect(src, f).toMatch(/<PolicyFacts? /)
+      }
+      for (const f of ['shared-policy-fork', 'replace-dialog', 'AppProtection', 'AppPostSignIn', 'status-scope-dialog', 'use-status-change', 'confirm-delete']) {
+        expect(code(screenSrc[`./${f}.tsx`]), f).not.toMatch(/<b>\{(?:[a-zA-Z.]*policy\.name|from\.name|to\.name|name|replacing\.name|targets[^}]*)\}<\/b>/)
+      }
+    })
+
+    it('is the shield, the word Policy, then the name, with the full name as its title', () => {
+      const out = renderToStaticMarkup(<PolicyFact name="Access the app through corporate devices only" />)
+      expect(out).toMatch(/^<span class="bx-confirm__fact bx-confirm__fact--tag bx-confirm__fact--policy" title="Access the app through corporate devices only">/)
+      expect(out).toMatch(/<span class="bx-confirm__kind"><svg[^>]*lucide-shield-check[^>]*>[\s\S]*?<\/svg>Policy<\/span>/)
+      expect(out).toContain('<span class="bx-confirm__factname">Access the app through corporate devices only</span>')
+    })
+
+    it('says several policies as a list, each a tag: A, B and C', () => {
+      const out = renderToStaticMarkup(<PolicyFacts names={['A', 'B', 'C']} />)
+      expect(count(out, 'bx-confirm__fact--policy')).toBe(3)
+      expect(text(out).trim()).toBe('A , B and C')
+    })
+
+    it('cuts a long name on one line, in a tag with a width of its own, and keeps the whole name as the title', () => {
+      /* Owner, 27 Oct 2026: a two-line name stretched the tag into a bar the width of the card. The tag is capped (and
+         never wider than the card), and its name is one line ending in an ellipsis. */
+      expect(kitCss).toMatch(/\.bx-confirm__fact\.bx-confirm__fact--tag\s*\{[^}]*max-width:\s*min\(100%,\s*var\(--fact-max,\s*22rem\)\)/)
+      expect(kitCss).toMatch(/\.bx-confirm__factname\s*\{[^}]*overflow:\s*hidden;\s*text-overflow:\s*ellipsis;\s*white-space:\s*nowrap/)
+      expect(kitCss).not.toMatch(/\.bx-confirm__factname\s*\{[^}]*overflow-wrap/)
+      const long = 'Access the app through corporate devices only, for contractors and agency staff on managed laptops'
+      const out = renderToStaticMarkup(<PolicyFact name={long} />)
+      expect(out).toContain(`title="${long}"`)
+      expect(out).toContain(`<span class="bx-confirm__factname">${long}</span>`)
+    })
+  })
+
+  describe('the popup header mark', () => {
+    it('draws the ring whole: turned a quarter back with a plain transform, never offset along its dash', () => {
+      const src = code(toneMarkSrc)
+      expect(src).not.toContain('pathOffset')
+      expect(src).toContain('<g transform="rotate(-90 12 12)">')
+    })
+  })
+
+  describe('its popups', () => {
+    const t = showcaseTenant()
+    const policy = t.policies.find((p) => p.name === 'Device compliance for Outlook and Dropbox')!
+    const dropbox = t.apps.find((a) => a.id === 'dropbox')!
+    const draw = (way: 'edit' | 'duplicate') =>
+      render(<SharedPolicyFork open policy={policy} app={dropbox} onClose={() => {}} onEdit={() => {}} onDuplicate={() => {}} only={way} split inline />)
+    const foot = (html: string) => html.slice(html.indexOf('bx-modal__foot'), html.indexOf('</footer>', html.indexOf('bx-modal__foot')))
+
+    it('Edit for this app: says it is for the application alone, and its verb is Copy and edit', () => {
+      const out = draw('duplicate')
+      expect(text(out)).toContain('Edit for Dropbox only?')
+      expect(text(out)).toContain('A copy of Device compliance for Outlook and Dropbox for Dropbox only.')
+      expect(text(out)).toContain('The others keep the original.')
+      expect(buttonsIn(foot(out))).toEqual(['Cancel', 'Copy and edit'])
+      expect(count(foot(out), 'bx-btn--brand')).toBe(1)
+    })
+
+    it('Edit for all: keeps the reach sentence, and its verb is Edit for all', () => {
+      const out = draw('edit')
+      expect(text(out)).toContain('Edit shared policy?')
+      expect(text(out)).toContain('reach both applications.')
+      expect(buttonsIn(foot(out))).toEqual(['Cancel', 'Edit for all'])
+    })
+
+    it('names the policy as a tag: the shield, the word Policy, then its name', () => {
+      for (const way of ['edit', 'duplicate'] as const) {
+        const out = draw(way)
+        expect(count(out, 'bx-confirm__fact--policy')).toBe(1)
+        expect(out).toMatch(/<span class="bx-confirm__kind"><svg[^>]*lucide-shield-check[^>]*>[\s\S]*?<\/svg>Policy<\/span>/)
+        expect(out).toContain('bx-confirm__factname">Device compliance for Outlook and Dropbox<')
+        expect(out).not.toContain('<b>Device compliance for Outlook and Dropbox</b>')
+      }
+    })
+
+    it('leaves the 26 Oct words alone when the split is not the head', () => {
+      const out = render(<SharedPolicyFork open policy={policy} app={dropbox} onClose={() => {}} onEdit={() => {}} onDuplicate={() => {}} only="duplicate" inline />)
+      expect(text(out)).toContain('Duplicate for Dropbox?')
+      expect(buttonsIn(foot(out))).toEqual(['Cancel', 'Duplicate'])
+    })
+  })
+})

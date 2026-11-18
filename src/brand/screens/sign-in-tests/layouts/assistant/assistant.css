@@ -1,0 +1,511 @@
+/* -----------------------------------------------------------------------------
+   The assistant dock (AssistantDock.tsx): one floating panel at the bottom
+   centre of the stage — the chat growing up out of it (suggestions inside
+   it, never floating), the ask row with its travelling glow, the controls row.
+
+   Every colour is a variable a layout may set on `.ad` (or an ancestor):
+   light by default, in the console's look; the dark stage under
+   [data-stage='dark'], Jarvis's HUD under [data-stage='jarvis']. Colour is meaning: the glow is the assistant's
+   (the console blue into a soft cyan), brighter only while the engine or the
+   assistant works; green / red / amber only on cited answers that mean them.
+   Nothing motion animates carries a CSS transform or transition.
+   -------------------------------------------------------------------------- */
+
+@property --ad-a {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 300deg;
+}
+
+.ad {
+  --ad-surface: var(--surface-raised, #ffffff);
+  --ad-field: var(--surface-raised, #ffffff);
+  --ad-sunken: var(--surface-sunken, #f8f9fa);
+  --ad-line: var(--border-subtle, #e4e8ec);
+  --ad-line-2: var(--border-default, #dee2e6);
+  --ad-text: var(--text-primary, #212529);
+  --ad-text-2: var(--text-secondary, #495057);
+  --ad-text-3: var(--text-muted, #646c75);
+  --ad-hover: var(--surface-sunken, #f1f3f5);
+  --ad-glow-a: var(--accent, #0d6efd);
+  --ad-glow-b: #5ccfe6;
+  --ad-on: var(--accent, #0d6efd);
+  --ad-on-soft: var(--accent-soft, #e7f1ff);
+  --ad-halo: var(--focus-halo, rgba(13, 110, 253, 0.2));
+  --ad-ok: var(--fb-positive-fg, #14663a);
+  --ad-ok-bg: var(--fb-positive-bg, #e8f7ee);
+  --ad-bad: var(--fb-negative-fg, #a5142b);
+  --ad-bad-bg: var(--fb-negative-bg, #fdf0f2);
+  --ad-warn: var(--fb-notice-fg, #7d5800);
+  --ad-warn-bg: var(--fb-notice-bg, #fdf6e0);
+  --ad-shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 10px 28px rgba(16, 24, 40, 0.1);
+  --ad-chip: rgba(255, 255, 255, 0.92);
+
+  position: absolute;
+  z-index: 5;
+  left: 0;
+  right: 0;
+  bottom: 16px;
+  margin-inline: auto;
+  width: min(640px, calc(100% - 32px));
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  pointer-events: none;
+  font-family: inherit;
+  color: var(--ad-text);
+  cursor: auto;
+}
+.ad[data-stage='dark'] {
+  --ad-surface: rgba(26, 40, 53, 0.96);
+  --ad-field: rgba(16, 27, 37, 0.9);
+  --ad-sunken: rgba(255, 255, 255, 0.05);
+  --ad-line: rgba(255, 255, 255, 0.12);
+  --ad-line-2: rgba(255, 255, 255, 0.2);
+  --ad-text: #eef3f8;
+  --ad-text-2: #c4d0db;
+  --ad-text-3: #93a4b4;
+  --ad-hover: rgba(255, 255, 255, 0.08);
+  --ad-glow-a: #6ea8ff;
+  --ad-glow-b: #7fe3f2;
+  --ad-on: #8fbcff;
+  --ad-on-soft: rgba(110, 168, 255, 0.16);
+  --ad-halo: rgba(110, 168, 255, 0.3);
+  --ad-ok: #8be3b2;
+  --ad-ok-bg: rgba(79, 209, 139, 0.12);
+  --ad-bad: #ffa3ae;
+  --ad-bad-bg: rgba(255, 107, 125, 0.12);
+  --ad-warn: #f6d58a;
+  --ad-warn-bg: rgba(242, 193, 78, 0.12);
+  --ad-shadow: 0 2px 10px rgba(0, 0, 0, 0.3), 0 16px 40px rgba(0, 0, 0, 0.35);
+  --ad-chip: rgba(26, 40, 53, 0.92);
+}
+/* Aruna (code name Jarvis), DARK: the HUD's warm glass and ember hairlines; the glow runs ember to flare (one
+   family, no second hue); the meaning inks are the HUD's (green, crimson, lemon). */
+.ad[data-stage='jarvis'] {
+  --ad-surface: rgba(20, 13, 10, 0.86);
+  --ad-field: rgba(10, 7, 5, 0.74);
+  --ad-sunken: rgba(255, 140, 90, 0.06);
+  --ad-line: rgba(255, 140, 90, 0.22);
+  --ad-line-2: rgba(255, 140, 90, 0.4);
+  --ad-text: #f6eee9;
+  --ad-text-2: #d6c5bb;
+  --ad-text-3: #a8948a;
+  --ad-hover: rgba(255, 140, 90, 0.1);
+  --ad-glow-a: #ff6b2c;
+  --ad-glow-b: #ffa066;
+  --ad-on: #ffa574;
+  --ad-on-soft: rgba(255, 107, 44, 0.16);
+  --ad-halo: rgba(255, 107, 44, 0.35);
+  --ad-ok: #3ddba0;
+  --ad-ok-bg: rgba(52, 227, 164, 0.12);
+  --ad-bad: #ff7a9c;
+  --ad-bad-bg: rgba(255, 90, 135, 0.14);
+  --ad-warn: #f9e57f;
+  --ad-warn-bg: rgba(255, 224, 46, 0.12);
+  --ad-shadow: 0 0 0 1px rgba(255, 107, 44, 0.06), 0 16px 40px rgba(0, 0, 0, 0.5);
+}
+.ad[data-stage='jarvis'] .ad__panel { backdrop-filter: blur(10px); }
+.ad[data-stage='jarvis'] .ad__field { box-shadow: 0 0 14px rgba(255, 107, 44, 0.12), inset 0 0 0 1px rgba(255, 140, 90, 0.1); }
+.ad[data-stage='jarvis'] .ad__ask.is-focused .ad__field { box-shadow: 0 0 0 1px #ff6b2c, 0 0 0 4px rgba(255, 107, 44, 0.28), 0 0 22px rgba(255, 107, 44, 0.22); }
+/* Aruna, LIGHT: the console's light dock on warm paper, the brand orange as fixed values (the light look reads
+   --accent, slate in the current look); the ask field's focus is a crisp ring, never neon. */
+.ad[data-stage='jarvis-light'] {
+  --ad-surface: rgba(255, 255, 255, 0.92);
+  --ad-field: #ffffff;
+  --ad-sunken: #fbf8f6;
+  --ad-line: #efe6e0;
+  --ad-line-2: #e3d6ce;
+  --ad-text: #241b17;
+  --ad-text-2: #574842;
+  --ad-text-3: #6d5f58;
+  --ad-hover: #f6efea;
+  --ad-glow-a: #eb5424;
+  --ad-glow-b: #f3a389;
+  --ad-on: #b23d17;
+  --ad-on-soft: #fdeee9;
+  --ad-halo: rgba(235, 84, 36, 0.2);
+  --ad-ok: #146c43;
+  --ad-ok-bg: #e8f5ee;
+  --ad-bad: #a5142b;
+  --ad-bad-bg: #fcecf1;
+  --ad-warn: #5f5200;
+  --ad-warn-bg: #fbf5d2;
+  --ad-shadow: 0 1px 2px rgba(60, 30, 15, 0.05), 0 10px 28px rgba(60, 30, 15, 0.1);
+}
+.ad[data-stage='jarvis-light'] .ad__panel { backdrop-filter: blur(8px); }
+.ad[data-stage='jarvis-light'] .ad__ask.is-focused .ad__field { box-shadow: 0 0 0 1px #eb5424, 0 0 0 4px rgba(235, 84, 36, 0.14), 0 4px 14px rgba(235, 84, 36, 0.08); }
+.ad > * { pointer-events: auto; }
+
+/* --- The panel ------------------------------------------------------------- */
+
+.ad__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 7px;
+  border: 1px solid var(--ad-line);
+  border-radius: 12px;
+  background: var(--ad-surface);
+  box-shadow: var(--ad-shadow);
+}
+
+/* The thread: grows up out of the panel; scrolls inside its 40% of the canvas. */
+.ad__threadwrap { overflow: hidden; }
+.ad__thread {
+  max-height: max(160px, calc(var(--ad-room, 800px) * 0.4 - 104px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 4px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  scrollbar-width: thin;
+}
+.ad__item { display: flex; flex-direction: column; gap: 6px; }
+.ad__q {
+  align-self: flex-end;
+  max-width: 85%;
+  margin: 0;
+  padding: 5px 10px;
+  border-radius: 10px;
+  background: var(--ad-sunken);
+  color: var(--ad-text-2);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.ad__thinking { display: inline-flex; gap: 4px; padding: 8px 2px; }
+.ad__thinking span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ad-glow-a);
+  opacity: 0.35;
+  animation: ad-think 900ms ease-in-out infinite;
+}
+.ad__thinking span:nth-child(2) { animation-delay: 150ms; }
+.ad__thinking span:nth-child(3) { animation-delay: 300ms; }
+@keyframes ad-think { 50% { opacity: 1; } }
+
+.ad__itemfoot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ad__spacer { flex: 1; }
+/* An answer's presses: the first an outline in the active blue (never orange), the rest quiet. */
+.ad__action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  color: var(--ad-text-2);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.ad__action:hover { background: var(--ad-hover); color: var(--ad-text); }
+.ad__action.is-primary { border-color: var(--ad-on); color: var(--ad-on); font-weight: 600; }
+.ad__action.is-primary:hover { background: var(--ad-on-soft); }
+.ad__action:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ad-halo); }
+/* The suggestions, inside the chat: full-width rows, the icon says what a press does. */
+.ad__sugs { display: flex; flex-direction: column; gap: 1px; }
+.ad__sugs.is-next { padding-top: 2px; border-top: 1px solid var(--ad-line); margin-top: -2px; }
+.ad__sughead { margin: 0 0 4px; padding: 0 8px; font-size: 12px; font-weight: 600; color: var(--ad-text-3); }
+.ad__sug {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 7px;
+  background: none;
+  color: var(--ad-text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+.ad__sug > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ad__sug svg { flex: none; color: var(--ad-text-3); }
+.ad__sug.is-run svg,
+.ad__sug.is-open svg,
+.ad__sug.is-add svg { color: var(--ad-on); }
+.ad__sug.is-breakIn svg { color: var(--ad-warn); }
+.ad__sug:hover { background: var(--ad-hover); }
+.ad__sug:focus-visible { outline: none; background: var(--ad-hover); box-shadow: 0 0 0 2px var(--ad-halo); }
+/* What a press did, one quiet line in the thread. */
+.ad__did { margin: 0; padding: 0 8px; font-size: 12px; color: var(--ad-text-3); }
+
+/* --- Row 1: ask, with the glow travelling along its border ----------------- */
+
+.ad__ask {
+  position: relative;
+  isolation: isolate;
+  border-radius: 10px;
+}
+/* The glow: a short bright run of the assistant's colours, drifting round the border… */
+.ad__ask::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: inherit;
+  padding: 1.25px;
+  background: conic-gradient(from var(--ad-a), transparent 0deg, transparent 210deg, var(--ad-glow-a) 275deg, var(--ad-glow-b) 325deg, transparent 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0.7;
+  pointer-events: none;
+  animation: ad-drift 9s linear infinite;
+}
+/* …and its soft light, behind the field. */
+.ad__ask::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  z-index: -1;
+  border-radius: 13px;
+  background: conic-gradient(from var(--ad-a), transparent 0deg, transparent 210deg, var(--ad-glow-a) 275deg, var(--ad-glow-b) 325deg, transparent 360deg);
+  filter: blur(9px);
+  opacity: 0.18;
+  pointer-events: none;
+  animation: ad-drift 9s linear infinite;
+}
+@keyframes ad-drift { from { --ad-a: 0deg; } to { --ad-a: 360deg; } }
+.ad.is-busy .ad__ask::before { opacity: 1; animation-duration: 2.6s; }
+.ad.is-busy .ad__ask::after { opacity: 0.4; animation-duration: 2.6s; }
+.ad__ask.is-speaking::before { opacity: 0.95; animation-duration: 4s; }
+.ad__ask.is-focused::before { opacity: 1; }
+/* Still under reduced motion: the glow rests at the top right. */
+.ad.is-reduced .ad__ask::before,
+.ad.is-reduced .ad__ask::after { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  .ad__ask::before, .ad__ask::after { animation: none; }
+}
+
+.ad__field {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 42px;
+  padding: 0 5px 0 11px;
+  border: 1px solid var(--ad-line);
+  border-radius: 10px;
+  background: var(--ad-field);
+}
+.ad__ask.is-focused .ad__field { border-color: transparent; box-shadow: 0 0 0 3px var(--ad-halo); }
+.ad__lead { flex: none; color: var(--ad-glow-a); }
+.ad__input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 4px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--ad-text);
+  font: inherit;
+  font-size: 13.5px;
+}
+.ad__input::placeholder { color: var(--ad-text-3); }
+.ad__kbd {
+  flex: none;
+  display: grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border: 1px solid var(--ad-line);
+  border-radius: 5px;
+  color: var(--ad-text-3);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  margin-right: 2px;
+}
+.ad-send {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 8px;
+  background: var(--ad-on);
+  color: #fff;
+  cursor: pointer;
+  transition: opacity 120ms ease, background-color 120ms ease;
+}
+.ad-send:disabled { background: var(--ad-sunken); color: var(--ad-text-3); cursor: default; }
+.ad-send:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ad-halo); }
+
+/* The voice line: the waveform, the line said, Stop. */
+.ad__voice { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; }
+.ad__wave { flex: none; display: inline-flex; align-items: center; gap: 2.5px; height: 18px; }
+.ad__wave i {
+  display: block;
+  width: 3px;
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(var(--ad-glow-b), var(--ad-glow-a));
+  transform-origin: 50% 50%;
+  animation: ad-bar 900ms ease-in-out infinite;
+}
+.ad__wave i:nth-child(1) { animation-delay: -120ms; }
+.ad__wave i:nth-child(2) { animation-delay: -480ms; }
+.ad__wave i:nth-child(3) { animation-delay: -260ms; }
+.ad__wave i:nth-child(4) { animation-delay: -640ms; }
+.ad__wave i:nth-child(5) { animation-delay: -40ms; }
+@keyframes ad-bar { 0%, 100% { transform: scaleY(0.28); } 50% { transform: scaleY(1); } }
+.ad.is-reduced .ad__wave i { animation: none; transform: scaleY(0.6); }
+@media (prefers-reduced-motion: reduce) { .ad__wave i { animation: none; transform: scaleY(0.6); } }
+.ad__subtitle {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  text-align: left;
+  font: inherit;
+  cursor: text;
+  font-size: 13.5px;
+  line-height: 1.3;
+  color: var(--ad-text);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* --- Row 2: the controls ---------------------------------------------------- */
+
+.ad__controls { display: flex; align-items: center; gap: 2px; padding: 0 2px; min-height: 30px; }
+.ad__zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  padding: 1px;
+  border: 1px solid var(--ad-line);
+  border-radius: 8px;
+  margin-right: 4px;
+}
+.ad__pct {
+  min-width: 46px;
+  height: 26px;
+  padding: 0 4px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--ad-text-2);
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.ad__pct:hover { background: var(--ad-hover); color: var(--ad-text); }
+.ad__pct:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ad-halo); }
+.ad-sep { flex: none; width: 1px; height: 18px; margin: 0 5px; background: var(--ad-line); }
+
+/* One icon button for every control — and the view's own `.bb__act`s, sized alike. */
+.ad-btn,
+.ad .bb__act {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: none;
+  color: var(--ad-text-3);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.ad-btn:hover,
+.ad .bb__act:hover { background: var(--ad-hover); color: var(--ad-text); }
+.ad-btn:disabled,
+.ad .bb__act:disabled { opacity: 0.4; cursor: default; background: none; }
+.ad-btn:focus-visible,
+.ad .bb__act:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ad-halo); }
+.ad-btn.is-on { color: var(--ad-on); }
+.ad-btn.is-on[aria-pressed='true'] { background: var(--ad-on-soft); }
+.ad-btn.is-sm { width: 24px; height: 24px; }
+.ad-btn.is-listening { color: #fff; background: var(--ad-on); animation: ad-listen 1.2s ease-in-out infinite; }
+@keyframes ad-listen { 50% { box-shadow: 0 0 0 5px var(--ad-halo); } }
+.ad.is-reduced .ad-btn.is-listening { animation: none; }
+.ad .bb__float__sep { width: 1px; height: 18px; margin: 0 5px; background: var(--ad-line); }
+
+/* --- An answer, drawn as words (AnswerText.tsx) ----------------------------- */
+
+.ad-ans { display: flex; flex-direction: column; gap: 6px; }
+.ad-ans__sentence { margin: 0; font-size: 14px; line-height: 1.55; color: var(--ad-text); text-wrap: pretty; }
+.ad-ans.is-unknown .ad-ans__sentence { color: var(--ad-text-2); }
+.ad-ans__w { display: inline; }
+.ad-ans__cite {
+  border-radius: 4px;
+  padding: 0 1px;
+  font-weight: 500;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+  text-decoration-color: var(--ad-line-2);
+  cursor: default;
+  outline: none;
+  transition: background-color 120ms ease, text-decoration-color 120ms ease;
+}
+.ad-ans__cite.is-positive { text-decoration-color: color-mix(in srgb, var(--ad-ok) 55%, transparent); }
+.ad-ans__cite.is-negative { text-decoration-color: color-mix(in srgb, var(--ad-bad) 55%, transparent); }
+.ad-ans__cite.is-notice { text-decoration-color: color-mix(in srgb, var(--ad-warn) 60%, transparent); }
+.ad-ans__cite:hover,
+.ad-ans__cite:focus-visible,
+.ad-ans__cite.is-lit { background: var(--ad-sunken); text-decoration-color: currentColor; }
+.ad-ans__cite.is-positive:hover, .ad-ans__cite.is-positive:focus-visible, .ad-ans__cite.is-positive.is-lit { background: var(--ad-ok-bg); }
+.ad-ans__cite.is-negative:hover, .ad-ans__cite.is-negative:focus-visible, .ad-ans__cite.is-negative.is-lit { background: var(--ad-bad-bg); }
+.ad-ans__cite.is-notice:hover, .ad-ans__cite.is-notice:focus-visible, .ad-ans__cite.is-notice.is-lit { background: var(--ad-warn-bg); }
+.ad-ans__cite:focus-visible { box-shadow: 0 0 0 2px var(--ad-halo); }
+.ad-ans__num {
+  display: inline;
+  margin: 0 1px 0 3px;
+  padding: 1px 4px;
+  border-radius: 5px;
+  background: var(--ad-sunken);
+  box-shadow: inset 0 0 0 1px var(--ad-line);
+  color: var(--ad-text-2);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  vertical-align: 0.55em;
+  text-decoration: none;
+}
+.ad-ans__cite:hover .ad-ans__num,
+.ad-ans__cite:focus-visible .ad-ans__num,
+.ad-ans__cite.is-lit .ad-ans__num { background: var(--ad-text); color: var(--ad-surface); box-shadow: none; }
+.ad-ans__mk { display: inline-block; vertical-align: -1px; margin-right: 3px; }
+.ad-ans__mk.is-pass { color: var(--ad-ok); }
+.ad-ans__mk.is-fail { color: var(--ad-bad); }
+.ad-ans__mk.is-unknown { color: var(--ad-warn); }
+.ad-ans__more {
+  margin: 0;
+  padding: 0 0 0 10px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border-left: 2px solid var(--ad-line);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ad-text-2);
+}

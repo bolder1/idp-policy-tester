@@ -1,0 +1,1483 @@
+/* ---------------------------------------------------------------------------
+   Creating a policy, and the templates it can start from.
+
+   This was one screen's stylesheet: a gallery page, a hero banner, a category
+   tab strip and a name-and-app step laid out beneath them. The gallery page is
+   gone — the naming form opens in place from the policy list, and the
+   catalogue is a sheet the board raises from its empty state — so what is left
+   here is the three things that outlived it: the template card and its
+   preview, the marketplace sheet those cards sit in, and the field styling the
+   naming form shares with Policy details.
+
+   `.bcp*` and `.bname2*` are NOT create-page classes any more, whatever their
+   names suggest: PolicyDetails.tsx imports this file and wears them, so they
+   cannot be deleted as gallery cleanup. `.bbar*` went when Policy details moved
+   to the kit save bar, and the old `.bempty` override went because it put a
+   dashed edge back on every empty state in the console — empty.css owns those.
+
+   Console-native: white page, #f8f9fa tiles, 6px radii, orange primary.
+   --------------------------------------------------------------------------- */
+
+.bcp { max-width: 1500px; }
+.bcp__head { margin-bottom: 22px; }
+.bcp__crumb { display: flex; align-items: center; gap: 6px; margin-bottom: 14px; font-size: var(--fs-sm); color: var(--text-tertiary); }
+.bcp__crumb button { color: var(--text-tertiary); }
+.bcp__crumb button:hover { color: var(--text-primary); text-decoration: underline; }
+.bcp__headrow { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+.bcp__headrow h1 { font-size: 20px; font-weight: 700; }
+
+/* Spacing is asymmetric on purpose: a heading needs more air above it when it
+   follows a block of cards than when it follows the toolbar, or the group it
+   introduces reads as belonging to the group above it. 40 above, 16 below, and
+   the toolbar's own 28 covers the first one. */
+.bgal__section {
+  display: flex; align-items: center; gap: 10px;
+  font-size: var(--fs-md); font-weight: 600; color: var(--text-primary);
+  margin: 40px 0 16px;
+}
+.bgal__section:first-of-type { margin-top: 0; }
+
+/* The count, then who the group belongs to — the two things that make the
+   segregation readable without opening a card. Centred rather than
+   baseline-aligned: a bordered pill sits visibly high off a text baseline. */
+.bgal__section em {
+  font-style: normal; font-weight: 500; font-size: var(--fs-xs); line-height: 18px;
+  padding: 0 8px; border-radius: var(--radius-pill);
+  background: var(--surface-sunken); border: 1px solid var(--border-subtle);
+  color: var(--text-tertiary);
+}
+/* A hairline, so the attribution reads as a separate fact from the count
+   rather than as more of the same label. */
+.bgal__section span {
+  padding-left: 12px;
+  border-left: 1px solid var(--border-subtle);
+  font-weight: 400; font-size: var(--fs-sm); color: var(--text-muted);
+}
+/* `1fr` rows and stretched items: every card in a row matches the tallest, and
+   the card's body takes up the slack. The old fixed
+   362px was sized for a card that always had a thumbnail — with the thumbnail
+   withheld in lite it became 362px of mostly nothing. */
+.bgal__grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(296px, 1fr));
+  gap: 18px; align-items: stretch; grid-auto-rows: 1fr;
+}
+
+/* --- Template card ---------------------------------------------------------
+   A thumbnail of the rule stack, then the heading with its one action at the end
+   of the line, then the description.
+
+   The face was a tinted panel with a category icon in the middle. Both said the
+   same thing the heading said, and they cost 150px to say it. It now carries a
+   miniature of the policy itself — the rules, numbered, in evaluation order,
+   each with the outcome it lands on — drawn the way the builder's canvas draws
+   them, so the thumbnail and the editor are recognisably the same object.
+
+   The decisions keep their hues on the white rows. Since 2 Nov 2026 the canvas
+   behind them takes the shelf's retro colour (owner: "make it colourful … same
+   retro colour family"), the look of the builder's start cards. */
+/* --card-dot used to be declared here too. It moved to tokens.css because three
+   other stylesheets read it — builder-v2, builder-v3 and tour — and all three
+   are in their own chunks. --peek-bg went with the eye (2 Nov 2026). */
+
+.bgcard {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  /* Fills its grid row rather than declaring a height. The row is `1fr`, so
+     cards stay level with each other without the card having to know whether it
+     is carrying a thumbnail. */
+  height: 100%;
+  min-height: 224px;
+  overflow: hidden;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(33, 37, 41, 0.04);
+  transition: border-color var(--dur-fast) var(--ease-standard), box-shadow var(--dur-fast) var(--ease-standard);
+}
+/* The card's hover is the lift at the end of this file. */
+
+/* The canvas. Sunken and dotted, because that is what the builder's canvas is,
+   so the thumbnail reads as a scaled-down artboard.
+
+   Three bands: 36px for the pill and the eye, the stack, and a band of open
+   canvas above the readout (--sky, set with the hover lift at the end of this
+   file) so a lifted row never touches the readout or the eye. */
+.bgcard__canvas {
+  --horizon: 30px; /* the readout's height */
+  --sky: 20px;
+  position: relative;
+  flex: none;
+  height: 212px;
+  /* Centred in what is left. The tallest stack, three rules plus the
+     fall-through, is 124px of the 125px between the insets. */
+  display: flex; flex-direction: column; justify-content: center;
+  padding: 36px 13px calc(var(--horizon) + var(--sky));
+  background: var(--surface-sunken);
+  isolation: isolate;
+  border-bottom: 1px solid var(--border-subtle);
+  overflow: hidden;
+}
+
+.bgcard__stack {
+  position: relative;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+/* The fall-through belongs to the policy, not the template: 6px off the rules. */
+.bgcard__stack > li:last-child:not(:first-child) { margin-top: 2px; }
+/* The spine, from the centre of the first badge to the centre of the last.
+   Every row is opaque, so it shows only in the gaps. */
+.bgcard__stack::before {
+  content: '';
+  position: absolute;
+  left: 15px;
+  top: 14px;
+  bottom: 13px;
+  width: 1px;
+  background: var(--border-default);
+}
+
+/* Every row is solid. A row the grid shows through reads as half-drawn. */
+.bgcard__mrow {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 28px;
+  padding: 0 7px 0 5px;
+  text-align: left;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  box-shadow: var(--el-low);
+}
+
+.bgcard__mn {
+  display: grid;
+  place-items: center;
+  width: 18px; height: 18px;
+  border-radius: 5px;
+  background: var(--surface-inset);
+  border: 1px solid var(--border-subtle);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--text-tertiary);
+}
+.bgcard__mname {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Line height pinned so the chip is 20px in both looks and fits the 26px fall-through. */
+.bgcard__mdec {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  line-height: 16px;
+  padding: 2px 6px;
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+}
+.bgcard__mdec.is-deny { background: var(--fb-negative-bg); color: var(--fb-negative-fg); }
+.bgcard__mdec.is-mfa { background: var(--fb-positive-strong-bg); color: var(--fb-positive-strong-fg); }
+.bgcard__mdec.is-allow { background: var(--fb-positive-bg); color: var(--fb-positive-fg); }
+
+/* "+3 more rules": the rules it stands for, as a deck. White like them,
+   shorter because it is a count, with one sheet showing 3px beneath it. The
+   sheet is two offset shadows (its fill, then its edge). It lands in the gap
+   above the fall-through, which always comes straight after this row. */
+.bgcard__mrow--rest {
+  height: 22px;
+  box-shadow: 0 5px 0 -3px var(--surface-raised), 0 5px 0 -2px var(--border-subtle);
+}
+.bgcard__mrow--rest .bgcard__mname { font-size: var(--fs-xs); color: var(--text-secondary); }
+
+/* Everyone else: what the engine does when nothing above matched, which is
+   the policy's own default. A grey slab with no edge, a step shorter than a
+   rule. It is solid, so the grid does not show through, and it stays down when
+   the template's rules lift on hover.
+   Dashed outlines are out of the design system. The decision chip stays at
+   full strength, because its colour is what the row means. */
+.bgcard__mrow--default {
+  height: 26px;
+  background: var(--surface-inset);
+  border-color: transparent;
+  box-shadow: none;
+}
+.bgcard__mrow--default .bgcard__mname { color: var(--text-tertiary); font-weight: var(--fw-regular); }
+
+/* Neither end row is a numbered rule, so neither glyph sits in a numbered tile. */
+.bgcard__mrow--rest .bgcard__mn,
+.bgcard__mrow--default .bgcard__mn { background: transparent; border-color: transparent; }
+
+/* Fixed height and pinned to the canvas floor, so nothing reflows. */
+.bgcard__readout {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: var(--horizon);
+  display: flex; align-items: center; gap: 7px;
+  padding: 0 13px;
+  background: var(--surface-raised);
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--fs-xs);
+}
+/* "2 rules", in the page's own face and case.
+
+   It was 10px monospace uppercase with letterspacing - four typographic
+   decisions on three characters, and the only monospace anywhere on this card.
+   It reads as a count now, which is what it is. */
+.bgcard__rlabel {
+  flex: none;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  color: var(--text-secondary);
+}
+.bgcard__rtext {
+  min-width: 0;
+  color: var(--text-secondary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+
+.bgcard__body {
+  flex: 1;
+  min-height: 0;
+  display: flex; flex-direction: column; gap: 5px;
+  /* The body is the card's bottom edge now the footer strip has gone. */
+  padding: var(--space-5) var(--space-6) var(--space-6);
+}
+/* The name and the Use button on one line. Flex rather than a grid, so without
+   a button the name simply takes the row. */
+.bgcard__head { display: flex; align-items: center; gap: var(--space-5); min-height: var(--ctl-height-sm); }
+.bgcard__head .bgcard__h { flex: 1; min-width: 0; }
+.bgcard__h {
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bgcard__sub {
+  font-size: var(--fs-md);
+  color: var(--text-secondary);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+
+/* The card's one button, the width of the card on its floor (owner, 2 Nov 2026: "a big button in one row"). */
+.bgcard__go { display: flex; align-items: center; gap: var(--space-5); margin-top: auto; padding-top: var(--space-4); }
+.bgcard__go .bgcard__cta { flex: 1; min-width: 0; height: var(--ctl-height-md); }
+.bgcard__cta {
+  position: relative; flex: none;
+  height: var(--ctl-height-sm);
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-md);
+  background: var(--int-neutral-bg);
+  border: var(--bw-thin) solid var(--int-neutral-border);
+  color: var(--int-neutral-text);
+  font-size: var(--fs-md); font-weight: var(--fw-medium); white-space: nowrap;
+  transition: background-color var(--dur-fast) var(--ease-standard), border-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard);
+}
+/* Orange on the card you point at, or on the button when it has keyboard focus
+   (owner, 21 Sep 2026) — at most one on screen and none at rest, so 60/30/10
+   holds. The fill is `--brand-on-fill`, the primary button's own: white on the
+   bare `--brand` is 3.6:1, and `--accent` is slate in the classic look and blue
+   in the rebrand. Not `:focus-within`: an orange Use while the preview eye has
+   focus would suggest Enter applies the template. */
+/* Quiet, not orange (owner, 2 Nov 2026: "a greyscale hover or a subtle orange hover for the button, it looks too
+   bold"): the card you point at greys its button a step, and the button itself takes the brand's soft tint. */
+.bgcard:hover .bgcard__cta { background: var(--surface-sunken); border-color: var(--border-strong); }
+.bgcard .bgcard__cta:not(.is-quiet):hover,
+.bgcard .bgcard__cta:not(.is-quiet):focus-visible { background: var(--brand-subtle-bg); border-color: var(--brand-subtle-border); color: var(--brand-active); }
+/* The global focus ring draws; this only keeps it from squaring the corners. */
+.bgcard .bgcard__cta:focus-visible { border-radius: var(--radius-md); }
+@media (pointer: coarse) {
+  .bgcard__cta::after { content: ''; position: absolute; top: 50%; left: 50%; width: max(100%, 44px); height: max(100%, 44px); transform: translate(-50%, -50%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bgcard, .bgcard__cta { transition: none; }
+}
+
+/* The store's card once it is in Your templates (30 Oct 2026): said where the Add button was, quiet, not a button. */
+.bgcard__done {
+  flex: none; display: inline-flex; align-items: center; gap: var(--space-2);
+  height: var(--ctl-height-sm);
+  font-size: var(--fs-md); font-weight: var(--fw-medium); color: var(--text-secondary);
+}
+
+/* --- Preview dialog --------------------------------------------------------
+   The same drawing as the card face, at a size that fits the conditions. */
+.bprev__sub { font-size: var(--fs-base); color: var(--text-secondary); line-height: 1.55; }
+
+.bprev__facts {
+  display: grid; grid-template-columns: auto auto 1fr; gap: 0 22px;
+  margin: 14px 0 0; padding: 11px 14px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+.bprev__facts dt {
+  font-size: var(--fs-xs); font-weight: var(--fw-medium); color: var(--text-tertiary);
+}
+.bprev__facts dd { margin: 3px 0 0; font-size: var(--fs-md); color: var(--text-primary); }
+.bprev__facts > div:last-child { min-width: 0; }
+/* A copy added from the store says where it came from as a fourth fact, on the same line. */
+.bprev__facts:has(> :nth-child(4)) { grid-template-columns: auto auto auto 1fr; }
+
+.bprev__note { margin-top: 14px; font-size: var(--fs-sm); color: var(--text-tertiary); line-height: 1.5; }
+
+/* Dotted canvas and a spine, matching the thumbnail. */
+.bprev__stack {
+  position: relative;
+  list-style: none; margin: 10px 0 0;
+  padding: 13px;
+  display: flex; flex-direction: column; gap: 6px;
+  background:
+    radial-gradient(circle at 1px 1px, var(--card-dot) 1px, transparent 0) 0 0 / 12px 12px,
+    var(--surface-sunken);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+.bprev__stack::before {
+  content: ''; position: absolute;
+  left: 27px; top: 26px; bottom: 26px;
+  width: 1px; background: var(--border-default);
+}
+
+.bprev__node {
+  position: relative; z-index: 1;
+  display: flex; align-items: center; gap: 11px;
+  padding: 9px 11px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  box-shadow: 0 1px 1px rgba(33, 37, 41, 0.03);
+}
+.bprev__node--default { background: var(--surface-inset); border-color: transparent; box-shadow: none; }
+.bprev__node--default .bprev__n { background: transparent; border-color: transparent; }
+.bprev__node--default .bprev__body strong { color: var(--text-secondary); font-weight: var(--fw-medium); }
+
+.bprev__n {
+  flex: none; width: 20px; height: 20px; border-radius: 6px;
+  display: grid; place-items: center;
+  background: var(--surface-inset); border: 1px solid var(--border-subtle);
+  font-size: var(--fs-xs); font-weight: var(--fw-semibold); color: var(--text-tertiary);
+}
+.bprev__body { flex: 1; min-width: 0; }
+.bprev__body strong { display: block; font-size: var(--fs-md); font-weight: var(--fw-semibold); color: var(--text-primary); }
+/* Wrapped, never cut. The preview is the template with nothing left out, and a
+   rule's who and conditions run long; the card thumbnail is what truncates. */
+.bprev__body > span {
+  display: block; margin-top: 2px;
+  font-size: var(--fs-sm); color: var(--text-tertiary);
+  white-space: normal; overflow-wrap: anywhere;
+}
+.bprev__body i {
+  font-style: normal; font-weight: var(--fw-semibold);
+  font-size: var(--fs-xs); color: var(--text-secondary);
+}
+.bprev__right { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.bprev__right em { font-style: normal; font-size: var(--fs-xs); color: var(--text-tertiary); }
+
+/* --- Step 2 ---------------------------------------------------------------- */
+
+.bname2__card { background: var(--surface-raised); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 18px 20px; }
+/* The whole form is one card of two fields. It was two cards because each one
+   carried a heading and a paragraph and needed the separation; with the prose
+   gone they are just fields, and fields belong in the same box. */
+.bname2__form { display: flex; flex-direction: column; gap: 18px; }
+.bname2__field { display: flex; flex-direction: column; gap: 6px; }
+.bname2__label {
+  display: block;
+  font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--text-secondary);
+}
+/* Neutral, not red: red is kept for destructive actions. */
+.bname2__label i { font-style: normal; color: var(--text-tertiary); }
+/* The label and the counter share a row.
+
+   The counter used to sit under the input with `align-self: flex-end`, so it
+   appeared at character 40 and pushed the two rows beneath it down 18px
+   mid-word. On the label row it occupies space that already exists. */
+.bname2__labelrow { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); }
+.bname2__count { font-size: var(--fs-xs); color: var(--text-muted); }
+/* Three answers, one column, capped. The two 475px list panels have gone — see
+   NameStep — so nothing here scrolls and the whole step fits above the fold.
+   Capped rather than full width because a 1,400px text input is a target with
+   no shape; the heading above it stops at the same edge. */
+.bname2__form { max-width: 720px; }
+.bname2__field .bx-picker { width: 100%; }
+.bname2__field input[type='text'] { max-width: 420px; }
+
+/* --- Name your policy, as a dialog -----------------------------------------
+
+   Step 2 was a page: its own title, its own fixed-height column, its own
+   footer bar, and reaching it replaced the catalogue you had just chosen from.
+   Two fields do not need a page. The gallery stays behind the scrim now, so
+   Back is a dismissal rather than a navigation.
+
+   The FIELD classes stay `.bname2__*`. Policy details asks the same two
+   questions and shares them, and forking a second vocabulary for one label and
+   one character counter is how two forms that must agree start to drift. What
+   is local to the dialog is the layout around them. */
+.bnp { display: flex; flex-direction: column; gap: 18px; }
+/* The 420px cap exists to stop a 1,400px text input on a full-width page; in a
+   520px dialog it just leaves the field short of the picker beneath it. */
+.bnp .bname2__field input[type='text'] { width: 100%; max-width: none; }
+
+/* The footer is otherwise flush right, and the note belongs at the other end. */
+/* The application, stated rather than asked — for the dialog opened from an
+   application row, where the answer is the row. A plain statement, not a
+   disabled combobox: greyed chrome reads "you could change this, but not now",
+   which is not what is true here. */
+.bname2__fixed {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-sunken);
+  border: var(--bw-thin) solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  min-height: var(--ctl-height-md);
+}
+.bname2__fixed strong { font-size: var(--fs-md); font-weight: var(--fw-medium); color: var(--text-primary); }
+.bname2__fixed .u-muted { font-size: var(--fs-xs); }
+.bname2__fixed em {
+  flex-basis: 100%;
+  font-style: normal;
+  font-size: var(--fs-xs);
+  color: var(--text-tertiary);
+}
+
+/* `.bnp__note` is gone with the footer sentence it styled — see NewPolicyDialog. */
+
+/* `.bbar`, the bottom action bar Policy details wore, stood here. That page
+   commits through the kit save bar now. */
+
+/* `.bguided` stood here: the naming form's "Guided setup" button, its sheen
+   and its wand. The guided build it opened is retired for Describe it on the
+   empty draft (describe spec, §6.2), and the button went with it. */
+
+/* `.bempty` stood here, from the drawn empty states. This sheet loads after
+   empty.css, so it won the tie and put a dashed edge, no top padding and a
+   stray margin on the icon back onto every EmptyState. empty.css owns them. */
+
+/* --- The summary panel is a plain block ------------------------------------
+   It used to be a sticky flex column handing its height down to appsum and on
+   to the lists, so every child's height depended on the whole chain and a
+   single stray override anywhere in this file broke it silently. The panel and
+   the rule list now just grow; the commit bar is fixed, so nothing they push
+   down ends up out of reach. */
+
+/* --- Mobile ---------------------------------------------------------------
+   The console rail collapses below this, so the gallery gets the full width and
+   the summary stops being a sidebar. */
+@media (max-width: 720px) {
+  .bcp { padding-bottom: 92px; }
+  .bcp__headrow { flex-direction: column; gap: 14px; }
+  .bgal__grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* --- Template gallery (marketplace) ----------------------------------------
+   A sheet over the create flow, not a third step — "Step 1 of 2" stays true,
+   and you come back to exactly where you were if you close it.
+   -------------------------------------------------------------------------- */
+
+/* Centred, with a margin — not a bottom sheet.
+
+   It rose from the bottom edge at 92vh, welded to the window, which is the
+   drawing for a catalogue that owns the screen. It does not own the screen: it
+   is raised from a board where every region is now a bounded card with a gutter
+   around it, and a slab fused to one edge of the viewport was the only thing
+   left on this surface that had no edges of its own. */
+.bmarket {
+  position: fixed; inset: 0; z-index: 80;
+  display: flex; align-items: center; justify-content: center;
+  padding: var(--space-8);
+  background: rgba(20, 25, 30, 0.42);
+  backdrop-filter: blur(2px);
+}
+.bmarket__sheet {
+  position: relative;
+  display: flex; flex-direction: column;
+  width: min(1180px, 100%); height: min(760px, 100%);
+  background: var(--surface-page);
+  border-radius: var(--radius-xl);
+  box-shadow: 0 24px 60px rgba(20, 25, 30, 0.3);
+  overflow: hidden;
+}
+
+/* `.bmarket__head` and `.bmarket__brand` stood here: a 24px header row holding
+   the mark, the heading, the provenance line and the close, with the filters
+   crammed underneath it. The band below replaces all of it. `.bmarket__mark`
+   and `.bmarket__x` were declared here too and are redeclared there — the mark
+   loses its brand tint with the move, because a storefront badge is not an
+   action. */
+
+/* --- The storefront band ---------------------------------------------------------
+
+   One colour, and it is the brand's.
+
+   Six treatments came before this and every one of them was a variation on the
+   same idea — that the band should say which category is filtering the grid.
+   Two brand blobs, four fields of light, six at double the depth with a drift on
+   them, a ruled lattice of filled cells, a four-stop spectrum, and finally four
+   `@property`-registered colours driving a mark and a wash together. The
+   mechanism worked; the idea did not. A header that restains itself is a second
+   readout for something the dropdown already states in words and the cards
+   already state in pills, and six passes of tuning could not make a redundant
+   signal feel like anything but decoration.
+
+   So the band stops signalling. It is one soft fall of brand orange into the
+   page surface, which is what the top of a sheet in this console looks like, and
+   the category lives where it belongs: in the filter that sets it and on the
+   cards it selects.
+
+   The colour is gone from here, not from the product. `.bgcard__cat` still wears
+   the four category hues — lime, accent, info, magenta — and the reasoning for
+   which is which is with the map in TemplateCard.tsx. */
+.bmarket__hero {
+  flex: none;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  padding: 14px 24px 14px;
+  /* Deepest at the top edge and flat well before the search field, so the input
+     and the seam into the catalogue below both sit on plain surface. */
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--hero-tint, var(--accent)) 13%, var(--surface-page)) 0%,
+    color-mix(in oklab, var(--hero-tint, var(--accent)) 5%, var(--surface-page)) 44%,
+    var(--surface-page) 86%
+  );
+  border-bottom: 1px solid var(--border-subtle);
+}
+/* The band takes the colour of the card that opened it (owner, 2 Nov 2026: "change the gradient based on the card colour:
+   for template orange, for the other one green"): the builder's start cards' terracotta and teal (tokens.css `--start-*`). */
+.bmarket__sheet.is-template { --hero-tint: var(--start-template); --hero-mark: var(--start-template); --hero-mark-border: var(--start-template-wash-2); }
+.bmarket__sheet.is-reuse { --hero-tint: var(--text-secondary); --hero-mark: var(--text-secondary); --hero-mark-border: var(--border-default); }
+
+/* The mark, back to the shopfront it was, and staying at the smaller size the
+   shrunken band asked for. Brand-tinted rather than neutral now that the band
+   under it is brand too — a grey badge in a warm band reads as an oversight. */
+.bmarket__mark {
+  flex: none; width: 32px; height: 32px; border-radius: 10px;
+  display: grid; place-items: center; margin-bottom: 6px;
+  background: var(--surface-raised); color: var(--hero-mark, var(--accent-strong));
+  border: 1px solid var(--hero-mark-border, var(--accent-soft-border));
+  box-shadow: var(--el-low);
+}
+.bmarket__hero h2 {
+  font-size: var(--fs-xl); font-weight: var(--fw-semibold); letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+/* Who the store's templates are by, under its name (TemplateStore.tsx). */
+.bmarket__by { margin-top: var(--space-2); font-size: var(--fs-sm); color: var(--text-tertiary); }
+
+/* The search, at the width a template name actually needs. The pill-shaped
+   42px field this used to draw is gone — a fifth shape for the same object —
+   and the wrapper now only says how wide the box is on this page. */
+.bmarket__searchbox { width: min(440px, 100%); margin-top: 8px; }
+/* The category chips, under the shelf's heading and over its cards. */
+.bmarket__chips { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: calc(-1 * var(--space-2)) 0 var(--space-6); }
+
+/* The close, over the band rather than in a row of its own. */
+.bmarket__x {
+  position: absolute; top: 14px; right: 16px; z-index: 1;
+  width: 34px; height: 34px; border-radius: var(--radius-md);
+  display: grid; place-items: center; color: var(--text-tertiary);
+}
+.bmarket__x:hover { background: var(--surface-raised); color: var(--text-primary); }
+
+/* --- The shelves, and the index beside them -----------------------------------
+
+   The rail is back, and this time it is a CARD rather than a column. It was a
+   full-height 236px column and became a chip row because at 750px tall it was
+   six rows and six hundred pixels of nothing — but the emptiness was the
+   COLUMN, not the rail. Sized to its own contents and stuck to the top of the
+   scroll, six categories are a compact index that stays put while the grid
+   moves past it, which is the thing a chip row cannot do and the reason every
+   catalogue of any size grows one.
+
+   One scroll container for both, so the rail travels with the page until it
+   reaches the top and then holds. Two independent scrollers is how a rail ends
+   up showing category four while the grid shows category one. */
+.bmarket__work {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: grid; grid-template-columns: 216px minmax(0, 1fr);
+  align-items: start;
+  gap: 24px;
+  padding: 24px;
+}
+.bmarket__rail {
+  grid-column: 1;
+  position: sticky; top: 0;
+  padding: 8px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-lg);
+}
+.bmarket__railhead {
+  margin: 4px 8px 8px;
+  font-size: var(--fs-sm); font-weight: var(--fw-semibold);
+  color: var(--text-tertiary);
+}
+.bmarket__cats { display: flex; flex-direction: column; gap: 2px; }
+.bmarket__cat {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 7px 10px; border-radius: var(--radius-md);
+  background: none; text-align: left; cursor: pointer;
+  font-size: var(--fs-md); color: var(--text-secondary);
+}
+.bmarket__cat:hover { background: var(--surface-sunken); color: var(--text-primary); }
+/* The selected shelf. A tint and a weight, not a fill — this is where you are,
+   not something to press. */
+.bmarket__cat.is-on { background: var(--surface-inset); color: var(--text-primary); font-weight: var(--fw-medium); }
+.bmarket__cat:focus-visible { outline: none; box-shadow: 0 0 0 4px var(--focus-halo); }
+
+.bmarket__body { grid-column: 2; min-width: 0; }
+.bmarket__body .bgal__section:first-of-type { margin-top: 0; }
+
+/* The shelf's name and the filter over it, on one line. The heading keeps the
+   count so the dropdown does not have to be opened to know how many are under
+   it, and the filter sits at the end of the row it acts on rather than in a
+   toolbar of its own. */
+.bmarket__shelf {
+  display: flex; align-items: center; gap: var(--space-6);
+  margin-bottom: var(--space-6);
+}
+.bmarket__shelf .bgal__section { margin: 0; flex: 1; min-width: 0; }
+
+/* Where the rest of a category is. Both templates this tenant wrote are
+   Compliance ones, so the Xecurify shelf filtered to Compliance shows one of
+   three — this is the line that says where the other two went. */
+.bmarket__elsewhere {
+  margin-top: var(--space-6);
+  font-size: var(--fs-sm); color: var(--text-tertiary);
+}
+.bmarket__elsewhere > button {
+  font: inherit; color: var(--text-link); background: none; border: 0; padding: 0; cursor: pointer;
+}
+.bmarket__elsewhere > button:hover { text-decoration: underline; }
+
+/* The band arrives at its colour instead of travelling to it, and the mesh
+   holds still. Every state still paints exactly right — the restain snaps, the
+   light stops drifting, and neither is information anybody loses. */
+/* The band's own reduced-motion guard has gone with the thing it guarded: it
+   does not move, restain or breathe any more. The card hover above still has
+   one, at the top of this file. */
+
+@media (max-width: 720px) {
+  .bmarket { padding: 0; }
+  .bmarket__sheet { height: 100%; border-radius: 0; }
+  .bmarket__hero { padding: 24px 16px 20px; }
+  /* No room for an index beside the shelves, so it goes above them and lies
+     down. The categories still scroll, just along the other axis. */
+  .bmarket__work { grid-template-columns: minmax(0, 1fr); gap: 16px; padding: 16px; }
+  .bmarket__rail { grid-column: 1; position: static; }
+  .bmarket__cats { flex-direction: row; overflow-x: auto; }
+  .bmarket__cat { white-space: nowrap; }
+  .bmarket__body { grid-column: 1; }
+}
+
+/* --- Step 2 · a page that fits ----------------------------------------------
+   The step is now sized to the viewport instead of flowing past it. The page
+   itself never scrolls; the one thing whose length is unbounded — the rule
+   list, which a template can fill with any number of rules — scrolls inside
+   its own panel.
+
+   That also removes the fixed action bar and the 84px of padding the page had
+   to reserve underneath it. With the page a fixed-height column, the bar is
+   simply the last row of that column, which is both simpler and honest about
+   where the bottom of the page is. */
+.bcp--fit {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding-bottom: 0;
+  overflow: hidden;
+}
+.bcp--fit .bcp__head { margin-bottom: 16px; }
+.bcp--fit > div:has(.bname2) { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+
+/* The form, wherever it is asked.
+
+   This was a two-column page: a form on the left and, from a template, a
+   preview of the rules on the right, both stretched to a fixed-height column
+   with a footer bar under them. Create Policy asks it in a DIALOG now — see
+   `.bnp` below — and what is left under this class is Policy details, which
+   is a section of fields and nothing else. One column, no stretch. */
+.bname2 {
+  /* `flex: 1` has gone with the resident lists. It existed to let two 475px
+     scrollers stretch to the viewport; the step is now three rows tall, and
+     stretching it just pushed the footer bar to the bottom of the window with
+     500px of nothing above it. */
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+.bname2__form { min-height: 0; }
+
+@media (max-width: 1120px) {
+  /* Below this a fixed-height column has too little of it to be worth the
+     scrolling it forces, so the page goes back to being a normal one. */
+  .bcp--fit { height: auto; overflow: visible; }
+}
+
+.bname2__label em {
+  font-style: normal; font-weight: var(--fw-regular);
+  margin-left: 6px; letter-spacing: 0; text-transform: none;
+  color: var(--text-muted);
+}
+
+/* The scroller. The list takes whatever height the column has left, so the
+   page itself never grows. */
+/* Reserved whether or not it is filled, so ticking a row does not shift the
+   name and protocol sideways. */
+
+/* The form column is a flex column whose last field grows, so it stops being a
+   scroller itself — the list inside it is. */
+.bname2__form { overflow: visible; display: flex; flex-direction: column; }
+
+/* One column, three rows.
+
+   This was two equal list columns with `overflow: hidden`, and the reasoning
+   was right for what it held: two resident scrolling panels, neither able to
+   push the other around, both scaling by scrolling rather than by growing.
+
+   There are no panels now — each answer is one 35px trigger — so two columns
+   would sit the REQUIRED audience beside the OPTIONAL application at equal
+   weight and half width. That is both a lie about their importance and narrow
+   enough to elide the audience summary mid-sentence: measured, "Nobody yet — 5
+   groups and 24 people to choose from" cut off at "to c…".
+
+   Stacked, they read in the order they have to be answered and each gets the
+   full 720px to say what it holds. Nothing scrolls, so the `overflow` and the
+   two `--fill` overrides go with it — the class stays defined further up for
+   PolicyDetails, which still renders the resident lists. */
+.bname2__form {
+  display: flex;
+  flex-direction: column;
+  align-content: start;
+  gap: 18px;
+}
+
+/* The name field, stated explicitly.
+
+   It was rendering with `border: 0px none` on a transparent background — an
+   input you cannot see the edges of, the same failure as the zone name field.
+
+   The cause was never the kit's `:where()` defaults, which do paint a border.
+   It was a bare `input[type='text']` in a second application that used to live
+   in this repo, loaded globally, at (0,1,1) against the kit's (0,1,0) and
+   reading tokens scoped to that app's root. That application is gone, so a
+   plain brand input is visible on its own.
+
+   This block stays because the field wants more than the default — a stronger
+   border, a brand hover, its own focus ring. It no longer needs to win a fight,
+   only to state a preference. */
+/* A DIRECT child, and it can stay one.
+
+   The `>` was load-bearing: `.bname2__field input[type='text']` also caught the
+   application list's own search box, nested inside `.bapps`, beating that box's
+   own rule at (0,3,1) and dropping its placeholder under the magnifier. That
+   list has gone — the field is a `Picker` now, which portals its search to the
+   body — so the fight is over. The combinator stays because it is still the
+   more precise selector and costs nothing. */
+.bname2 .bname2__field > input[type='text'] {
+  width: 100%;
+  height: var(--ctl-height-md);
+  padding: 0 10px;
+  font-size: var(--fs-base);
+  color: var(--text-primary);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  transition: border-color var(--dur-fast) var(--ease-standard),
+              box-shadow var(--dur-fast) var(--ease-standard);
+}
+.bname2 .bname2__field > input[type='text']::placeholder { color: var(--text-muted); }
+.bname2 .bname2__field > input[type='text']:hover { border-color: var(--accent); }
+.bname2 .bname2__field > input[type='text']:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+/* `.bgcard.is-flat` — the card without its rule-stack thumbnail, and the
+   `min-height` correction that went with it — stood here. Both existed for one
+   reason: the lite edition withheld the thumbnail. That gate is gone (see
+   TemplateCard.tsx), so every card carries its face and there is no second
+   shape to style.
+   Kept as a note rather than deleted silently, because the floor it corrected
+   — `min-height: 224px`, sized for the 212px thumbnail — is still live above
+   and is correct again now that every card has one. */
+
+/* --- The category pill --------------------------------------------------------
+
+   Top-left of the thumbnail, mirroring the preview control top-right — the
+   canvas already reserves 32px there, and its own comment has called that "room
+   for the badge" since before there was anything to put in it.
+
+   The four hues are the four the picker's header uses, and the reasoning for
+   which is which lives with the map in TemplateCard.tsx. What matters here is
+   what is NOT available: green, amber and red are reserved product-wide for
+   Allow, MFA and Deny, which is stated twice in this file and enforced by
+   `DecisionChip`. Four categories, four non-decision families, and no fifth. */
+/* The four hues stay - see the note above for why these four and no others.
+   The GEOMETRY joins the family: it was 10px on a pill radius with its own
+   letterspacing, so the one label that sits on top of every card in the gallery
+   was the one label that matched nothing else in the console. */
+/* 2 Nov 2026: the pill is a tab now, and the four hues are the retro set (owner: "change the template cards as well …
+   make it colourful, same retro colour family"). `--tpl` names the shelf, `--tpl-wash` is the canvas, `--tpl-wash-2` its
+   dots and the hover drift (tokens.css `--tpl-*`). A tenant's own policy, in the reuse picker, takes reuse's teal; a
+   card with no shelf stays grey. The decisions keep their hues on the white rows. */
+.bgcard, .bdetail { --tpl: var(--text-secondary); --tpl-wash: var(--surface-sunken); --tpl-wash-2: var(--card-dot); }
+:is(.bgcard, .bdetail).is-cat-quick { --tpl: var(--tpl-quick); --tpl-wash: var(--tpl-quick-wash); --tpl-wash-2: var(--tpl-quick-wash-2); }
+:is(.bgcard, .bdetail).is-cat-device { --tpl: var(--tpl-device); --tpl-wash: var(--tpl-device-wash); --tpl-wash-2: var(--tpl-device-wash-2); }
+:is(.bgcard, .bdetail).is-cat-risk { --tpl: var(--tpl-risk); --tpl-wash: var(--tpl-risk-wash); --tpl-wash-2: var(--tpl-risk-wash-2); }
+:is(.bgcard, .bdetail).is-cat-compliance { --tpl: var(--tpl-compliance); --tpl-wash: var(--tpl-compliance-wash); --tpl-wash-2: var(--tpl-compliance-wash-2); }
+:is(.bgcard, .bdetail).is-cat-reuse { --tpl: var(--start-reuse); --tpl-wash: var(--start-reuse-wash); --tpl-wash-2: var(--start-reuse-wash-2); }
+
+/* --- A card's preview, in the popup (TemplateDetail.tsx) ------------------------------------------------------------
+   Laid out for its content (owner, 2 Nov 2026: "give more space … fix the layout for the content"): a header across the
+   full width (Back; the shelf, the name and what it does, its button on the right; the facts on one line), then the
+   rules on the builder's canvas across the full width, every card open. */
+.bdetail {
+  display: flex; flex-direction: column;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  overflow: hidden;
+}
+/* The words on the left, Change and Use on the right, in one band. */
+.bdetail__head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-8);
+  padding: var(--space-7) var(--space-8);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.bdetail__words { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; max-width: 640px; }
+.bdetail__actions { flex: none; display: flex; gap: var(--space-4); }
+.bdetail__cat { font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--tpl); }
+.bdetail__name { margin: 0; font-size: var(--fs-2xl); font-weight: var(--fw-semibold); color: var(--text-primary); letter-spacing: -0.01em; }
+.bdetail__sub { margin: 0; font-size: var(--fs-md); color: var(--text-secondary); line-height: 1.55; }
+.bdetail .bprev__note { margin: 0; }
+.bdetail__canvas { position: relative; min-width: 0; }
+@media (max-width: 760px) {
+  .bdetail__head { flex-direction: column; }
+}
+
+/* A policy's applications, under its name in the reuse picker: "Used by", then one logo with its name, or the logos. */
+.bgcard__apps { display: flex; align-items: center; gap: var(--space-3); min-height: 24px; margin: 0; font-size: var(--fs-md); color: var(--text-secondary); }
+.bgcard__appslabel { flex: none; font-size: var(--fs-sm); color: var(--text-tertiary); }
+.bgcard__app { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; color: var(--text-primary); }
+.bgcard__app > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bgcard__applogos { display: inline-flex; align-items: center; gap: var(--space-2); }
+.bgcard__applogos > span { display: inline-flex; }
+.bgcard__appsmore { font-size: var(--fs-sm); color: var(--text-tertiary); }
+
+/* The shelf, cut out of the card's top-left corner (owner, 2 Nov 2026: "remove the border from this section so it looks
+   like a cut out"). It sits on the card, 1px over its edge, in the popup's own white, so the card's border stops where
+   the tab begins; two inverted curves join it to the edges it interrupts. Its name is in the shelf's colour. The
+   popup's body is `--surface-raised`; a card drawn on another ground would show the tab as a patch. */
+/* Top RIGHT since late 2 Nov (owner: "move it to the right side"), as the start cards carry theirs. */
+.bgcard__cat {
+  --tab-r: var(--radius-lg);
+  position: absolute; top: -1px; right: -1px; z-index: 4;
+  max-width: calc(100% - 24px);
+  padding: var(--space-3) var(--space-5) var(--space-3) var(--space-5);
+  background: var(--surface-raised);
+  border: 0; border-bottom-left-radius: var(--tab-r);
+  font-size: var(--fs-sm); font-weight: var(--fw-medium); line-height: 1.2; letter-spacing: 0;
+  color: var(--tpl);
+  white-space: nowrap;
+}
+.bgcard__cat::before,
+.bgcard__cat::after {
+  content: ''; position: absolute; width: var(--tab-r); height: var(--tab-r); pointer-events: none;
+  background: radial-gradient(circle at 0 100%, transparent calc(var(--tab-r) - 0.5px), var(--surface-raised) var(--tab-r));
+}
+.bgcard__cat::before { top: 0; left: calc(-1 * var(--tab-r)); }
+.bgcard__cat::after { right: 0; bottom: calc(-1 * var(--tab-r)); }
+
+/* The picture (CardPicture.tsx): one small panel of the product per shelf, centred in the canvas under the tab, its
+   words 12px at the smallest and its one colour the shelf's. On hover only its edge and shadow change ("subtle and
+   silent"); nothing moves. */
+.bgcard__canvas.is-picture { display: grid; place-items: center; padding: 34px 20px 14px; }
+/* Pictures off (card-hero.tsx): no canvas, and the body leaves room under the shelf's tab. */
+.bgcard.is-bare .bgcard__canvas,
+.bgcard.is-bare .bgcard__cat { display: none; }
+.bgcard.is-bare .bgcard__body { gap: var(--space-3); padding-top: var(--space-6); }
+.bgcard__top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); margin-bottom: var(--space-3); }
+.bgcard__icon {
+  flex: none; display: grid; place-items: center;
+  width: 40px; height: 40px; border-radius: var(--radius-lg);
+  background: var(--tpl-wash); color: var(--tpl);
+  border: 1px solid var(--tpl-wash-2);
+}
+.bgcard__pill {
+  display: inline-flex; align-items: center; min-width: 0;
+  padding: var(--pill-py) var(--pill-px); border-radius: var(--pill-radius);
+  /* The shelf's colour, a shade darker: the plain colour on its own wash is 4.4:1 for two shelves, under the 4.5:1 a 12px
+     label needs. */
+  background: var(--tpl-wash); color: color-mix(in srgb, var(--tpl) 82%, black);
+  font-size: var(--pill-fs); font-weight: var(--pill-fw); line-height: var(--pill-line); white-space: nowrap;
+}
+/* The outcome and who it is for, on one line under the name. */
+.bmarket__tools { display: flex; align-items: center; gap: var(--space-6); }
+.cardhero-switch { display: inline-flex; align-items: center; gap: var(--space-3); font-size: var(--fs-sm); color: var(--text-secondary); }
+.bgviz {
+  display: flex; flex-direction: column; gap: var(--space-3);
+  width: min(264px, 100%);
+  padding: var(--space-5);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--el-low);
+  font-size: var(--fs-sm); line-height: 1.3; color: var(--text-primary);
+  text-align: left;
+  transition: border-color 0.24s var(--ease-standard), box-shadow 0.24s var(--ease-standard);
+}
+.bgcard:is(:hover, :has(:focus-visible)) .bgviz { border-color: var(--tpl-wash-2); box-shadow: var(--el-mid); }
+.bgviz__head { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
+.bgviz__icon {
+  flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: var(--radius-md);
+  background: var(--tpl-wash); color: var(--tpl);
+}
+.bgviz__title { flex: 1; min-width: 0; font-weight: var(--fw-semibold); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bgviz__note { font-size: var(--fs-sm); color: var(--text-tertiary); }
+.bgviz__pill {
+  flex: none; padding: var(--pill-py) var(--pill-px); border-radius: var(--pill-radius);
+  font-size: var(--pill-fs); font-weight: var(--pill-fw); line-height: var(--pill-line);
+  background: var(--tpl-wash); color: var(--tpl);
+}
+.bgviz__row {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-4);
+  min-height: 26px; padding: 0 var(--space-3);
+  background: var(--surface-sunken); border-radius: var(--radius-md);
+  color: var(--text-secondary);
+}
+.bgviz__where { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--text-primary); }
+.bgviz__where svg { color: var(--tpl); }
+.bgviz__tick { color: var(--fb-positive-fg); }
+.bgviz__tickbox { display: inline-flex; }
+/* The second factor's code: six digits in boxes. */
+.bgviz__code { display: grid; grid-template-columns: repeat(6, 1fr); gap: var(--space-2); }
+.bgviz__code > span {
+  display: grid; place-items: center; height: 30px;
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-md);
+  font-size: var(--fs-lg); font-weight: var(--fw-semibold); font-variant-numeric: tabular-nums;
+  color: var(--tpl);
+}
+/* The gauge: an arc from 0 to 100 filled to the score, the score in its middle. */
+.bgviz__gauge { position: relative; display: block; }
+/* 190px wide, so the panel is no taller than its siblings; the tick labels are sized for that scale (about 12px drawn). */
+.bgviz__gauge svg { display: block; width: min(190px, 100%); height: auto; margin: 0 auto; overflow: visible; }
+.bgviz__track,
+.bgviz__arc { fill: none; stroke-width: 12; stroke-linecap: round; }
+.bgviz__track { stroke: var(--surface-sunken); }
+.bgviz__arc { stroke: var(--tpl); }
+.bgviz__tickmark { font-size: var(--fs-md); fill: var(--text-tertiary); }
+.bgviz__score {
+  position: absolute; left: 50%; bottom: 6px; translate: -50% 0;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+}
+.bgviz__score strong { font-size: var(--fs-2xl); font-weight: var(--fw-semibold); line-height: 1.1; font-variant-numeric: tabular-nums; }
+.bgviz.is-risk { padding-bottom: var(--space-4); width: min(230px, 100%); }
+
+/* --- How many in a row, and a card's shape at its width ---------------------------------------------------------------
+   At most three cards to a row in the popup, and fewer share the row rather than leave a gap (owner, 2 Nov 2026: "auto
+   adaptable … single, double or max 3 in a row … based on the card size fix the experience"). Each card then reads its
+   own width: past 600px (a card alone in its row) the picture goes to the left and the words to the right, bigger. */
+.bmarket .bgal__grid { grid-template-columns: repeat(auto-fit, minmax(max(296px, calc((100% - 36px) / 3)), 1fr)); }
+.bgcard { container-type: inline-size; }
+.bgcard__in { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+@container (min-width: 600px) {
+  .bgcard__in { flex-direction: row; }
+  .bgcard__in > .bgcard__canvas {
+    flex: 0 0 52%; height: auto; min-height: 260px;
+    border-bottom: 0; border-right: 1px solid var(--border-subtle);
+    border-radius: 15px 0 0 15px;
+  }
+  .bgcard__in > .bgcard__body { justify-content: center; padding: var(--space-8) var(--space-8); gap: var(--space-4); }
+  .bgcard__in .bgcard__h { font-size: var(--fs-xl); }
+  .bgcard__in .bgcard__go { margin-top: var(--space-4); }
+  .bgcard__in .bgviz { width: min(300px, 100%); }
+}
+
+/* --- Signals and tags ------------------------------------------------------------
+   Apollo's card grammar: a row of round glyphs for what the thing contains, a
+   row of tinted labels for what it is, then the words — the name with the card's
+   one action at the end of its line.
+   --------------------------------------------------------------------------- */
+
+.bgcard__signals { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 9px; }
+.bgcard__sig {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px 2px 6px; border-radius: var(--radius-pill);
+  font-size: var(--fs-xs); line-height: 1.5; white-space: nowrap;
+}
+.bgcard__sig em { font-style: normal; }
+.bgcard__sig.is-info { background: var(--fb-info-bg); color: var(--fb-info-fg); }
+.bgcard__sig.is-lime { background: var(--fb-lime-bg, var(--fb-positive-bg)); color: var(--fb-lime-fg, var(--fb-positive-fg)); }
+.bgcard__sig.is-accent { background: var(--fb-accent-bg); color: var(--fb-accent-fg); }
+.bgcard__sig.is-magenta { background: var(--fb-magenta-bg, var(--fb-accent-bg)); color: var(--fb-magenta-fg, var(--fb-accent-fg)); }
+.bgcard__sig.is-notice { background: var(--fb-notice-bg); color: var(--fb-notice-fg); }
+.bgcard__sig.is-neutral { background: var(--surface-inset); color: var(--text-tertiary); }
+
+.bgcard__tags { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
+/* The shared pill geometry - see the --pill-* block in console-theme.css. */
+.bgcard__tag {
+  padding: var(--pill-py) var(--pill-px); border-radius: var(--pill-radius);
+  line-height: var(--pill-line);
+  font-size: var(--pill-fs); font-weight: var(--pill-fw);
+  letter-spacing: 0; white-space: nowrap;
+}
+/* The category keeps the violet it had as a corner badge — it is a label, not
+   an action, and brand orange would compete with the button below it. */
+.bgcard__tag.is-cat { background: var(--fb-accent-bg); color: var(--fb-accent-fg); border: 1px solid var(--fb-accent-border); }
+.bgcard__tag.is-count { background: var(--surface-inset); color: var(--text-muted); }
+/* The strictest outcome, in the product's three reserved decision hues. */
+.bgcard__tag.is-deny { background: var(--fb-negative-bg); color: var(--fb-negative-fg); }
+.bgcard__tag.is-mfa { background: var(--fb-positive-strong-bg); color: var(--fb-positive-strong-fg); }
+.bgcard__tag.is-allow { background: var(--fb-positive-bg); color: var(--fb-positive-fg); }
+.bgcard__tag.is-none { background: var(--surface-inset); color: var(--text-muted); }
+
+
+/* --- The audience picker, inline -------------------------------------------
+
+   The same control as the application list beside it, because it answers the
+   same shape of question. Its own frame, its own search, one scroller. */
+
+/* Two tabs rather than two headings in one scroller. Five groups above
+   twenty-four people meant the groups — what almost every policy is actually
+   scoped by — were four rows at the top of a list you scrolled past for the
+   rest of the session. */
+/* The count of what you have chosen, not of what exists — so a tab you are not
+   looking at can still tell you it holds a selection. */
+
+/* Both template-card metadata rows are hidden for now, on request.
+
+   Between them they put eight chips above the card's own name — five signal
+   chips and three tags — so a card led with its taxonomy rather than with what
+   it does. The markup stays: the data is real and the categories drive the
+   filters. This is a question of how loud they are on a card, not whether they
+   should exist, so it is a display rule rather than a deletion. */
+.bgcard__signals,
+.bgcard__tags { display: none; }
+
+/* --- The hover lift ------------------------------------------------------------------
+   Replaces the sunrise (owner, 22 Sep 2026: "forget the sunrise"). The hover makes no
+   light of its own and adds no hue. It is depth, lit from straight above, in three
+   planes.
+
+   1. The frame. The card rises 2px and a tight shadow gathers under it. The two wide
+      layers have a negative spread, so the shadow grounds this card and all but dies
+      out across the 18px gap before it reaches the cards beside it.
+   2. The paper. The template's own rules rise a further 2px off the canvas, one after
+      another in the order the engine reads them. Each casts a small shadow, its
+      hairline firms one step, and its number goes from grey to ink.
+   3. The floor. What is not the template's stays down: the Everyone else slab (the
+      policy's own default), the spare sheet under the +N more row, and the readout.
+      The dot grid recedes to half strength, so the rows come forward against a
+      quieter canvas.
+
+   Use turning orange (the .bgcard__cta rules above) is the only colour change. Every
+   shadow is the elevation scale's ink, so the card, the rows and the eye read as one
+   material under one light.
+
+   Lifted on hover, or while a control in the card has keyboard focus. :focus-visible
+   rather than :focus-within, because :focus-within kept the card lifted after the
+   preview was closed with the mouse (focus returns to the eye). The :has() sits
+   inside :is(), so a browser without :has() still lifts on hover. */
+.bgcard {
+  /* The ink every --el-* token is drawn in, and it stays dark in every look and
+     theme. Not --text-primary: that turns near-white on the dark theme, and the
+     shadow would become a glow. */
+  --lift-ink: rgb(33 37 41);
+  --lift-contact: color-mix(in srgb, var(--lift-ink) 5%, transparent);
+  --lift-key: color-mix(in srgb, var(--lift-ink) 8%, transparent);
+  --lift-ambient: color-mix(in srgb, var(--lift-ink) 12%, transparent);
+  --lift-row: color-mix(in srgb, var(--lift-ink) 12%, transparent);
+  /* Unclipped, so the hit strip under a lifted card (see the motion block) can take
+     the pointer. The canvas rounds its own corners instead. */
+  overflow: visible;
+}
+/* The canvas rounds its own top corners now that the card does not clip: the card's
+   16px corner, less its 1px edge.
+   The band above the readout was 20px, room for the sunrise. At 16px every stack sits
+   2px lower, nearer the middle of the free canvas, and the top rule of a three-rule
+   stack still clears the eye by 1.6px once it has lifted. At 20px the lifted row ran
+   0.4px into the eye. */
+.bgcard__canvas {
+  --sky: 16px;
+  border-radius: 15px 15px 0 0;
+}
+
+/* The dot grid: the builder's canvas at thumbnail scale, over the sunken fill and
+   under every row. It lived in the sunrise block. It keeps a layer of its own so it
+   can recede without touching the fill. */
+.bgcard__canvas::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(circle at 1px 1px, var(--card-dot) 1px, transparent 0) 0 0 / 12px 12px;
+}
+/* Grey at rest, as it used to be; on hover the shelf's colour washes in and holds (owner, 2 Nov 2026: "make it simple as
+   it used to be, and while hover add this colour"; then "subtle and silent", so it no longer drifts). */
+.bgcard__canvas::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
+  background: linear-gradient(120deg, var(--tpl-wash) 0%, var(--tpl-wash-2) 50%, var(--tpl-wash) 100%);
+  background-size: 220% 220%;
+  opacity: 0;
+}
+.bgcard:is(:hover, :has(:focus-visible)) .bgcard__canvas::before { opacity: 1; }
+
+/* The deck's spare sheet, restated with an empty first layer so the resting list is
+   as long as the lifted one and each layer eases into its own counterpart. Without
+   it, the sheet's fill would morph into the row's shadow on the way up. */
+.bgcard__mrow--rest {
+  box-shadow:
+    0 0 0 0 transparent,
+    0 5px 0 -3px var(--surface-raised),
+    0 5px 0 -2px var(--border-subtle);
+}
+
+/* --- Lifted ----------------------------------------------------------------------- */
+.bgcard:is(:hover, :has(:focus-visible)) {
+  z-index: 1; /* its shadow over the neighbours' edges, and below every --z-* layer */
+  border-color: var(--border-default);
+  box-shadow:
+    0 1px 2px var(--lift-contact),
+    0 4px 8px -4px var(--lift-key),
+    0 16px 32px -12px var(--lift-ambient);
+}
+/* Every row the template owns: the numbered rules and the +N more deck. */
+.bgcard:is(:hover, :has(:focus-visible)) .bgcard__mrow:not(.bgcard__mrow--default) {
+  border-color: var(--border-default);
+  box-shadow:
+    0 1px 1px var(--lift-contact),
+    0 4px 10px -4px var(--lift-row);
+}
+/* The deck keeps its spare sheet under the row's own shadow. Same weight as the rule
+   above, so it must stay after it or the sheet vanishes on hover. */
+.bgcard:is(:hover, :has(:focus-visible)) .bgcard__mrow.bgcard__mrow--rest {
+  box-shadow:
+    0 4px 10px -4px var(--lift-row),
+    0 5px 0 -3px var(--surface-raised),
+    0 5px 0 -2px var(--border-default);
+}
+/* The order comes into focus with the rows: the number tile firms its edge and the
+   numeral goes to ink. Ink, not the pill's hue. The + and the chevron sit on no
+   tile and stay as they are. */
+.bgcard:is(:hover, :has(:focus-visible)) .bgcard__mrow:not(.bgcard__mrow--rest, .bgcard__mrow--default) .bgcard__mn {
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+.bgcard:is(:hover, :has(:focus-visible)) .bgcard__canvas::after { opacity: 0.5; }
+
+
+/* --- The motion -------------------------------------------------------------------
+   With reduced motion none of this block applies. Nothing moves, the edges, shadows
+   and numerals above change at once, and the reduced-motion rule beside .bgcard__cta
+   still stops the card, the eye and the button transitioning. */
+@media (prefers-reduced-motion: no-preference) {
+  /* Settling: quick and all at once, so a pointer swept across the grid leaves no
+     trail of cards still coming down. */
+  .bgcard {
+    transition:
+      translate 140ms var(--ease-standard),
+      box-shadow 140ms var(--ease-standard),
+      border-color 140ms var(--ease-standard);
+  }
+  .bgcard__mrow {
+    transition:
+      translate 140ms var(--ease-standard),
+      box-shadow 140ms var(--ease-standard),
+      border-color 140ms var(--ease-standard);
+  }
+  .bgcard__mn {
+    transition:
+      border-color 140ms var(--ease-standard),
+      color 140ms var(--ease-standard);
+  }
+  .bgcard__canvas::after { transition: opacity 140ms var(--ease-standard); }
+  .bgcard__canvas::before { transition: opacity 320ms var(--ease-standard); }
+
+  /* Rising: the frame first, then the rules top to bottom, 30ms apart. The first rule
+     takes the 40ms default below. The stack holds four rows at most, and the last is
+     always the fall-through, which does not rise. The tile inherits its row's delay. */
+  .bgcard__stack > li:nth-child(2) > .bgcard__mrow { --lift-delay: 70ms; }
+  .bgcard__stack > li:nth-child(3) > .bgcard__mrow { --lift-delay: 100ms; }
+
+  .bgcard:is(:hover, :has(:focus-visible)) {
+    translate: 0 -2px;
+    transition:
+      translate 220ms var(--ease-standard),
+      box-shadow 220ms var(--ease-standard),
+      border-color var(--dur-fast) var(--ease-standard);
+  }
+  /* The hit strip. A lifted card has left its own bottom 2px, and a pointer resting
+     there would drop it, lift it and drop it again. This keeps that band inside the
+     card while it is up. Hover only, so a resting card's target is exactly its box. */
+  .bgcard:hover::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    height: 4px;
+  }
+  .bgcard:is(:hover, :has(:focus-visible)) .bgcard__mrow:not(.bgcard__mrow--default) {
+    translate: 0 -2px;
+    transition:
+      translate 240ms var(--ease-standard) var(--lift-delay, 40ms),
+      box-shadow 240ms var(--ease-standard) var(--lift-delay, 40ms),
+      border-color var(--dur-fast) var(--ease-standard) var(--lift-delay, 40ms);
+  }
+  /* The spare sheet stays on the floor while the top sheet rises: 2px more offset
+     for the 2px the row moved, on the same curve, so the deck fans open. */
+  .bgcard:is(:hover, :has(:focus-visible)) .bgcard__mrow.bgcard__mrow--rest {
+    box-shadow:
+      0 4px 10px -4px var(--lift-row),
+      0 7px 0 -3px var(--surface-raised),
+      0 7px 0 -2px var(--border-default);
+  }
+  .bgcard:is(:hover, :has(:focus-visible)) .bgcard__mrow:not(.bgcard__mrow--rest, .bgcard__mrow--default) .bgcard__mn {
+    transition:
+      border-color var(--dur-normal) var(--ease-standard) var(--lift-delay, 40ms),
+      color var(--dur-normal) var(--ease-standard) var(--lift-delay, 40ms);
+  }
+  .bgcard:is(:hover, :has(:focus-visible)) .bgcard__canvas::after {
+    transition: opacity 240ms var(--ease-standard) 40ms;
+  }
+}
+
+/* One face for every card, the rule stack (owner, 3 Nov 2026: "show the old rule view … a single scalable illustration,
+   drop the category-based part, keep the colours"). The shelf's colour rides on the numbers and the spine, so the cards
+   still tell their shelves apart without a drawing per shelf. */
+.bgcard .bgcard__mn {
+  background: var(--tpl-wash);
+  border-color: color-mix(in srgb, var(--tpl) 35%, var(--surface-raised));
+  color: color-mix(in srgb, var(--tpl) 82%, black);
+}
+.bgcard .bgcard__stack::before { background: color-mix(in srgb, var(--tpl) 40%, var(--surface-raised)); }
+.bgcard .bgcard__readout .bgcard__rlabel { color: color-mix(in srgb, var(--tpl) 82%, black); }
+
+
+/* A tenant's own policy (the reuse picker) has no colour and nothing moves inside its picture (owner, 3 Nov 2026: "I don't
+   like the hover inside the picture … that dark grey"): the numbers stay light, the stage stays grey, the rows stay put. */
+.bgcard.is-cat-neutral .bgcard__mn { background: var(--surface-inset); border-color: var(--border-subtle); color: var(--text-tertiary); }
+.bgcard.is-cat-neutral .bgcard__stack::before { background: var(--border-default); }
+.bgcard.is-cat-neutral .bgcard__readout .bgcard__rlabel { color: var(--text-secondary); }
+.bgcard.is-cat-neutral:is(:hover, :has(:focus-visible)) .bgcard__canvas::before { opacity: 0; }
+.bgcard.is-cat-neutral:is(:hover, :has(:focus-visible)) .bgcard__canvas::after { opacity: 1; }
+.bgcard.is-cat-neutral:is(:hover, :has(:focus-visible)) .bgcard__mrow:not(.bgcard__mrow--default) { border-color: var(--border-subtle); box-shadow: var(--el-low); }
+.bgcard.is-cat-neutral:is(:hover, :has(:focus-visible)) .bgcard__mrow:not(.bgcard__mrow--rest, .bgcard__mrow--default) .bgcard__mn { border-color: var(--border-subtle); color: var(--text-tertiary); }
+.bgcard.is-cat-neutral .bgcard__mrow { transition: none; transform: none; }
+
+/* The template's rules in the preview are drawn at the builder's own card width, centred, not the width of the dialog
+   (owner, 3 Nov 2026: "make the card less wide, it looks bad"). */
+.bdetail__canvas .bb.insp__canvas { --bb-card: 560px; }
+.bdetail__canvas .bb__chain { margin-inline: auto; }
+
+/* A card with no picture is a filled, rounded tile (owner, 3 Nov 2026: "add some background to the cards", with the Projects list
+   as the reference): a flat grey ground, so the cards stand off the popup's white. Its button stays white. */
+.bgcard.is-bare { background: var(--surface-sunken); border-color: transparent; }
+.bgcard.is-bare .bgcard__go .bx-btn, .bgcard.is-bare .bgcard__cta { background: var(--surface-raised); }
+
+/* The policy list (TemplateSheet.tsx PolicyRow): a header, then one row per policy. The whole row is the button; on hover it
+   darkens a step and its action comes in, as in a file list. */
+.bpl { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.bpl__head, .bpl__row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1.4fr) 150px; align-items: center; gap: var(--space-5); padding: 0 var(--space-6); }
+.bpl__head { height: 36px; font-size: var(--fs-xs); font-weight: var(--fw-medium); color: var(--text-tertiary); border-bottom: 1px solid var(--border-subtle); }
+.bpl > li { border-bottom: 1px solid var(--border-subtle); }
+.bpl > li:last-child { border-bottom: 0; }
+.bpl__row { width: 100%; height: 56px; text-align: left; font: inherit; color: inherit; background: transparent; border: 0; cursor: pointer; transition: background 0.12s var(--ease-standard); }
+.bpl__row:hover, .bpl__row:focus-visible { background: var(--surface-sunken); }
+.bpl__row:focus-visible { outline: 2px solid var(--ctl-border-focus); outline-offset: -2px; }
+.bpl__name { font-size: var(--fs-md); font-weight: var(--fw-medium); color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bpl__apps { min-width: 0; overflow: hidden; }
+.bpl__apps .bgcard__apps { margin: 0; }
+.bpl__rules { font-size: var(--fs-sm); color: var(--text-secondary); white-space: nowrap; }
+.bpl__row .bgcard__tag { justify-self: start; }
+.bpl__go { display: inline-flex; align-items: center; justify-content: flex-end; gap: var(--space-2); font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--text-secondary); white-space: nowrap; opacity: 0; transition: opacity 0.12s var(--ease-standard); }
+.bpl__row:hover .bpl__go, .bpl__row:focus-visible .bpl__go { opacity: 1; color: var(--text-primary); }
+@media (max-width: 720px) { .bpl__head { display: none; } .bpl__row { grid-template-columns: minmax(0, 1fr) auto; } .bpl__apps, .bpl__rules, .bpl__row .bgcard__tag { display: none; } .bpl__go { opacity: 1; } }
+.bpl__apps .bgcard__appslabel { display: none; }
+
+/* The popup's head, as the product's other popups draw theirs (owner, 3 Nov 2026: "revamp it … remove the gradient and the layout"):
+   the title on the left with who it is by, the search on the right, on the plain surface, a rule underneath. */
+.bmarket__hero {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--space-8); align-items: center; text-align: left;
+  padding: var(--space-6) 64px var(--space-6) var(--space-8);
+  background: var(--surface-raised);
+}
+.bmarket__hero h2 { grid-column: 1; font-size: var(--fs-lg); }
+.bmarket__hero .bmarket__by { grid-column: 1; margin-top: 0; }
+.bmarket__hero .bmarket__searchbox { grid-column: 2; grid-row: 1 / span 2; width: 320px; margin: 0; }
+.bmarket__x { top: var(--space-6); right: var(--space-6); }
+@media (max-width: 720px) { .bmarket__hero { grid-template-columns: 1fr; padding-right: 56px; } .bmarket__hero .bmarket__searchbox { grid-column: 1; grid-row: auto; width: 100%; margin-top: var(--space-4); } }
+
+/* The view switch as two icon buttons. */
+.bseg--icons button { width: 34px; height: 34px; padding: 0; display: grid; place-items: center; }
+
+/* The preview page: a back button, the name with its Preview chip, the rules, and a footer with the note and the one button. */
+.bdetail__head { align-items: flex-start; flex-direction: column; gap: var(--space-4); padding: var(--space-5) var(--space-8) var(--space-6); }
+.bdetail__titlerow { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; }
+.bdetail__name { font-size: var(--fs-xl); }
+.bdetail__foot { position: sticky; bottom: 0; display: flex; align-items: center; justify-content: space-between; gap: var(--space-6); padding: var(--space-5) var(--space-8); background: var(--surface-raised); border-top: 1px solid var(--border-subtle); }
+.bdetail__footnote { margin: 0; font-size: var(--fs-sm); color: var(--text-secondary); }
+
+/* The popup's icon, on the left of its title again (owner, 3 Nov 2026: "add the icons here"), as a plain tile. */
+.bmarket__hero { grid-template-columns: auto minmax(0, 1fr) auto; column-gap: var(--space-5); }
+.bmarket__hero .bmarket__mark { grid-column: 1; grid-row: 1 / span 2; margin: 0; width: 36px; height: 36px; box-shadow: none; }
+.bmarket__hero h2, .bmarket__hero .bmarket__by { grid-column: 2; }
+.bmarket__hero .bmarket__searchbox { grid-column: 3; }
+@media (max-width: 720px) { .bmarket__hero { grid-template-columns: auto minmax(0, 1fr); } .bmarket__hero .bmarket__searchbox { grid-column: 1 / -1; } }
+
+/* The preview is a page of its own: the head and the footer stay, the rules scroll between them (owner, 3 Nov 2026). */
+.bmarket__body.is-detail { display: flex; flex-direction: column; overflow: hidden; }
+.bmarket__body.is-detail .bdetail { flex: 1; min-height: 0; }
+.bdetail__canvas { flex: 1; min-height: 0; overflow-y: auto; }
+.bdetail__foot { justify-content: flex-end; }
+.bdetail__note { display: flex; justify-content: center; padding-top: var(--space-6); }
+
+/* A card with no picture: the icon and the name share one row, and the name is big and may take two lines instead of one cut
+   short (owner, 3 Nov 2026: "icon and name in one row, big names, good spacing"). */
+.bgcard.is-bare .bgcard__top { display: none; }
+.bgcard.is-bare .bgcard__head { align-items: flex-start; gap: var(--space-4); }
+.bgcard.is-bare .bgcard__h { font-size: var(--fs-lg); line-height: 1.3; white-space: normal; overflow: visible; text-overflow: clip; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.bgcard.is-bare .bgcard__body { padding-top: var(--space-6); }
+
+/* The preview is three bands: the popup's header with the heading, the rules scrolling in the middle, and a footer that stays. */
+.bmarket__hero:has(.bdetail__head) { display: block; padding: var(--space-4) 64px var(--space-5) var(--space-6); }
+.bmarket__hero .bdetail__head { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-3); padding: 0; border: 0; }
+.bmarket__work.is-detail { overflow: hidden; padding: 0; gap: 0; display: block; }
+/* The preview takes the whole sheet, its back arrow the way out: the shelf rail would stack above it and push the
+   footer off the popup (owner, 18 Nov 2026: "this is broken, the preview part"). */
+.bmarket__work.is-detail > .bmarket__rail { display: none; }
+.bmarket__body.is-detail { height: 100%; }
+.bmarket__body.is-detail .bdetail { height: 100%; border: 0; border-radius: 0; }
+.bmarket__body.is-detail .bdetail__canvas { padding: var(--space-5) var(--space-6); }
+
+/* The note sits on the canvas's free left side when the popup is wide enough, and above the rules when it is not. */
+.bdetail__note { position: relative; z-index: 2; }
+.bdetail__note .bb__notice { position: static; right: auto; top: auto; height: auto; margin: 0; }
+@media (min-width: 1100px) {
+  .bdetail__canvas { position: relative; }
+  .bdetail__note { position: absolute; top: var(--space-6); left: var(--space-6); padding: 0; }
+}
+
+/* The preview's canvas is fixed between the header and the footer; the rules scroll inside it, centred as on the builder's canvas. */
+.bmarket__body.is-detail .bdetail__canvas { overflow: hidden; display: flex; flex-direction: column; padding: var(--space-5) var(--space-6); }
+.bdetail__canvas .bb.insp__canvas { flex: 1; min-height: 0; height: 100%; }
+.bdetail__canvas .bb.insp__canvas .bb__stage { height: 100%; overflow-y: auto; overflow-x: hidden; }
+
+/* The note leans against the first rule's left edge when the popup is wide, and sits above the rules when it is not. */
+@media (min-width: 1100px) {
+  .bdetail__note { top: calc(var(--space-5) + 84px); left: calc(50% - 280px - 236px); }
+}
+
+/* Back: a quiet link above the title, level with it. */
+.bdetail__head .bx-btn--ghost { margin-left: calc(-1 * var(--space-3)); color: var(--text-secondary); }
+.bdetail__head .bx-btn--ghost:hover { color: var(--text-primary); }
+
+/* A card with no picture is as tall as its words, not as a picture would have been. */
+.bgcard.is-bare, .bgcard.is-bare .bgcard__in { min-height: 0; }
+.bgcard.is-bare .bgcard__go { margin-top: var(--space-5); padding-top: 0; }
+
+/* The no-picture card: the icon and the name level with each other, and the name on one line, cut with an ellipsis. */
+.bgcard.is-bare .bgcard__head { align-items: center; }
+.bgcard.is-bare .bgcard__h { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; -webkit-line-clamp: unset; -webkit-box-orient: unset; }
+
+/* The Preview chip rides the canvas's top-left corner; the footer says what Use does in one line. */
+.bdetail__chip { position: absolute; top: var(--space-5); left: var(--space-5); z-index: 3; display: inline-flex; align-items: center; gap: var(--space-2); height: 26px; padding: 0 var(--space-4); font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--text-secondary); background: var(--surface-raised); border: 1px solid var(--border-default); border-radius: var(--radius-pill); box-shadow: var(--el-low); }
+.bdetail__foot { justify-content: space-between; }
+
+/* The no-picture card is three rows and a button (owner, 3 Nov 2026: "one row for the icon, one for the heading, one for the rest,
+   and one CTA"): the icon tile, the name on one line, who it is on, then the button. */
+.bgcard.is-bare .bgcard__top { display: block; }
+.bgcard.is-bare .bgcard__head { align-items: flex-start; }
+
+/* The Preview chip: amber, so it reads as a state and not a label; bolder; it settles in once when the preview opens (owner, 3 Nov 2026).
+   It sits inside the dotted canvas, a step in from its corner. */
+.bdetail__chip {
+  top: calc(var(--space-5) + var(--space-4)); left: calc(var(--space-6) + var(--space-4));
+  font-weight: var(--fw-semibold); letter-spacing: 0.01em;
+  color: var(--fb-notice-fg); background: var(--fb-notice-bg); border-color: color-mix(in srgb, var(--fb-notice-fg) 28%, var(--fb-notice-bg)); box-shadow: none;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .bdetail__chip { animation: bdetail-chip-in 0.4s var(--ease-standard) both; }
+  .bdetail__chip svg { animation: bdetail-chip-eye 0.5s 0.25s var(--ease-standard) both; }
+}
+@keyframes bdetail-chip-in { from { opacity: 0; translate: -6px 0; } to { opacity: 1; translate: 0 0; } }
+@keyframes bdetail-chip-eye { 0% { scale: 1 1; } 40% { scale: 1 0.1; } 100% { scale: 1 1; } }
+
+/* The name may take a second line, never a third (owner, 3 Nov 2026). */
+.bgcard.is-bare .bgcard__h { display: -webkit-box; white-space: normal; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-overflow: ellipsis; line-height: 1.3; }
+
+/* --- Alignment, 3 Nov 2026 (owner: "fix the alignments") ------------------------------------------------------------
+   The close button sits in the header and is centred on it, whatever the header holds. A title with no by-line under it
+   is centred on its icon. The preview's header holds the name alone; its Back is in the footer, opposite Use. */
+.bmarket__hero .bmarket__x { top: 50%; right: var(--space-6); translate: 0 -50%; }
+.bmarket__hero:not(:has(.bmarket__by)) h2 { grid-row: 1 / span 2; align-self: center; }
+.bdetail__foot .bdetail__footnote { margin-left: auto; }
+
+/* The Preview chip's eye blinks now and then, for as long as the preview is open (owner: "this animation can be a loop"). */
+@media (prefers-reduced-motion: no-preference) {
+  .bdetail__chip svg { animation: bdetail-chip-blink 3.2s 0.6s ease-in-out infinite; }
+}
+@keyframes bdetail-chip-blink { 0%, 86%, 100% { scale: 1 1; } 92% { scale: 1 0.1; } }
+
+/* A policy's name on its card: one line, cut with an ellipsis; the full name is its title (owner: "one liner max and trimmed"). */
+.bgcard.is-bare .bgcard__h { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; -webkit-line-clamp: unset; -webkit-box-orient: unset; }
+/* The preview's name starts where the grid view's icon does. */
+.bmarket__hero:has(.bdetail__head) { padding-left: var(--space-8); }
+
+/* Back as an arrow to the left of the preview's name, centred on the name and its line; the footer's note in italics
+   (owner, 3 Nov 2026: "move the back button to the top, beside the heading, and make the text italic"). */
+.bmarket__hero .bdetail__head { flex-direction: row; align-items: center; gap: var(--space-5); }
+/* Lined up (owner, 3 Nov 2026: "fix the alignment, the back button's position looks odd"). The arrow's glyph starts on the
+   sheet's content edge, where the Preview chip and the footer's note start, as the close X's glyph ends on the other one; its
+   button's padding overhangs on both sides, so the name follows the glyph by the grid view's own icon-to-title gap. The
+   button sits in a tooltip, so the rule is on that. Even padding above and below puts the arrow, the name with its line,
+   and the X on one centre line. */
+.bmarket__hero .bdetail__head > .bx-tip { flex: none; margin-inline: calc(-1 * var(--space-5)); }
+.bmarket__hero:has(.bdetail__head) { padding-block: var(--space-5); }
+.bdetail__footnote { font-style: italic; }
+
+/* The preview's header: the arrow, then the name beside it, from the left (an earlier rule spread them apart). The footer:
+   the note on the left now that Back has gone, the button on the right (owner: "move to the left, we have space now"). */
+.bmarket__hero .bdetail__head { justify-content: flex-start; }
+.bmarket__hero .bdetail__head .bdetail__words { margin: 0; text-align: left; }
+.bdetail__foot .bdetail__footnote { margin-left: 0; margin-right: auto; }
+
+/* Save as template as a bookmark: top right of your policies' cards, at the end of their rows (owner, 10 Nov 2026). */
+.bgcard.is-bare .bgcard__top:has(.bx-iconbtn) { display: flex; }
+.bpl__item { position: relative; }
+.bpl__head, .bpl__item .bpl__row { padding-right: calc(var(--space-6) + var(--ctl-height-md) + var(--space-4)); }
+.bpl__save { position: absolute; top: 50%; right: var(--space-6); display: flex; margin-top: calc(var(--ctl-height-md) / -2); }

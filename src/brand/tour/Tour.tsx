@@ -1,0 +1,271 @@
+import { motion, useReducedMotion } from 'motion/react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { ArrowLeft, ArrowRight, Swords, X } from 'lucide-react'
+
+import { Button } from '../kit'
+import { playCue } from '../sound'
+import { measureAnchor, place, type Rect } from './spotlight'
+import { TourHero } from './TourHero'
+import { STOPS, markTourSeen } from './tour-stops'
+
+/* -----------------------------------------------------------------------------
+   The builder tour.
+
+   A spotlight that travels, and a card that follows it. Three decisions worth
+   knowing about:
+
+   · **The lit element stays interactive.** The tour dims the page but does not
+     block it. If somebody ignores the card and clicks the real When step, that
+     is a person learning the product, and fighting them would be the opposite
+     of the point.
+
+   · **It never auto-advances.** A tour that moves on its own is a video, and a
+     video cannot be re-read.
+
+   · **Leaving leaves you where you are.** The tour drives the builder as it
+     goes — switching steps, opening panels — and it does not put any of it back
+     on exit. You end up on the screen the last stop was describing.
+
+   --- On focus, deliberately ------------------------------------------------
+
+   This is a NON-MODAL dialog and it does not trap focus. That is the whole
+   point of the first decision above: the tour is a companion to a screen you
+   can still use, and trapping focus would make it a modal that merely looks
+   permeable — worse than either honest option, because a keyboard user would be
+   held in a card the pointer is free to leave.
+
+   Not trapping has a cost, and these are what pay it:
+
+   · `aria-modal="false"`, so assistive technology is told the truth rather than
+     inferring a barrier that is not there.
+   · A live region announces each stop, so tabbing away and back does not mean
+     losing the thread.
+   · The lit element is `aria-describedby` the card while it is lit, so the
+     explanation reaches somebody who arrives at the control by Tab rather than
+     by reading the card.
+   · Escape closes from anywhere on the page, not only from inside the card.
+   -------------------------------------------------------------------------- */
+
+/* The card's own measurements, and the only part of placing it that is local.
+
+   The RULES — which side has room, the viewport clamp, the beak level with the
+   anchor's middle — moved to spotlight.ts when the board grew a tour of its
+   own, because two walkthroughs placing cards by two subtly different copies
+   of one algorithm is the drift this codebase keeps deleting. Placement,
+   carrying the side the beak reads, lives there now. */
+const CARD = { w: 372, h: 372, lead: 150 }
+/* Stable, because the lit element points at it from outside the card. */
+const COPY_ID = 'btr-copy'
+
+export function Tour({
+  open,
+  onClose,
+
+  onFinish,
+}: {
+  open: boolean
+  onClose: () => void
+  /** The last stop hands over to the thing it just described. */
+  onFinish: () => void
+}) {
+  const reduce = useReducedMotion()
+  const [i, setI] = useState(0)
+  const [rect, setRect] = useState<Rect | null>(null)
+  const card = useRef<HTMLDivElement | null>(null)
+
+  const stop = STOPS[i]
+  const last = i === STOPS.length - 1
+
+  useEffect(() => {
+    if (open) setI(0)
+  }, [open])
+
+  /* The host passes these as inline arrows, so their identity changes on every
+     render. Held in a ref, the drive effect below can depend on the stop alone —
+     otherwise it re-runs on every render, which drives the builder, which
+     re-renders, which drives it again. */
+
+  /* Drive the builder into the state the stop describes, before measuring — the
+     anchor for the conditions stop does not exist until the trail is on When. */
+  useEffect(() => {
+    if (!open) return
+  }, [open, stop])
+
+  const measure = useCallback(() => {
+    setRect(measureAnchor(stop.anchor))
+  }, [stop.anchor])
+
+  /* The card explains the lit element, so say so on the element itself. Anybody
+     who reaches the trail by Tab rather than by reading the card still gets the
+     sentence — and it is removed again the moment the stop moves on, so no
+     control is left describing itself with a card that is gone. */
+  useEffect(() => {
+    if (!open || !stop.anchor) return
+    const el = document.querySelector<HTMLElement>(`[data-tour="${stop.anchor}"]`)
+    if (!el) return
+    const had = el.getAttribute('aria-describedby')
+    el.setAttribute('aria-describedby', COPY_ID)
+    return () => {
+      if (had) el.setAttribute('aria-describedby', had)
+      else el.removeAttribute('aria-describedby')
+    }
+  }, [open, stop.anchor])
+
+  /* Measured after the builder has re-rendered for this stop, not during — a
+     rect taken in the same frame as a step switch is the previous step's. */
+  useLayoutEffect(() => {
+    if (!open) return
+    const id = requestAnimationFrame(measure)
+    window.addEventListener('resize', measure)
+    return () => {
+      cancelAnimationFrame(id)
+      window.removeEventListener('resize', measure)
+    }
+  }, [open, measure, i])
+
+  /* Finishing it, and only finishing it, earns the little celebration (sound.ts); leaving early is silent. */
+  const next = useCallback(() => {
+    if (last) {
+      playCue('celebrate')
+      markTourSeen()
+      onClose()
+      onFinish()
+      return
+    }
+    setI((n) => n + 1)
+  }, [last, onClose, onFinish])
+
+  const back = useCallback(() => setI((n) => Math.max(0, n - 1)), [])
+
+  const leave = useCallback(() => {
+    markTourSeen()
+    onClose()
+  }, [onClose])
+
+  /* Same treatment for the key handler: bound once per opening rather than once
+     per render, so a keypress cannot land on a listener that is about to be
+     replaced. */
+  const keys = useRef({ next, back, leave })
+  keys.current = { next, back, leave }
+
+  useEffect(() => {
+    if (!open) return
+    card.current?.focus()
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation()
+        keys.current.leave()
+      }
+      if (e.key === 'ArrowRight') keys.current.next()
+      if (e.key === 'ArrowLeft') keys.current.back()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open])
+
+  if (!open) return null
+
+  const pos = place(rect, CARD)
+
+  return (
+    <div className="btr">
+      {/* Not trapping focus means somebody can tab away and come back, so each
+          stop announces itself rather than relying on the card holding focus. */}
+      <p className="u-sr-only" aria-live="polite">
+        {`Tour stop ${i + 1} of ${STOPS.length}. ${stop.heading}. ${stop.body}`}
+      </p>
+
+      {/* The dim, with a hole in it. Pointer-events off so the lit element —
+          and everything else — stays clickable underneath. */}
+      <svg className="btr__scrim" aria-hidden>
+        <defs>
+          <mask id="btr-hole">
+            <rect x="0" y="0" width="100%" height="100%" fill="#fff" />
+            {rect && (
+              <motion.rect
+                initial={false}
+                animate={{ x: rect.left, y: rect.top, width: rect.width, height: rect.height }}
+                transition={reduce ? { duration: 0 } : { type: 'spring', stiffness: 320, damping: 34 }}
+                rx="12"
+                fill="#000"
+              />
+            )}
+          </mask>
+        </defs>
+        <rect x="0" y="0" width="100%" height="100%" mask="url(#btr-hole)" />
+      </svg>
+
+      {rect && (
+        <motion.span
+          className="btr__ring"
+          aria-hidden
+          initial={false}
+          animate={{ top: rect.top, left: rect.left, width: rect.width, height: rect.height }}
+          transition={reduce ? { duration: 0 } : { type: 'spring', stiffness: 320, damping: 34 }}
+        />
+      )}
+
+      {/* Keyed, not wrapped in AnimatePresence.
+
+          `mode="wait"` gates the incoming stop on the outgoing one finishing its
+          exit — and an exit does not finish in a backgrounded tab, so switching
+          away mid-tour and coming back left the tour frozen on a stop that Next
+          had already moved past. React swaps the card; motion animates the one
+          that arrives. The 200ms of cross-fade this gives up is worth less than
+          a walkthrough that cannot deadlock. */}
+      <div className="btr__cardslot">
+        <motion.div
+          key={stop.id}
+          ref={card}
+          tabIndex={-1}
+          role="dialog"
+          aria-modal="false"
+          aria-label={`Builder tour, stop ${i + 1} of ${STOPS.length}`}
+          className={`btr__card ${pos.centred ? 'is-centred' : ''} ${pos.side !== 'none' ? `is-${pos.side}` : ''}`}
+          /* Always positioned from the numbers, centred or not — see the note
+             in `place`. A CSS transform here would be overwritten by motion. */
+          style={{ top: pos.top, left: pos.left }}
+          initial={{ opacity: 0, y: reduce ? 0 : 10, scale: reduce ? 1 : 0.98 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ duration: reduce ? 0 : 0.2, ease: [0.2, 0, 0, 1] }}
+        >
+          {/* The beak. Every anchored coach mark worth copying has one — without
+              it a floating card near a lit box is two things near each other,
+              and the reader has to infer the relationship the tour is asserting. */}
+          {pos.side !== 'none' && <span className="btr__beak" aria-hidden style={{ top: pos.caret }} />}
+
+          <button type="button" className="btr__x" aria-label="Leave the tour" onClick={leave}>
+            <X size={14} strokeWidth={2} />
+          </button>
+
+          <TourHero id={stop.id} />
+
+          <div className="btr__body" id={COPY_ID}>
+            <span className="btr__count">
+              Stop {i + 1} of {STOPS.length}
+            </span>
+            <h2>{stop.heading}</h2>
+            <p>{stop.body}</p>
+          </div>
+
+          {/* Two buttons at most (owner, 23 Oct 2026). Skip went: it did what
+              the × does. Back is not drawn on the first stop rather than drawn
+              disabled, so the card never offers a press that does nothing. */}
+          <footer className="btr__foot">
+            {/* Spacer. The progress dots that sat here repeated "Stop N of M". */}
+            <span className="btr__dots" aria-hidden />
+            {i > 0 && (
+              <Button variant="ghost" size="sm" icon={ArrowLeft} onClick={back}>
+                Back
+              </Button>
+            )}
+            <Button variant="primary" size="sm" icon={last ? Swords : undefined} iconRight={last ? undefined : ArrowRight} onClick={next}>
+              {last ? (stop.finish ?? 'Finish') : 'Next'}
+            </Button>
+          </footer>
+        </motion.div>
+      </div>
+    </div>
+  )
+}
+

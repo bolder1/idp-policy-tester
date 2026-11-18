@@ -1,0 +1,727 @@
+/* The topbar runs the full width and the rail starts under it — the console's
+   arrangement, and the reason its logo sits on white rather than on the rail. */
+.bshell {
+  display: grid;
+  grid-template-columns: var(--nav-sidebar-w) minmax(0, 1fr);
+  grid-template-rows: var(--nav-topbar-h) minmax(0, 1fr);
+  grid-template-areas:
+    'top  top'
+    'rail main';
+  height: 100%;
+  background: var(--surface-page);
+  transition: grid-template-columns var(--dur-normal) var(--ease-standard);
+}
+.bshell.is-collapsed { --nav-sidebar-w: 64px; }
+.bshell { transition: grid-template-columns var(--dur-normal) var(--ease-standard), grid-template-rows var(--dur-normal) var(--ease-standard); }
+
+/* Full view (Shell.tsx `CANVAS_FULL_VIEW`): a canvas takes the window. The rail folds away; the top bar stays (owner, 10 Nov 2026). */
+.bshell.is-full { --nav-sidebar-w: 0px; }
+.bshell.is-full .bshell__burger { visibility: hidden; }
+.bshell.is-full .bshell__rail { min-width: 0; }
+
+/* --- Topbar --------------------------------------------------------------- */
+
+.bshell__top {
+  grid-area: top;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: var(--nav-topbar-h);
+  padding: 0 12px 0 8px;
+  /* Tokens, not hex. White, #495057 and #212529 are these tokens' light values;
+     as hex the bar stayed white on a dark page when the theme flipped. */
+  background: var(--surface-raised);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15);
+  z-index: 60;
+}
+.bshell__burger {
+  width: 37px; height: 37px; flex: none;
+  display: grid; place-items: center;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+}
+.bshell__burger:hover { background: var(--surface-inset); }
+.bshell__logo { display: flex; align-items: center; padding: 0 8px; }
+.bshell__logo img { height: 40px; width: auto; display: block; }
+
+.bshell__topright { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.bshell__icon {
+  width: 37px; height: 37px;
+  display: grid; place-items: center;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+}
+.bshell__icon:hover { background: var(--surface-inset); color: var(--text-primary); }
+/* Slate, not brand. It sat in the top-right corner of every screen as a solid
+   orange disc — the largest continuous area of brand colour in the product, on
+   the one element that is not an action and never needs finding. */
+.bshell__avatar {
+  width: 30px; height: 30px; margin-left: 4px;
+  border-radius: var(--radius-full);
+  background: var(--shell-raised);
+  color: #fff;
+  display: grid; place-items: center;
+  font-size: 12px; font-weight: var(--fw-semibold);
+}
+
+/* --- Rail ----------------------------------------------------------------- */
+
+.bshell__rail {
+  grid-area: rail;
+  display: flex;
+  flex-direction: column;
+  background: var(--shell-bg);
+  overflow: hidden;
+}
+
+/* A thin overlay-style bar, so the rows keep the console's full 231px rather
+   than losing 15px to a platform scrollbar. */
+.bshell__nav { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 8px 0 24px; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; }
+.bshell__nav::-webkit-scrollbar { width: 4px; }
+.bshell__nav::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.18); border-radius: 999px; }
+.bshell__nav::-webkit-scrollbar-track { background: transparent; }
+.bshell__group { margin-bottom: 4px; }
+
+/* Sentence case at body size, not the small uppercase label used elsewhere in
+   the product — this is what the console ships. */
+.bshell__section {
+  margin: 8px;
+  font-size: 14px;
+  font-weight: 300;
+  color: #cbcbcb;
+  white-space: nowrap;
+}
+
+.bshell__item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 40px;
+  padding: 10px 10px 10px 12px;
+  border-left: 4.8px solid transparent;
+  font-size: 14px;
+  font-weight: 300;
+  line-height: 1.35;
+  color: var(--shell-text);
+  text-align: left;
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+.bshell__item:hover { background: rgba(0, 0, 0, 0.22); }
+/* Measured: rgba(0,0,0,.4) behind a 4.8px brand edge, square corners. */
+.bshell__item.is-active {
+  background: rgba(0, 0, 0, 0.4);
+  border-left-color: var(--brand);
+  font-weight: 500;
+}
+.bshell__item.is-inert { color: var(--shell-text); }
+
+.bshell__ico { flex: none; }
+.bshell__item-label { flex: 1; min-width: 0; }
+.bshell__badge {
+  flex: none;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--brand-on-fill);
+  color: #fff;
+  font-size: 12px;
+  font-weight: var(--fw-semibold);
+  line-height: 16px;
+}
+.bshell__chev {
+  flex: none;
+  color: #9aa5ad;
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+.bshell__chev.is-open { transform: rotate(90deg); }
+
+.bshell__sub { display: flex; flex-direction: column; padding-left: 24px; }
+.bshell__subitem {
+  padding: 10px;
+  font-size: 13px;
+  font-weight: 300;
+  line-height: 1.35;
+  color: var(--shell-text);
+  text-align: left;
+  transition: background var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard);
+}
+.bshell__subitem:hover { background: rgba(0, 0, 0, 0.22); }
+/* Orange text, and nothing else.
+
+   This shipped as a darker ground with a full-strength label, on the argument
+   that the rail carried three separate orange signals in one column — the
+   parent's edge, the "New" badge, and this — and that the edge is the one the
+   console actually ships. The argument is sound and the treatment is reverted
+   anyway, at Surajit's instruction: the rest of the product marks a chosen
+   thing in orange text, and one column disagreeing is worse than the column
+   being over its own budget.
+
+   He named the cost himself when he asked for it, so it is recorded rather than
+   argued: the state is now carried by COLOUR ALONE. There is no weight change
+   and no ground behind it, which is a WCAG 1.4.1 failure and leaves the current
+   page unmarked for anyone who cannot separate the orange from the grey around
+   it. `aria-current="page"` is on the button, so assistive tech is told; a
+   sighted reader with low colour discrimination is not.
+
+   The cheapest fix when it comes back: keep the orange and add the weight. That
+   is one declaration and it makes the state legible without a ground. */
+.bshell__subitem.is-active { color: var(--brand); }
+
+/* Not the badge. "New" is an invitation and is filled with the brand; this is a
+   caveat, so it is outlined and grey — the difference has to be legible at a
+   glance, or the rail is advertising the two unfinished pages. */
+.bshell__subitem:has(.bshell__wip) { display: flex; align-items: center; gap: 8px; }
+.bshell__wip {
+  flex: none; margin-left: auto;
+  padding: 0 5px;
+  border: 1px solid rgba(255, 255, 255, 0.22); border-radius: var(--radius-pill);
+  font-size: 12px; font-weight: var(--fw-semibold); line-height: 16px; white-space: nowrap;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+/* Focus on the dark ground. The global ring is slate on slate here, about 1.9:1,
+   so a keyboard user could not see which row they were on. Drawn inside the
+   row, because the rail and the sub-menu clip anything outside it. */
+.bshell__item:focus-visible,
+.bshell__subitem:focus-visible {
+  outline: var(--bw-thin) solid var(--shell-text);
+  outline-offset: -3px;
+  box-shadow: none;
+  border-radius: 0;
+}
+
+/* A row wrapped in a Tip still spans the rail. `.bx-tip` is inline-flex, which
+   would shrink the row, and its hover, to the label. */
+.bshell__nav .bx-tip { display: flex; }
+.bshell__nav .bx-tip > button { flex: 1; min-width: 0; }
+
+/* --- Collapsed ------------------------------------------------------------ */
+
+/* One rule used to squash the label, the badge, the chevron AND the section
+   caption into a 1px grey bar — which is right for the caption and wrong for
+   the other three: they are inline children of a flex row, so each one became a
+   grey dash floating beside its icon. Six icons, six dashes, none of them
+   meaning anything. The three that belong to a row are hidden; only the caption
+   becomes a rule, because a rail of nothing but icons still has to say where
+   one group ends and the next begins. */
+.bshell.is-collapsed .bshell__item {
+  justify-content: center;
+  /* Symmetric around the 4.8px active edge, so an icon does not shift when its
+     row becomes the current one. */
+  padding: 10px 10px 10px calc(10px - 4.8px);
+  gap: 0;
+}
+.bshell.is-collapsed .bshell__item-label,
+.bshell.is-collapsed .bshell__badge,
+.bshell.is-collapsed .bshell__wip,
+.bshell.is-collapsed .bshell__chev { display: none; }
+
+.bshell.is-collapsed .bshell__section {
+  height: 1px; margin: 10px 12px; overflow: hidden;
+  color: transparent; background: rgba(255, 255, 255, 0.1);
+}
+
+/* A sub-menu cannot render into 64px of rail. `toggle()` opens the rail when a
+   parent is clicked while collapsed, so this only covers the case it cannot: a
+   menu left open when something else collapses the rail — the builder does it
+   on arrival — which showed as a block of dark, empty rows under one icon. */
+.bshell.is-collapsed .bshell__sub { display: none; }
+
+/* --- Customize sidebar (rail-custom.ts) ------------------------------------ */
+
+/* The way in, under the last section and pinned to the rail's foot, as Notion keeps its own. A rail row in every way
+   but its place, so it collapses to its icon with the rest. */
+.bshell__foot { flex: none; border-top: var(--bw-thin) solid var(--shell-border); padding: 4px 0; }
+.bshell__custom { color: var(--shell-text-muted); }
+.bshell__custom:hover { color: var(--shell-text); }
+
+/* The mode: each row is the grip, the icon, the name and the eye, on the row's own 40px. */
+.bshell__editlist { display: flex; flex-direction: column; }
+.bshell__edit {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 6px 0 4px;
+  background: var(--shell-bg);
+  font-size: var(--fs-base);
+  font-weight: 300;
+  line-height: 1.35;
+  color: var(--shell-text);
+  user-select: none;
+}
+.bshell__edit:hover { background: var(--shell-item-hover); }
+.bshell__edit:has(> .bshell__grip:active) { background: var(--shell-raised); z-index: 1; }
+
+/* A section in the mode: its own ground so a dragged section carries its rows; an emptied one keeps a drop height. */
+.bshell__editsec { position: relative; background: var(--shell-bg); padding-bottom: 4px; }
+.bshell__editsec:has(> .bshell__edithead > .bshell__grip:active) { background: var(--shell-raised); z-index: 2; }
+.bshell__editlist { min-height: 8px; }
+.bshell__edithead { display: flex; align-items: center; gap: 4px; padding-left: 4px; }
+.bshell__edithead .bshell__section { margin: 8px 4px; }
+
+/* Add page: quiet, like Notion's "+ Add section", and the list it opens is rail rows at sub-item size. */
+.bshell__addbtn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 12px 4px 10px;
+  font-size: var(--fs-md);
+  color: var(--shell-text-muted);
+  text-align: left;
+}
+.bshell__addbtn:hover,
+.bshell__addbtn[aria-expanded='true'] { color: var(--shell-text); background: var(--shell-item-hover); }
+.bshell__addlist { list-style: none; margin: 0; padding: 2px 0 4px 24px; }
+.bshell__addrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  font-size: var(--fs-md);
+  font-weight: 300;
+  color: var(--shell-text);
+  text-align: left;
+}
+.bshell__addrow:hover { background: var(--shell-item-hover); }
+.bshell__addbtn:focus-visible,
+.bshell__addrow:focus-visible { outline: var(--bw-thin) solid var(--shell-text); outline-offset: -3px; }
+
+.bshell__grip,
+.bshell__eye {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
+  color: var(--shell-text-muted);
+}
+.bshell__grip { cursor: grab; touch-action: none; }
+.bshell__grip:active { cursor: grabbing; }
+.bshell__grip:hover,
+.bshell__eye:hover { color: var(--shell-text); background: var(--shell-item-hover); }
+.bshell__grip:focus-visible,
+.bshell__eye:focus-visible,
+.bshell__reset:focus-visible,
+.bshell__done:focus-visible {
+  outline: var(--bw-thin) solid var(--shell-text);
+  outline-offset: 1px;
+  box-shadow: none;
+}
+.bshell__edit .bx-tip { display: inline-flex; }
+
+/* Reset and Done. Done is the rail's own light button, never the brand: the page beside it keeps its one orange. */
+.bshell__editbar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; }
+.bshell__reset {
+  padding: 6px 8px;
+  border-radius: var(--radius-md);
+  font-size: var(--fs-base);
+  color: var(--shell-text-secondary);
+}
+.bshell__reset:hover:not(:disabled) { color: var(--shell-text); background: var(--shell-item-hover); }
+.bshell__reset:disabled { color: var(--shell-text-muted); opacity: 0.6; cursor: default; }
+.bshell__done {
+  flex: 1;
+  min-height: 34px;
+  border-radius: var(--radius-md);
+  background: var(--shell-text);
+  color: var(--shell-bg);
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semibold);
+}
+.bshell__done:hover { background: var(--shell-text-secondary); }
+
+/* No marker dot on the collapsed rail: dots are out of the console. The "New"
+   badge shows again when the rail opens, and the row's name says it. */
+
+/* A column, so a page can be told to take the height that is left rather
+   than all of it. Screens that carry a version switcher put it in here
+   ABOVE the page, and a page claiming 100% of this box then claimed the
+   switcher's height a second time and pushed a scrollbar onto a screen
+   with nothing to scroll. Nothing else changes: `.bzver` and `.bpage`
+   carry no margins between them to collapse. */
+.bshell__main {
+  grid-area: main; overflow-y: auto; min-width: 0;
+  display: flex; flex-direction: column;
+  /* The containing block for anything a screen floats over its whole region.
+     Nothing does today: the board's policy bar was the one caller, and it has
+     stopped floating — it is a flat 48px row in this column, above the board,
+     which is what the column is for. Kept rather than removed, because taking
+     it away would silently re-anchor the next absolutely-positioned child a
+     screen adds to the viewport, and there is nothing to gain by that. */
+  position: relative;
+}
+
+.bshell__toast {
+  position: fixed;
+  /* Top right, clear of the top bar AND of the 48px row under it — the board's
+     Discard / Save draft / Review sit there, and a six-second toast over them
+     hid the very buttons an Undo is weighed against. Placed with offsets, never
+     a transform: Motion writes `transform` inline to animate y and scale. */
+  top: calc(var(--nav-topbar-h) + 48px + var(--space-5));
+  right: var(--space-7);
+  width: fit-content;
+  min-width: 280px;
+  max-width: min(420px, calc(100vw - var(--space-7) * 2));
+  display: flex; align-items: flex-start; gap: var(--space-4);
+  padding: var(--space-5) var(--space-3) var(--space-6) var(--space-5);
+  overflow: hidden;
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-md);
+  line-height: 1.45;
+  box-shadow: var(--el-overlay);
+  z-index: var(--z-toast);
+  /* The kind of news: the mark and the bar. Info unless a tone says otherwise. */
+  --toast-tone: var(--fb-info-fg);
+}
+/* A white card with a coloured mark and a timeline along its foot (owner, 22 Sep
+   2026). One colour per kind of news, from the console's feedback ramps. */
+.bshell__toast.is-success { --toast-tone: var(--fb-positive-fg); }
+.bshell__toast.is-removed { --toast-tone: var(--fb-negative-fg); }
+.bshell__toast.is-warning { --toast-tone: var(--fb-notice-fg); }
+.bshell__toast.is-error { --toast-tone: var(--fb-negative-fg); }
+.bshell__toastico { flex: none; display: grid; place-items: center; height: 21px; color: var(--toast-tone); }
+.bshell__toasttext { flex: 1; min-width: 0; color: var(--text-secondary); }
+.bshell__toastact {
+  flex: none;
+  margin: -3px 0;
+  padding: var(--space-2) var(--space-3);
+  border: 0; border-radius: var(--radius-sm);
+  background: none; cursor: pointer;
+  font-family: inherit; font-size: var(--fs-sm); font-weight: var(--fw-semibold);
+  color: var(--text-link);
+}
+.bshell__toastact:hover { background: var(--surface-sunken); }
+.bshell__toastact:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--focus-halo); }
+.bshell__toastx {
+  flex: none; display: grid; place-items: center;
+  width: 22px; height: 22px; margin: -1px 0;
+  border: 0; border-radius: var(--radius-sm); background: none; cursor: pointer;
+  color: var(--text-tertiary);
+}
+.bshell__toastx:hover { background: var(--surface-sunken); color: var(--text-primary); }
+.bshell__toastx:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--focus-halo); }
+/* The timeline: full at the start and empty when the toast leaves, in the
+   toast's own colour. Scaled, not resized, so it costs no layout. */
+.bshell__toastbar {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 4px;
+  background: var(--toast-tone);
+  transform-origin: left center;
+  animation: bshell-toast-time var(--toast-ms, 3200ms) linear forwards;
+}
+@keyframes bshell-toast-time { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+/* Held while the pointer is over it or focus is inside (Shell.tsx `Toast`): the clock stops, so the bar does too. */
+.bshell__toast.is-held .bshell__toastbar { animation-play-state: paused; }
+@media (prefers-reduced-motion: reduce) {
+  .bshell__toastbar { animation: none; }
+}
+
+/* --- Page chrome ---------------------------------------------------------- */
+
+/* The page's padding, the head's margin and the caption's type are stated once,
+   in console-theme.css, which loads last. The copies here never applied. */
+.bpage { max-width: 1560px; }
+.bpage__headrow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  /* Wraps, so the Documentation link or the preview switches drop under the
+     title before they squeeze the caption. */
+  flex-wrap: wrap;
+  gap: var(--space-5) var(--space-8);
+}
+.bpage__headrow h1 { font-size: var(--fs-3xl); letter-spacing: -0.02em; }
+
+/* The way back over the title (`PageHead`'s `crumb`): the board bar's back
+   link on a page head — the 16px arrow in tertiary ink on a 26px square that
+   fills sunken on hover, then the word in secondary that turns primary and
+   underlines (board.css, `.bbtop__back` and `.bbtop__crumb`). The row is pulled
+   left by the square's inset, as the board's is, so the arrow's stroke and
+   not its box lines up with the title under it. Focus is the kit's ring. */
+.bpage__crumbs { display: flex; margin: 0 0 var(--space-2) calc(var(--space-4) * -1); }
+.bpage__crumb {
+  display: inline-flex; align-items: center; gap: var(--space-3);
+  padding: 0 var(--space-3) 0 0;
+  border: 0; border-radius: var(--radius-sm); background: none;
+  font-family: inherit; font-size: var(--fs-md); color: var(--text-secondary);
+  white-space: nowrap; cursor: pointer;
+}
+.bpage__crumb-arrow {
+  flex: none; display: grid; place-items: center; width: 26px; height: 26px;
+  border-radius: var(--radius-sm); color: var(--text-tertiary);
+}
+.bpage__crumb:hover { color: var(--text-primary); }
+.bpage__crumb:hover .bpage__crumb-arrow { background: var(--surface-sunken); color: var(--text-primary); }
+.bpage__crumb:hover .bpage__crumb-label { text-decoration: underline; }
+
+/* --- Narrow --------------------------------------------------------------- */
+
+/* Narrow the rail by changing the variable the grid reads, as the collapsed state
+   does. The page's narrow inset is in console-theme.css, which loads last. */
+@media (max-width: 1120px) {
+  .bshell { --nav-sidebar-w: 200px; }
+  .bshell.is-collapsed { --nav-sidebar-w: 64px; }
+}
+
+/* --- No room for a second column ------------------------------------------ */
+
+/* 900px and under, the rail leaves the grid and overlays the page (Shell.tsx
+   drives it with `is-navopen`; the same 900px `PolicyBuilderMain` floats its
+   rules panel at).
+
+   Everything above only ever narrowed the rail — 235 → 200 → 64 — and a phone
+   has no width to give it at any of those. Measured on a 375px screen before
+   this block: the rail held 200px of it, the content column 175px, and the page
+   overflowed 308px with 434 elements past the right edge. */
+@media (max-width: 900px) {
+  .bshell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'top'
+      'main';
+  }
+
+  .bshell__rail {
+    position: fixed;
+    top: var(--nav-topbar-h);
+    left: 0;
+    bottom: 0;
+    z-index: 70;
+    /* Wide enough for the longest row ("Risk signal profile"), never the whole
+       screen: the page behind it is what tells you where the drawer will land. */
+    width: min(280px, 82vw);
+    transform: translateX(-100%);
+    transition: transform var(--dur-normal) var(--ease-standard);
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.28);
+  }
+  .bshell.is-navopen .bshell__rail { transform: none; }
+
+  .bshell__scrim {
+    position: fixed;
+    inset: var(--nav-topbar-h) 0 0 0;
+    z-index: 65;
+    border: 0;
+    padding: 0;
+    background: rgba(0, 0, 0, 0.45);
+  }
+
+  /* An overlay is never the icon strip: the drawer is either off the page or
+     showing its rows with their names. */
+  .bshell.is-collapsed { --nav-sidebar-w: 0px; }
+
+  /* The topbar could not shrink — 31 of its elements hung past the right edge
+     of a 375px screen, which is what forced the whole page to 683px. The two
+     PROTOTYPE controls (persona, rebrand) and the two INERT icons (docs,
+     settings — both `aria-disabled`, neither does anything yet) are what took
+     the room. They are hidden here, not removed: the desktop bar is untouched,
+     and this is one media query to delete when they earn their place on a
+     phone. What is left is the burger, the logo, the theme toggle and the
+     account menu. */
+  .bshell__top { padding-right: 8px; }
+  /* The Tip WRAPPER, not just the control inside it: `.bx-tip` is an
+     inline-flex item, so hiding only its child left an empty box still
+     spending the row's gap. */
+  .bshell__top .bpb,
+  .bshell__topright > .bx-tip:has(.bshell__brand),
+  .bshell__topright > .bx-tip:has(.bshell__icon.is-inert) { display: none; }
+  .bshell__topright { gap: 4px; }
+  .bshell__logo img { height: 32px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bshell,
+  .bshell__rail { transition: none; }
+}
+
+/* The topbar's own controls, on the same terms as the kit's — see the note
+   beside `.bx-toggle` in kit.css. The burger matters most of the three: on a
+   phone it is the only way to the navigation, and it was a 37px target. */
+@media (pointer: coarse) {
+  .bshell__burger,
+  .bshell__icon,
+  .bshell__avatar { position: relative; }
+  .bshell__burger::after,
+  .bshell__icon::after,
+  .bshell__avatar::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
+}
+
+/* `.bshell__quick` — a floating rail of two icon buttons down the right edge —
+   stood here. Removed with the markup; the topbar still carries both.
+
+   A stray `}` was left behind with it, closing a media query whose contents had
+   gone. The dev server tolerated the empty rule and lightningcss did not, so
+   `npm run build` failed on it — invisible in development, fatal in
+   production. */
+
+/* --- Rebrand switch ----------------------------------------------------------
+   Prototype furniture beside the persona switch, drawn the same way so the two
+   read as a pair: a 30px outlined control with its state inside it. */
+.bshell__brand {
+  display: inline-flex; align-items: center; gap: var(--space-3);
+  height: 30px; padding: 0 var(--space-4) 0 var(--space-3);
+  background: var(--surface-raised);
+  border: 1px solid var(--int-neutral-border); border-radius: var(--radius-md);
+  font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--text-secondary);
+  white-space: nowrap;
+}
+.bshell__brand:hover { border-color: var(--int-neutral-border-hover); color: var(--text-primary); }
+.bshell__brand.is-on { color: var(--text-primary); }
+.bshell__brand-track {
+  position: relative; flex: none; width: 26px; height: 14px;
+  border-radius: var(--radius-full); background: var(--border-strong);
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+.bshell__brand-knob {
+  position: absolute; top: 2px; left: 2px; width: 10px; height: 10px;
+  border-radius: var(--radius-full); background: #fff;
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+/* The rebrand's own blue, in both looks: the switch previews that colour. */
+.bshell__brand.is-on .bshell__brand-track { background: #0d6efd; }
+.bshell__brand.is-on .bshell__brand-knob { transform: translateX(12px); }
+@media (prefers-reduced-motion: reduce) {
+  .bshell__brand-track, .bshell__brand-knob { transition: none; }}
+
+/* --- Global search (global-search.ts) --------------------------------------- */
+
+/* A field in the bar's right-hand group, before the tools: a button that looks like the field it opens, as Notion's
+   sidebar search does. */
+.bsearch__field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: min(320px, 28vw);
+  height: 34px;
+  margin-right: var(--space-2);
+  padding: 0 var(--space-3) 0 var(--space-5);
+  border: var(--bw-thin) solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-inset);
+  color: var(--text-secondary);
+  font-size: var(--fs-base);
+  text-align: left;
+}
+.bsearch__field:hover { border-color: var(--text-tertiary); }
+.bsearch__ph { flex: 1; min-width: 0; }
+.bsearch__kbd {
+  flex: none;
+  padding: 0 var(--space-3);
+  border: var(--bw-thin) solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-overlay);
+  font: inherit;
+  font-size: var(--fs-sm);
+  line-height: 20px;
+  color: var(--text-tertiary);
+}
+
+/* The palette: near the top, not centred, so the list grows down from the field. */
+.bsearch__scrim {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 12vh var(--space-6) var(--space-6);
+  z-index: calc(var(--z-modal) + 50);
+}
+.bsearch {
+  display: flex;
+  flex-direction: column;
+  width: min(640px, 100%);
+  max-height: 70vh;
+  border-radius: var(--radius-xl);
+  background: var(--surface-overlay);
+  box-shadow: var(--el-overlay);
+  overflow: hidden;
+}
+.bsearch:focus { outline: none; }
+.bsearch__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: 0 var(--space-7);
+  border-bottom: var(--bw-thin) solid var(--border-subtle);
+  color: var(--text-tertiary);
+}
+.bsearch__input {
+  flex: 1;
+  min-width: 0;
+  height: 52px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--fs-lg);
+}
+.bsearch__input:focus { outline: none; box-shadow: none; }
+.bsearch__list { overflow-y: auto; padding: var(--space-3) var(--space-3) var(--space-4); }
+.bsearch__list:empty { display: none; }
+.bsearch__heading {
+  margin: var(--space-4) var(--space-5) var(--space-2);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--text-tertiary);
+}
+.bsearch__hit {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  min-height: 38px;
+  padding: var(--space-3) var(--space-5);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: var(--fs-base);
+  cursor: pointer;
+}
+/* The highlighted row is selection, so blue (rebrand.css): never the brand. */
+.bsearch__hit.is-on { background: var(--accent-soft); color: var(--accent-strong); }
+.bsearch__ico { flex: none; color: var(--text-tertiary); }
+.bsearch__hit.is-on .bsearch__ico { color: var(--accent-strong); }
+.bsearch__label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bsearch__meta { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-sm); color: var(--text-tertiary); }
+.bsearch__empty { margin: var(--space-6) var(--space-5); font-size: var(--fs-base); color: var(--text-secondary); }
+
+/* No room for the field on a phone: the bar keeps an icon's width and the palette fills the width. */
+@media (max-width: 900px) {
+  .bsearch__field { width: 37px; margin-left: auto; padding: 0; justify-content: center; border-color: transparent; background: transparent; }
+  .bsearch__ph, .bsearch__kbd { display: none; }
+  .bsearch__scrim { padding-top: var(--space-6); }
+}
+
+/* The rail's reminder before the old policies close (migrate/rail-reminder.tsx), drawn in the rail's own colours. */
+.brail-note {
+  position: relative; flex: none; display: flex; flex-direction: column; gap: var(--space-2);
+  margin: var(--space-4) var(--space-5); padding: var(--space-6); border-radius: var(--radius-lg);
+  background: var(--shell-raised); border: var(--bw-thin) solid var(--shell-border);
+  font-size: var(--fs-sm); color: var(--shell-text-secondary);
+}
+.brail-note b { padding-right: var(--space-7); font-size: var(--fs-md); font-weight: var(--fw-semibold); color: var(--shell-text); line-height: 1.4; }
+.brail-note__x { position: absolute; top: var(--space-4); right: var(--space-4); display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: var(--radius-sm); background: none; color: var(--shell-text-muted); cursor: pointer; }
+.brail-note__x:hover { background: var(--shell-item-hover); color: var(--shell-text); }
+.brail-note__go {
+  align-self: flex-start; margin-top: var(--space-3); height: var(--ctl-height-sm); padding: 0 var(--space-5);
+  border: var(--bw-thin) solid var(--shell-border-strong); border-radius: var(--radius-md); background: none;
+  font: inherit; font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--shell-text); cursor: pointer;
+}
+.brail-note__go:hover { background: var(--shell-item-hover); }
+.brail-note__x:focus-visible, .brail-note__go:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* The rail in two zones (owner, 9 Nov 2026: "a dedicated space for the nav items and for the card, so things don't
+   overlap"): the items scroll in their own area; the reminder card and Customize sidebar sit below a divider, fixed. */
+.bshell__nav { min-height: 0; }
+.bshell__rail > .brail-note { margin: 0; border-radius: 0; border-width: var(--bw-thin) 0 0; padding: var(--space-6) var(--space-7); }

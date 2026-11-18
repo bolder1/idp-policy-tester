@@ -1,0 +1,679 @@
+/* -----------------------------------------------------------------------------
+   Sign-in tests: the page (V4 §14 — the policy builder's layout). Prefix
+   `sit` for the page's frame and the panel, `hiw` for the empty canvas
+   (HowItWorks.tsx); the journey is `tj` (journey.css), the Saved sign-ins
+   picker `tbar-saved` (try-bar.css) and the locked-off tables `sitl`
+   (library.css).
+
+   The builder's own pieces are worn, not copied: the bar is `.bbtop`, the
+   region `.bb` (its dotted ground, its tracks, the floating `.bb__insp`), the
+   dock `.bb__dock`, the panel's sections `.bb__sec` and its fields
+   `.bb__thenfield` and `.cp__stack` (board.css, condition-popover.css). What
+   is here is only what the page adds: its frame, the canvas's track, the
+   journey standing on the region's ground instead of its own, and the
+   panel's few parts the Inspector has no word for.
+
+   The page is a flex column — the bar, then the region taking exactly what
+   is left of the window (a min-height: 0 chain, no fixed heights) — so it
+   never scrolls at any window size; the canvas scrolls itself.
+
+   Tokens only (console-theme.css). Nothing here is moved: the empty canvas's
+   light and glows, the fact rows sliding in, the panel sliding in and out,
+   the cue fading, are motion's (their `top`, opacity, `x` and `y`), so no
+   rule here has a transform or a transition — and the one CSS animation the
+   builder gives its panel is switched off for this one.
+   -------------------------------------------------------------------------- */
+
+/* --- The page ------------------------------------------------------------------ */
+
+.bshell__main > .sit { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+.sit > .bbtop { flex: none; }
+.sit > .bb { flex: 1 1 auto; min-height: 0; }
+/* A query container, so the panel can hold its track's width in `cqw` (below). */
+.sit > .sit__bb { container-type: inline-size; }
+
+/* Saved sign-ins, on the builder's bar (its views' buttons) and in the panel: pressed while what it opened is open. */
+.sit__savedbtn.is-on,
+.sit-panel__saved.is-on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-strong); }
+.sit__savedbtn > svg { color: var(--text-tertiary); }
+.sit__savedbtn.is-on > svg { color: var(--accent-strong); }
+
+/* The tabs, while the tables are locked on: they belong to the head above
+   them, not to the body under them. */
+.bpage > .sit__tabs { margin-top: calc(var(--space-6) * -1 + var(--space-2)); }
+.sit__panel { min-width: 0; }
+.sit__panel:focus-visible { outline: none; }
+
+/* --- The canvas: the region's middle track ---------------------------------------
+
+   Where the builder's stage stands, and a containing block for the dock. The
+   journey's canvas inside it keeps its scroller, its engine line and its
+   size container; it gives up only its own frame and ground, so the dots
+   under it are the region's — one surface with the ground under the panel,
+   as on the builder. The fade that clips the scroller under the engine line
+   fades to that ground.
+
+   The rules for the journey on it are the stage's, not the page's (1 Oct
+   2026): the builder's Check access stands the same canvas in its own
+   region's middle track (board/PolicyCheck.tsx, `.sit__stage.bbchk`), so
+   one set of rules draws both. */
+.sit__stage {
+  grid-column: 2;
+  grid-row: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.sit__stage > .tj { flex: 1 1 auto; min-height: 0; }
+.sit__stage .tj-canvas { border: 0; border-radius: 0; background: none; }
+.sit__stage .tj-canvas::before { content: none; }
+.sit__stage .tj-canvas::after { border-radius: 0; background: linear-gradient(to bottom, var(--bb-stage) 40%, transparent); }
+/* The dock's zoom: the run's column scaled in place (a plain element —
+   motion animates the lanes inside it, never the stage). */
+.sit__stage .tj-stage { zoom: var(--sit-z, 1); }
+/* The room over the run (the engine line) and under it (the dock, which
+   floats over the canvas's foot) is the scroller's own padding, so no zoom
+   shrinks it: at any zoom the run's end scrolls clear of the dock, and its
+   start clear of the engine line. The stage keeps a little of its own. */
+.sit__stage .tj-scroll:has(> .tj-stage) { padding-top: 60px; padding-bottom: 64px; }
+.sit__stage .tj-stage.is-vertical { padding-top: var(--space-4); padding-bottom: var(--space-4); }
+
+/* No scrollbar on the canvas (owner, 30 Sep: "the scrollbar looks weird"):
+   it moves as the builder's does — a drag on the ground, the wheel, a pinch
+   (TryJourney.tsx) — and the cue at its right edge says where the view is. */
+.sit__stage .tj-scroll { scrollbar-width: none; }
+.sit__stage .tj-scroll::-webkit-scrollbar { display: none; }
+.sit__stage .tj-canvas:focus-visible { outline: none; }
+/* The ground pans under a drag: the hand, where there is somewhere to go.
+   The cards and the answer keep the ordinary pointer. */
+.sit__stage .tj-canvas.can-pan .tj-scroll { cursor: grab; }
+.sit__stage .tj-canvas.is-panning .tj-scroll { cursor: grabbing; }
+.sit__stage .tj-canvas.can-pan :is(.bb__card, .bb__start, .tj-out) { cursor: auto; }
+
+/* The cue: a hairline track at the canvas's right edge, between the engine
+   line and the dock, and a thumb on it the share of the run in view (its
+   top and height written by TryJourney; its fade motion's). */
+.sit-cue {
+  position: absolute;
+  top: 64px;
+  right: var(--space-3);
+  bottom: 64px;
+  z-index: 5;
+  width: 3px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--border-subtle) 70%, transparent);
+  pointer-events: none;
+}
+.sit-cue__thumb {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  border-radius: var(--radius-full);
+  background: var(--border-strong);
+}
+
+/* --- The panel (TryPanel.tsx) ----------------------------------------------------
+
+   The rule Inspector's card, slid in and out by motion (so the builder's CSS
+   animation on `.bb__insp` is off here). It holds its track's width —
+   `min(var(--bb-insp), 46%)` of the region, less its margin — rather than
+   the track's, and stands at the track's end: so as the track opens it is
+   not squeezed, and as the track closes under it on the way out it keeps its
+   place and fades from its edge while the canvas widens behind it. */
+.sit-panel.bb__insp {
+  justify-self: end;
+  width: calc(min(var(--bb-insp), 46cqw) - var(--space-5));
+  animation: none;
+}
+/* The body's scroll keeps a thin bar in the console's own grey. */
+.sit-panel .bb__inspbody { scrollbar-width: thin; scrollbar-color: var(--border-default) transparent; }
+
+/* Its header is the rule head's row, holding the sign-in's name where the
+   rule's name field stands, at the field's height. */
+.sit-panel__title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  line-height: 36px;
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Use a saved sign-in: a quiet row at the head of the body, not a section. */
+.sit-panel__saved {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: calc(100% - 2 * var(--space-5));
+  margin: var(--space-5) var(--space-5) 0;
+  padding: var(--space-3) var(--space-4);
+  border: var(--bw-thin) solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.sit-panel__saved > span { flex: 1; min-width: 0; }
+.sit-panel__saved > svg { flex: none; color: var(--text-tertiary); }
+.sit-panel__saved:hover { border-color: var(--border-default); color: var(--text-primary); }
+.sit-panel__saved:focus-visible { outline: none; box-shadow: 0 0 0 4px var(--focus-halo); }
+
+/* Identity (IdentityField.tsx): users and groups in one field, several at
+   once (owner, 5 Oct 2026) — the in-place field (identity-combo.tsx, Jira's
+   assignee field), its picks as chips; under it, for one pick only, every
+   group a person is in, and a quiet line where that is more than one, or
+   who a group was tested as. The section's heading names it, so no label
+   over it says Identity again. */
+.sit-ident { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.sit-ident__label { font-size: var(--fs-xs); font-weight: var(--fw-medium); line-height: 16px; color: var(--text-secondary); }
+.sit-ident__groups { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
+.sit-ident__groups > .sit-ident__label { margin-right: var(--space-1); }
+.sit-ident__note { margin: 0; font-size: var(--fs-xs); line-height: 16px; color: var(--text-tertiary); }
+/* Who signs in, one field (IdentityFieldSingle.tsx, 6 Oct 2026): the type and its dropdown side by side in one box —
+   one edge, a hairline between the halves, the halves' own edges gone. */
+.sit-ident__combo { display: flex; align-items: stretch; min-width: 0; border: var(--bw-thin) solid var(--ctl-border, var(--border-default)); border-radius: var(--radius-md); background: var(--surface-raised); }
+.sit-ident__combo:hover { border-color: var(--ctl-border-hover, var(--border-strong)); }
+.sit-ident__combo:focus-within { border-color: var(--ctl-border-focus, var(--focus-ring)); }
+.sit-ident__combo.is-invalid { border-color: var(--fb-negative-border); }
+.sit-ident__combo > .bx-picker { min-width: 0; }
+.sit-ident__combo > .bx-picker:first-child { flex: none; border-right: var(--bw-thin) solid var(--border-subtle); }
+.sit-ident__pick { display: flex; flex: 1 1 auto; min-width: 0; }
+.sit-ident__pick > .bx-picker { flex: 1 1 auto; min-width: 0; }
+.sit-ident__combo .bx-picker__trigger,
+.sit-ident__combo .bx-picker__trigger:hover,
+.sit-ident__combo .bx-picker__trigger:focus-visible { border-color: transparent; box-shadow: none; background: transparent; }
+
+/* The field: at rest the answer — the chips, or the grey mark and Choose
+   users or groups — in a control's edge, the chevron saying it opens; open,
+   the same box holds the chips and the search after them, one blue edge for
+   focus. Its height is kept as it turns, so nothing under it moves. At rest
+   its press is one button under the chips, the whole field (`__open`): a
+   chip's body passes the press down to it, its × takes its own. */
+.sit-ident__field {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--ctl-height-md);
+  padding: var(--space-3) calc(var(--space-3) + 14px + var(--space-3)) var(--space-3) var(--space-3);
+  background: var(--ctl-bg);
+  border: var(--bw-thin) solid var(--ctl-border);
+  border-radius: var(--ctl-radius);
+  color: var(--text-body);
+}
+.sit-ident__field:hover { border-color: var(--ctl-border-hover); }
+.sit-ident__field:has(> .sit-ident__open:focus-visible),
+.sit-ident__field.is-open {
+  border-color: var(--ctl-border-focus);
+  box-shadow: 0 0 0 4px var(--focus-halo);
+}
+.sit-ident__field.is-open { cursor: text; background: var(--surface-raised); }
+.sit-ident__field.is-invalid { border-color: var(--fb-negative-border); }
+.sit-ident__open {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
+.sit-ident__open:focus-visible { outline: none; }
+/* What the field holds: the chips (and, open, the search), wrapping; at
+   rest they let a press through to the field, but for the chips themselves. */
+.sit-ident__chips {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  pointer-events: none;
+}
+.sit-ident__field.is-open .sit-ident__chips { pointer-events: auto; }
+.sit-ident__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-md); line-height: 20px; color: var(--text-primary); }
+.sit-ident__field.is-empty .sit-ident__name { color: var(--text-muted); }
+/* Nothing picked is an answer for a rule's Who ("Everyone", who-combo.tsx): said in the answer's colour, not muted. */
+.sit-ident__field.is-answer .sit-ident__name { color: var(--text-primary); }
+.sit-ident__field.is-empty .sit-ident__chips { gap: var(--space-3); }
+.sit-ident__chev { flex: none; color: var(--text-muted); }
+
+/* A pick: the console's one pill, neutral (selection is greyscale) — a
+   person's round face or a group's square, the name, its ×; "+N" is the
+   same pill, and opens the list. */
+.sit-ident__chip {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pill-gap);
+  max-width: 100%;
+  min-width: 0;
+  padding: var(--pill-py) var(--space-1) var(--pill-py) var(--pill-py);
+  background: var(--fb-neutral-bg);
+  border: var(--bw-thin) solid var(--fb-neutral-border);
+  border-radius: var(--pill-radius);
+  font: inherit;
+  font-size: var(--pill-fs);
+  font-weight: var(--pill-fw);
+  line-height: var(--pill-line);
+  color: var(--fb-neutral-fg);
+  pointer-events: auto;
+  cursor: pointer;
+}
+/* The face's letters at the 12 px floor here alone: the shared small face's are 9. */
+.sit-ident__chip .bx-face { width: 20px; height: 20px; flex: none; font-size: var(--fs-xs); }
+.sit-ident__chipname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sit-ident__chipx {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.sit-ident__chipx:hover { background: var(--state-hover-bg); color: var(--text-primary); }
+/* The × is a Tab stop: the field's own focus ring, small. */
+.sit-ident__chipx:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--ctl-border-focus); color: var(--text-primary); }
+.sit-ident__chip.is-more { padding: var(--pill-py) var(--pill-px); }
+.sit-ident__chip.is-more:hover { border-color: var(--border-default); color: var(--text-primary); }
+/* Nothing chosen: the kind's mark in a grey disc, where a face will be — Jira's grey Unassigned. */
+.sit-ident__blank {
+  box-sizing: border-box;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  background: var(--surface-sunken);
+  border: var(--bw-thin) solid var(--border-subtle);
+  color: var(--text-tertiary);
+}
+.sit-ident__blank.is-user { border-radius: var(--radius-full); }
+.sit-ident__blank.is-group { border-radius: 6px; }
+/* Open, the search's mark stands where the chevron did. */
+.sit-ident__searchico { position: absolute; top: calc(50% - 7px); right: var(--space-3); color: var(--text-tertiary); }
+/* The search is the field's own text, after the chips: no box of its own inside the field's. */
+.sit-ident__chips > .sit-ident__search,
+.sit-ident__chips > .sit-ident__search:hover,
+.sit-ident__chips > .sit-ident__search:focus-visible {
+  flex: 1 0 64px;
+  width: auto;
+  min-width: 64px;
+  height: 24px;
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  background: none;
+  box-shadow: none;
+  font: inherit;
+  font-size: var(--fs-md);
+  color: var(--text-primary);
+}
+.sit-ident__search::placeholder { color: var(--text-placeholder, var(--text-muted)); }
+/* The list (the Picker's, portalled): as wide as the field it drops from;
+   on top, the switch — Users | Groups, the page bar's segments (`.bseg`,
+   page-bar.tsx `FilterTabs`), the pop's width, out of the list's scroll so
+   it stays while the rows move; Clear all set off from the names by a rule;
+   inside a policy, its people under In this policy and Not in this policy,
+   small and quiet. */
+.sit-ident__pop { max-width: calc(100vw - 16px); }
+/* The list's faces read at the type floor too, as the chips' do (the shared face draws its initials at 10 px). */
+.sit-ident__pop .bx-face { font-size: var(--fs-xs); }
+.sit-ident__type { flex: none; padding: var(--space-2); border-bottom: var(--bw-thin) solid var(--border-subtle); }
+.sit-ident__type > .bseg { display: flex; flex-wrap: nowrap; }
+.sit-ident__type > .bseg > button { flex: 1 1 0; }
+.sit-ident__rule { height: 0; margin: var(--space-2) var(--space-2); border-top: var(--bw-thin) solid var(--border-subtle); }
+.sit-ident__clear .bx-picker__opttext strong { color: var(--text-secondary); }
+.sit-ident__sub { padding-top: var(--space-2); font-size: var(--fs-xs); color: var(--text-muted); }
+
+/* Sign-in conditions: one condition frame per fact, the Inspector's gap apart.
+   The left half says what is stated and is not a control, so it takes no
+   press, no hover and no caret; the TipDot beside its words names the reader. */
+.sit-facts { display: flex; flex-direction: column; gap: var(--space-4); }
+.sit-fact { display: flex; flex-direction: column; min-width: 0; }
+.sit-panel .cp__stackrow > .cp__fld.sit-fact__what { flex: 0 0 136px; cursor: default; }
+.sit-panel .cp__stackrow > .cp__fld.sit-fact__what:hover { background: none; }
+.sit-panel .cp__stackrow > .cp__fld.sit-fact__val { flex: 1 1 auto; }
+.sit-fact__mark { display: inline-flex; flex: none; color: var(--text-tertiary); }
+
+/* The foot: Save sign-in is a plain secondary beside Run, the page's one
+   orange — not the Inspector's brand-tinted Save rule, which would make two. */
+.sit-panel__savewrap { display: inline-flex; }
+/* Reset at the far end from Run (TryPanel.tsx). */
+.sit-panel__reset { margin-right: auto; }
+.sit-panel .bb__inspfoot .bx-btn--neutral {
+  background: var(--int-neutral-bg);
+  border-color: var(--int-neutral-border);
+  color: var(--int-neutral-text);
+}
+.sit-panel .bb__inspfoot .bx-btn--neutral:not(:disabled):hover {
+  background: var(--int-neutral-bg-hover);
+  border-color: var(--int-neutral-border-hover);
+}
+.sit-panel .bb__inspfoot .bx-btn--neutral.is-on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-strong); }
+
+/* --- The sign-in node, compact (SignInCard.tsx) -------------------------------------
+
+   A button: the run's sign-in, and a press takes the focus to the panel's
+   Person picker. No tools in its corner, so no room kept for them. */
+.tj-sin.is-compact {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: 100%;
+  padding: var(--space-5) var(--space-6);
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+.tj-sin.is-compact:hover { border-color: var(--border-default); }
+.tj-sin.is-compact:focus-visible { outline: var(--bw-thick) solid var(--accent); outline-offset: 2px; }
+.tj-sin.is-compact .tj-sin__who { padding-right: 0; }
+.tj-sin.is-compact .tj-facts { padding-top: var(--space-4); }
+
+/* --- The empty canvas (HowItWorks.tsx) ---------------------------------------------
+
+   What an access check is, and the one way in (owner, 1 Oct 2026: "a better
+   state, a better layout and a better experience"): the headline, one line,
+   Check access, and what the run will show.
+   Centred in the canvas's track, in a column no wider than the line can be
+   read across; sized to sit in it whole, with no scroll, down to a 440 px
+   canvas; only a shorter one scrolls, with the canvas.
+
+   Nothing scrolls under an engine line here, so the canvas's top fade (a
+   journey's, journey.css) is off. */
+.tj-canvas:has(> .tj-scroll > .tj-empty)::after { content: none; }
+
+.tj-empty {
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+  padding: var(--space-8) var(--space-9);
+}
+
+.hiw {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: min(520px, 100%);
+  text-align: center;
+}
+
+/* The picture over the headline (HowItWorks.tsx `CheckArt`): grey for the
+   sign-in screen, the allow ramp for its shield — the one colour. */
+.hiw__ill { display: block; flex: none; width: 220px; height: 136px; margin-bottom: var(--space-8); }
+.hiw__ill-win { fill: var(--surface-raised); stroke: var(--border-strong); stroke-width: 1.25; }
+.hiw__ill-rule { fill: none; stroke: var(--border-default); stroke-width: 1.25; }
+.hiw__ill-addr { fill: var(--surface-inset); stroke: var(--border-default); stroke-width: 1.25; }
+.hiw__ill-field { fill: var(--surface-raised); stroke: var(--border-default); stroke-width: 1.25; }
+.hiw__ill-bar { fill: var(--border-strong); opacity: 0.45; }
+.hiw__ill-bar.is-soft { opacity: 0.4; }
+.hiw__ill-gap { fill: var(--surface-raised); stroke: var(--surface-raised); stroke-width: 4.5; stroke-linejoin: round; }
+.hiw__ill-shield { fill: var(--fb-positive-bg); stroke: var(--fb-positive-border); stroke-width: 1.5; stroke-linejoin: round; }
+.hiw__ill-tick { fill: none; stroke: var(--fb-positive-dot); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+
+/* The words: the headline, ONE line under it, the way in. */
+.hiw .hiw__head {
+  margin: 0;
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semibold);
+  line-height: 26px;
+  color: var(--text-primary);
+}
+.hiw__lede {
+  margin: var(--space-3) 0 0;
+  max-width: 440px;
+  font-size: var(--fs-sm);
+  line-height: 20px;
+  color: var(--text-secondary);
+}
+/* Check access (and Saved sign-ins, where offered): pressed — the builder's
+   blue, the active state — while the panel holds what it opened. */
+.hiw__act { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-4); margin-top: var(--space-7); }
+/* Recently blocked: the latest refusals, a press fills the form with one, View all opens them all (BlockedDrawer.tsx). */
+.hiw__blocked { width: min(100%, 440px); margin: var(--space-7) auto 0; border: var(--bw-thin) solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface-raised); text-align: left; }
+.hiw__blockedhead { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-4) var(--space-5); border-bottom: var(--bw-thin) solid var(--border-subtle); }
+.hiw__blockedhead h3 { margin: 0; font-size: var(--fs-sm); font-weight: var(--fw-semibold); color: var(--text-primary); }
+.hiw__blockedall { display: inline-flex; align-items: center; gap: var(--space-1); padding: 0; border: 0; background: none; font: inherit; font-size: var(--fs-sm); color: var(--text-secondary); cursor: pointer; }
+.hiw__blockedall:hover { color: var(--text-primary); }
+.hiw__blockedall:focus-visible,
+.hiw__blockedrow:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); border-radius: var(--radius-sm); }
+.hiw__blocked ul { margin: 0; padding: var(--space-2); list-style: none; }
+.hiw__blockedrow { display: flex; align-items: center; gap: var(--space-4); width: 100%; padding: var(--space-3) var(--space-4); border: 0; border-radius: var(--radius-sm); background: none; font: inherit; text-align: left; color: var(--text-body); cursor: pointer; }
+.hiw__blockedrow:hover { background: var(--surface-sunken); }
+.hiw__blockedrow > :first-child { flex: none; }
+.hiw__blockedtext { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+.hiw__blockedwho { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: var(--fs-md); color: var(--text-primary); }
+.hiw__blockedmeta { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: var(--fs-xs); color: var(--text-tertiary); }
+.hiw__act .bx-btn[aria-pressed='true'] {
+  background: var(--accent-soft);
+  border-color: var(--accent-soft-border);
+  color: var(--accent-strong);
+}
+/* What the run will show: three short phrases with their marks, quiet. */
+.hiw__gets {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-3) var(--space-7);
+  margin: var(--space-8) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-xs);
+  line-height: 16px;
+  color: var(--text-tertiary);
+}
+.hiw__gets > li { display: inline-flex; align-items: center; gap: var(--space-2); }
+.hiw__gets svg { flex: none; color: var(--text-tertiary); }
+
+/* A short canvas: less air. */
+@container tj (max-height: 520px) {
+  .tj-empty { padding-block: var(--space-6); }
+  .hiw__ill { width: 176px; height: 109px; margin-bottom: var(--space-6); }
+  .hiw__gets { margin-top: var(--space-6); }
+}
+
+/* The why, in the right-hand panel (TryPanel.tsx `WhyPanel`): the why's own
+   head is the panel's — its mark, the answer's line, its X — and its body
+   scrolls in the rest of the panel's height, the console's thin grey bar. */
+.sit-whypanel.bb__insp { display: flex; flex-direction: column; }
+.sit-whypanel__slot { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
+.sit-whypanel .tj-why { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; margin: 0; border: 0; border-radius: 0; background: none; box-shadow: none; }
+.sit-whypanel .tj-why__body { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border-default) transparent; }
+
+/* The break-in attempts, in the right-hand panel (BreakInPanel.tsx; owner,
+   1 Oct 2026): the sign-in panel's chrome, its title the attempts' label,
+   the way back to the why before it where they came from the why. The body:
+   the four counts once with their ⓘ, then each result's heading and its
+   rows, Held last behind its fold.
+
+   A row is a card in the why's grain: the press that plays the attempt —
+   the person's face, the attempt, its one line, what it should get and what
+   it got, in a grid so nothing sits over anything — and under it, on the
+   text's own left edge and outside the press, who decided (a quiet link
+   into the builder) and, on a hole, the fix with what it would move on the
+   sunken ground, Fix in policy a plain secondary: the panel has no orange. */
+.sit-panel .sit-att { display: flex; flex-direction: column; gap: var(--space-6); padding: var(--space-5) var(--space-5) var(--space-8); }
+.sit-att__counts { display: flex; align-items: flex-start; gap: var(--space-3); min-width: 0; }
+.sit-att__counts > .tj-cells { flex: 1 1 auto; }
+.sit-att__counts > .bx-tip { flex: none; margin-top: var(--space-1); }
+.sit-att__group { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.sit-att__gh { margin: 0; font-size: var(--fs-xs); font-weight: var(--fw-semibold); line-height: 16px; color: var(--text-secondary); }
+.sit-att__list { display: flex; flex-direction: column; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
+.sit-att__row { display: flex; flex-direction: column; min-width: 0; border: var(--bw-thin) solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface-raised); }
+.sit-att__row.is-got-through,
+.sit-att__row.is-weaker-factor { border-color: var(--fb-notice-border); }
+
+/* The verdict: one plain answer at the head of the panel — how many got through, of how many tried. */
+.sit-att__verdict { display: flex; align-items: center; gap: var(--space-4); padding: var(--space-4) var(--space-5); border: var(--bw-thin) solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface-raised); }
+.sit-att__verdict.is-hole { border-color: var(--fb-negative-border); background: var(--fb-negative-bg); }
+.sit-att__verdict.is-clear { border-color: var(--fb-positive-border); background: var(--fb-positive-bg); }
+.sit-att__vmark { display: inline-grid; place-items: center; flex: none; }
+.sit-att__verdict.is-hole .sit-att__vmark { color: var(--fb-negative-fg); }
+.sit-att__verdict.is-clear .sit-att__vmark { color: var(--fb-positive-fg); }
+.sit-att__vsay { display: flex; flex: 1 1 auto; flex-direction: column; gap: 1px; min-width: 0; margin: 0; }
+.sit-att__vsay strong { font-size: var(--fs-md); font-weight: var(--fw-semibold); color: var(--text-primary); }
+.sit-att__vsay span { font-size: var(--fs-xs); color: var(--text-secondary); }
+
+/* The row: one line that opens. The face, what was tried, a chevron; what happened and what to do come under it. */
+.sit-att__head {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.sit-att__head:hover { background: var(--surface-sunken); }
+.sit-att__head:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
+.sit-att__face { display: inline-grid; place-items: center; flex: none; }
+.sit-att__name { flex: 1 1 auto; min-width: 0; font-size: var(--fs-sm); font-weight: var(--fw-semibold); line-height: 18px; color: var(--text-primary); }
+.sit-att__chev { flex: none; color: var(--text-tertiary); }
+.sit-att__body { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; padding: 0 var(--space-4) var(--space-4) calc(var(--space-4) + 24px + var(--space-4)); }
+.sit-att__body[hidden] { display: none; }
+.sit-att__story { margin: 0; font-size: var(--fs-xs); line-height: 17px; color: var(--text-secondary); }
+.sit-att__result { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: 0; font-size: var(--fs-xs); line-height: 20px; color: var(--text-tertiary); }
+/* A word and its badge, kept on one line: the narrow panel breaks between the two pairs, never inside one. */
+.sit-att__pair { display: inline-flex; align-items: center; gap: var(--space-2); white-space: nowrap; }
+.sit-att__acts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+
+.sit-att__note { margin: 0; font-size: var(--fs-xs); line-height: 17px; color: var(--text-secondary); }
+.sit-att__byline { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); margin: 0; font-size: var(--fs-xs); line-height: 18px; }
+.sit-att__by {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  margin-left: calc(var(--space-1) * -1);
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+  font-weight: var(--fw-medium);
+  text-align: left;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.sit-att__by > svg { flex: none; color: var(--text-tertiary); }
+.sit-att__by:hover { background: var(--int-ghost-bg-hover); color: var(--text-link); }
+.sit-att__by:hover > svg { color: var(--text-link); }
+.sit-att__by:focus-visible { outline: var(--bw-thick) solid var(--accent); outline-offset: 1px; }
+.sit-att__by.is-text { color: var(--text-tertiary); cursor: default; }
+.sit-att__accepted { padding: 0 var(--space-2); border-radius: var(--radius-sm); background: var(--surface-sunken); color: var(--text-secondary); }
+.sit-att__fix { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); min-width: 0; padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); background: var(--surface-sunken); }
+.sit-att__fixline,
+.sit-att__moved,
+.sit-att__tenant { margin: 0; font-size: var(--fs-xs); line-height: 17px; }
+.sit-att__fixline { color: var(--text-primary); }
+.sit-att__fixword { margin-right: var(--space-2); font-weight: var(--fw-semibold); }
+.sit-att__moved { font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+.sit-att__tenant { color: var(--text-tertiary); }
+.sit-att__fixact { display: inline-flex; margin-top: var(--space-1); }
+.sit-att__accept { display: inline-flex; margin-top: var(--space-1); }
+
+/* Held: last, folded behind its word and count (a native disclosure, its
+   chevron the page's own mark, not the browser's). */
+.sit-att__held { min-width: 0; }
+.sit-att__heldsum {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: fit-content;
+  margin-left: calc(var(--space-2) * -1);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  line-height: 18px;
+  color: var(--text-secondary);
+  list-style: none;
+  cursor: pointer;
+}
+.sit-att__heldsum::-webkit-details-marker { display: none; }
+.sit-att__heldsum > svg { flex: none; color: var(--text-tertiary); }
+.sit-att__heldsum:hover { background: var(--int-ghost-bg-hover); color: var(--text-primary); }
+.sit-att__heldsum:focus-visible { outline: var(--bw-thick) solid var(--accent); outline-offset: 1px; }
+.sit-att__heldn { font-weight: var(--fw-medium); font-variant-numeric: tabular-nums; color: var(--text-tertiary); }
+.sit-att__held > .sit-att__list { margin-top: var(--space-3); }
+
+/* The Canvas switch on the bar (CanvasSwitch.tsx), while the run's layouts
+   are compared: more segments than the bar is wide, so the row scrolls
+   sideways inside the bar — a wheel or a drag — and never pushes the crumb
+   off the page. */
+.sit .bbtop__crumbs { flex: none; }
+.sit .bbtop__acts { flex: 1 1 auto; min-width: 0; justify-content: flex-end; }
+.sit__canvassw { min-width: 0; max-width: 100%; }
+.sit__canvassw .bseg {
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.sit__canvassw .bseg::-webkit-scrollbar { display: none; }
+.sit__canvassw .bseg > button { flex: none; }
+/* Classic or v3 (CheckVersionSwitch.tsx, 20 Oct 2026): the page head's preview switch, its two words on one line. */
+.sit-version .bseg { flex-wrap: nowrap; }
+
+/* --- The why panel, in the Policy details' grammar (owner, 14 Oct 2026: "all AI generic, no hierarchy, can't see the
+   button, the boxed card looks bad"). One heading, then sections told apart by a hairline and a heading — never a box in
+   a box — and every action a visible button. Colour only where it means something: the mark and the count. */
+.sit-whypanel .tj-why__top { gap: var(--space-4); padding: var(--space-5) var(--space-6); }
+.sit-whypanel .tj-why__mark { width: var(--space-9); height: var(--space-9); border-radius: var(--radius-full); background: var(--surface-sunken); }
+.sit-whypanel .tj-why__mark.is-conflict,
+.sit-whypanel .tj-why__mark.is-depends { background: var(--fb-notice-bg); color: var(--fb-notice-fg); }
+.sit-whypanel .tj-why__title { font-size: var(--fs-md); line-height: 24px; }
+.sit-whypanel .tj-why__top .bb__act { width: var(--space-9); height: var(--space-9); border: var(--bw-thin) solid var(--border-default); border-radius: var(--radius-md); background: var(--surface-raised); color: var(--text-secondary); }
+.sit-whypanel .tj-why__top .bb__act:hover { background: var(--surface-sunken); color: var(--text-primary); }
+.sit-whypanel .tj-why__body { gap: 0; padding: 0 var(--space-6) var(--space-6); }
+.sit-whypanel .tj-why__body > * { padding: var(--space-5) 0; border-top: var(--bw-thin) solid var(--border-subtle); }
+.sit-whypanel .tj-why__body > :first-child { border-top: 0; }
+.sit-whypanel .tj-why__label { margin: 0 0 var(--space-3); font-size: var(--fs-md); font-weight: var(--fw-semibold); line-height: 22px; color: var(--text-primary); }
+/* A finding is a row of the page, not a card. */
+.sit-whypanel .tj-why__list { gap: 0; }
+.sit-whypanel .tj-why__list > .tj-why__item + .tj-why__item { margin-top: var(--space-5); padding-top: var(--space-5); border-top: var(--bw-thin) solid var(--border-subtle); }
+.sit-whypanel .tj-why__item.tj-find { padding: 0; border: 0; border-radius: 0; background: none; }
+.sit-whypanel .tj-find__title { font-size: var(--fs-md); }
+/* Break-in attempts: a section with a heading, its count and a button. */
+.sit-whypanel .tj-find.tj-why__att { margin-top: 0; padding: var(--space-5) 0; border: 0; border-top: var(--bw-thin) solid var(--border-subtle); }
+.sit-whypanel .tj-why__att.is-conflict .tj-find__line { color: var(--fb-notice-fg); font-weight: var(--fw-medium); }
+/* Every action reads as a button. */
+.sit-whypanel .tj-conflict__open.tj-why__act { height: var(--space-9); padding: 0 var(--space-4); border: var(--bw-thin) solid var(--border-default); border-radius: var(--radius-md); background: var(--surface-raised); font-size: var(--fs-sm); color: var(--text-primary); }
+.sit-whypanel .tj-conflict__open.tj-why__act:hover { background: var(--surface-sunken); }
+.sit-whypanel .tj-find__acts > .tj-why__act { margin-left: 0; }
+/* What changed: who and when quiet above, what changed as the line. */
+.sit-whypanel .tj-why__changes { gap: var(--space-4); }
+.sit-whypanel .tj-why__changehead { order: -1; font-size: var(--fs-xs); color: var(--text-tertiary); }
+.sit-whypanel .tj-why__changelines { font-size: var(--fs-sm); color: var(--text-primary); }

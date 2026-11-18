@@ -1,0 +1,1160 @@
+/* ---------------------------------------------------------------------------
+   The policy builder. Prefix `bf`.
+
+   Two panes over one policy: the sequence on the left as a dot-grid stage where
+   the rules are drawn rather than listed, and the rule you are editing on the
+   right with everything the sequence is not using.
+
+   `.bpage`'s page chrome is opted out of here, and it takes `.bpage.bf` to do
+   it: console-theme.css restates `.bpage` at the same specificity and is loaded
+   last, so `.bf` alone loses on source order. Both parts of it are wrong for
+   this screen — the 1560px cap is right for a table and left 296px of a 1920
+   window empty, and the 32/32/56 inset frames a workspace as a document.
+
+   Every colour is a token.
+   --------------------------------------------------------------------------- */
+
+.bpage.bf {
+  display: flex; flex-direction: column;
+  height: 100%; min-height: 0; padding: 0; overflow: hidden;
+  max-width: none;
+  background: var(--surface-page);
+}
+
+/* --- Top bar ----------------------------------------------------------------- */
+
+.bf__bar {
+  flex: none; display: flex; align-items: center; gap: var(--space-4);
+  height: 54px; padding: 0 var(--space-5) 0 var(--space-4);
+  background: var(--surface-raised); border-bottom: 1px solid var(--border-subtle);
+}
+.bf__pips { display: flex; align-items: center; gap: var(--space-3); }
+.bf__baracts { margin-left: auto; display: flex; align-items: center; gap: var(--space-3); }
+.bf__sep { width: 1px; height: 20px; margin: 0 var(--space-2); background: var(--border-subtle); }
+
+/* --- The rules panel's scroller ----------------------------------------------- */
+
+.bf__flowscroll { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scroll-padding-block: var(--space-4) 76px; }
+.bf__flowscroll:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+
+/* The terminal is sticky, so "nothing else matched → is refused" is visible at
+   one rule and at twenty. It is the security default; it must not be something
+   you scroll to find. */
+.bf__node.is-default {
+  position: sticky; bottom: 0; z-index: var(--z-sticky);
+  background: var(--surface-sunken);
+  border-top: 1px solid var(--border-subtle);
+  margin: 0 calc(var(--space-5) * -1) calc(var(--space-5) * -1);
+  padding: var(--space-4) var(--space-5);
+  border-radius: 0;
+}
+
+/* Three more shadowed rules stood here: an 18px `.bf__stepn`, a
+   `max-width: 900px` on `.bf__when`, and a first copy of `.bf__rulecheck`. All
+   three were overridden further down at equal specificity, so all three were
+   read by everyone and obeyed by nothing. The 900px in particular was the
+   measure somebody would have reached for to make the condition rows narrower,
+   and it has not applied for a long time. */
+
+/* --- Width tiers ----------------------------------------------------------------
+
+   The rules panel narrows before it collapses: 320px is right beside a wide
+   playground and is width the playground wants back before that. */
+
+@media (max-width: 1439px) { .bf__work { --rail-w: 288px; } }
+@media (prefers-reduced-motion: reduce) { .bf__flowdock { transition: none; } }
+
+/* --- The flow (v1's left side) -------------------------------------------------- */
+
+.bf__flow {
+  height: 100%;
+  display: flex; flex-direction: column; min-height: 0;
+  background:
+    radial-gradient(circle at 1px 1px, var(--border-default) 1px, transparent 0) 0 0 / 16px 16px,
+    var(--surface-sunken);
+  border-right: 1px solid var(--border-subtle);
+}
+.bf__flowhead {
+  flex: none; display: flex; align-items: flex-start; gap: var(--space-3);
+  padding: var(--space-5) var(--space-4) var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.bf__flowtitle { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+/* The semantics, under the title that owns them. It was a caption across the
+   top of the playground, which put a fact about the sequence on the one surface
+   that is not the sequence. */
+.bf__flowtitle em {
+  font-style: normal; font-size: var(--fs-xs); color: var(--text-muted);
+}
+.bf__flowscroll { flex: 1; min-height: 0; overflow-y: auto; }
+.bf__flowstage { display: flex; flex-direction: column; align-items: stretch; padding: 0 var(--space-5) var(--space-7); }
+
+.bf__flowstart {
+  display: flex; align-items: center; gap: var(--space-4);
+  margin: 0; padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-pill);
+  background: var(--surface-raised); border: 1px solid var(--border-subtle);
+  font-size: var(--fs-xs); color: var(--text-tertiary);
+}
+.bf__flowstart > svg { flex: none; color: var(--text-muted); }
+
+/* The connector, and v1's insert-here diamond on it.
+
+   A line, not a chevron — the relationship is "and then this one". The `+` is a
+   diamond because that is the flowchart glyph for "a decision happens here",
+   which is exactly what inserting a rule at this point creates, and it surfaces
+   on approach rather than sitting there sixteen times over. The icon
+   counter-rotates so the + stays upright inside the rotated box. Ported from
+   v1's `.bspine__add`. */
+.bf__link {
+  position: relative; flex: none;
+  display: flex; flex-direction: column; align-items: center;
+  height: 44px;
+}
+.bf__linkline {
+  position: absolute; inset: 0 auto 0 50%;
+  width: 0; border-left: 2px solid var(--border-default);
+  transform: translateX(-1px);
+}
+.bf__linklabel {
+  position: relative; z-index: 1;
+  margin-top: 12px; padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-raised); border: 1px solid var(--border-subtle);
+  font-size: var(--fs-xs); font-weight: var(--fw-medium);
+  color: var(--text-muted);
+  transition: opacity var(--dur-fast) var(--ease-standard);
+}
+.bf__linkadd {
+  position: absolute; top: 50%; left: 50%; z-index: 2;
+  transform: translate(-50%, -50%) rotate(45deg) scale(0.6);
+  display: grid; place-items: center; width: 20px; height: 20px;
+  border-radius: 5px;
+  background: var(--accent); color: var(--text-on-brand);
+  box-shadow: var(--el-mid);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-standard), transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.bf__linkadd svg { transform: rotate(-45deg); }
+.bf__link:hover .bf__linkadd,
+.bf__linkadd:focus-visible { opacity: 1; transform: translate(-50%, -50%) rotate(45deg) scale(1); }
+/* Must out-specify `.bf__link:hover .bf__linkadd` (0,3,0), which also matches
+   whenever the button itself is hovered — at (0,2,0) the grow never fires. */
+.bf__link:hover .bf__linkadd:hover,
+.bf__link.is-always .bf__linkadd:hover { transform: translate(-50%, -50%) rotate(45deg) scale(1.18); }
+.bf__linkadd:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.bf__link:hover .bf__linklabel { opacity: 0; }
+
+/* The tail diamond is always there — it is also the "add a rule" affordance —
+   and it breathes, quietly, so the rail has one living point of invitation. */
+.bf__link.is-always { height: 56px; }
+.bf__link.is-always .bf__linklabel { display: none; }
+.bf__link.is-always .bf__linkadd {
+  opacity: 1;
+  transform: translate(-50%, -50%) rotate(45deg) scale(1);
+  animation: bf-diamond-breathe 2.6s var(--ease-standard) infinite;
+}
+@keyframes bf-diamond-breathe {
+  0%, 100% { box-shadow: var(--el-mid), 0 0 0 0 rgba(235, 84, 36, 0.35); }
+  55% { box-shadow: var(--el-mid), 0 0 0 7px rgba(235, 84, 36, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bf__link.is-always .bf__linkadd { animation: none; }
+  .bf__linkadd { transition: opacity var(--dur-fast) var(--ease-standard); }
+}
+
+.bf__node {
+  position: relative; display: flex; align-items: center; gap: var(--space-4);
+  padding: var(--space-4);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-lg);
+  box-shadow: var(--el-low);
+  transition: opacity var(--dur-normal) var(--ease-standard), border-color var(--dur-fast) var(--ease-standard);
+}
+.bf__node.is-on { border-color: var(--accent); box-shadow: var(--el-mid); }
+.bf__node.is-off { opacity: 0.55; }
+.bf__node.is-shadowed { opacity: 0.32; }
+.bf__node.is-lifted { opacity: 0.4; }
+.bf__node.is-over { box-shadow: inset 0 2px 0 var(--accent); }
+.bf__node.is-under { box-shadow: inset 0 -2px 0 var(--accent); }
+.bf__node.is-default {
+  width: 100%;
+  background: var(--surface-sunken); box-shadow: none;
+  font-family: inherit; text-align: left; cursor: pointer;
+}
+.bf__node.is-default:hover { border-color: var(--border-strong); }
+/* Selected exactly like a rule, because it is one. `.is-on` above already says
+   this; it is restated only because `.is-default` follows it in source order
+   and would otherwise win the border back. */
+.bf__node.is-default.is-on { border-color: var(--accent); box-shadow: var(--el-mid); }
+
+.bf__nodeidx {
+  flex: none; display: inline-flex; align-items: center; gap: 1px;
+  padding: 2px 5px 2px 2px; border-radius: var(--radius-sm);
+  background: var(--surface-inset);
+  font-size: var(--fs-xs); font-weight: var(--fw-semibold); color: var(--text-tertiary);
+  cursor: grab;
+}
+.bf__nodeidx:active { cursor: grabbing; }
+.bf__nodeidx svg { color: var(--text-disabled); }
+.bf__nodeidx.is-lock { padding: 3px; cursor: default; }
+
+.bf__nodetile {
+  flex: none; display: grid; place-items: center; width: 28px; height: 28px;
+  border-radius: var(--radius-md); border: 1px solid transparent;
+}
+.bf__nodetile.is-allow { background: var(--fb-positive-bg); border-color: var(--fb-positive-border); color: var(--fb-positive-fg); }
+.bf__nodetile.is-mfa { background: var(--fb-positive-strong-bg); border-color: var(--fb-positive-strong-border); color: var(--fb-positive-strong-fg); }
+.bf__nodetile.is-deny { background: var(--fb-negative-bg); border-color: var(--fb-negative-border); color: var(--fb-negative-fg); }
+
+.bf__nodeselect {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px;
+  text-align: left; cursor: pointer;
+}
+.bf__nodeselect.as-static { cursor: default; }
+.bf__nodeselect strong {
+  font-size: var(--fs-md); font-weight: var(--fw-medium); color: var(--text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bf__nodeselect em { font-style: normal; font-size: var(--fs-xs); color: var(--text-muted); }
+.bf__nodeselect:focus-visible { outline: none; box-shadow: 0 0 0 4px var(--focus-halo); border-radius: var(--radius-sm); }
+
+/* A rule's state on the rail: an icon for a problem, a pill for Off, and
+   nothing when it is ready. Never a dot. */
+.bf__nodestate { flex: none; display: grid; place-items: center; }
+.bf__nodestate.is-warn { color: var(--fb-notice-fg); }
+.bf__nodestate.is-setup { color: var(--fb-negative-fg); }
+.bf__node > .bx-badge { flex: none; }
+
+/* Drag alone is not an option in an admin console, and rule order IS the
+   policy — so the same move is reachable from the keyboard. */
+/* `opacity`, never `display: none`.
+
+   These two buttons are the keyboard's only way to move a rule — the comment
+   on them in flow-rail.tsx says exactly that, and it was false: `display: none`
+   makes a button unfocusable, so `:focus-within` could only ever be triggered
+   by a mouse that had already revealed them. Tab reached nothing. The pattern
+   here is the one `.bsf__drop` already uses in setting-field.css: quiet until
+   the row is under the pointer, always in the tab order, and visible the
+   instant either button takes focus. */
+.bf__nodemove { position: absolute; right: var(--space-3); top: var(--space-3); display: flex; gap: 2px; opacity: 0; transition: opacity var(--dur-fast) var(--ease-standard); }
+.bf__node:hover .bf__nodemove,
+.bf__node:focus-within .bf__nodemove,
+.bf__nodemove button:focus-visible { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .bf__nodemove { transition: none; } }
+.bf__nodemove button {
+  width: 18px; height: 18px; border-radius: var(--radius-sm);
+  background: var(--surface-raised); border: 1px solid var(--border-default);
+  font-size: var(--fs-xs); line-height: 1; color: var(--text-secondary);
+}
+.bf__nodemove button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.bf__nodemove button:disabled { opacity: var(--disabled-opacity); }
+
+/* --- The stage -------------------------------------------------------------------- */
+
+/* `scroll-padding-bottom` because the tester and the save bar are docked over
+   the bottom of this scroller: without it, `scrollIntoView` on the last rule
+   parks it underneath them and the thing you just opened is the thing you
+   cannot see. */
+.bf__stage {
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: var(--space-6) var(--space-7) var(--space-8);
+  scroll-padding-block: var(--space-5) 120px;
+  scroll-behavior: smooth;
+}
+@media (prefers-reduced-motion: reduce) { .bf__stage { scroll-behavior: auto; } }
+.bf__reviewstage { scroll-padding-block: var(--space-5) 80px; scroll-behavior: smooth; }
+.bf__rulehead[hidden] { display: none; }
+.bf__rulehead {
+  display: flex; align-items: center; gap: var(--space-4);
+  max-width: 1080px;
+  padding-bottom: var(--space-4);
+}
+
+/* The rationale, in v4's head. Borderless until focused: an empty one has to
+   read as an invitation rather than as an unfilled required field, and a filled
+   one has to read as a caption under the name rather than as a second input
+   competing with it. The border-bottom that used to close the head moved down
+   here, so the two fields read as one block. */
+/* Closed, the rationale is a line. Open, it is the textarea it always was —
+   but it opened by default, which put 68px of empty invitation at the top of
+   every rule, above the work. */
+.bf__ruleno {
+  flex: none; display: grid; place-items: center; width: 26px; height: 26px;
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm); font-weight: var(--fw-semibold);
+}
+.bf__ruleno.is-allow { background: var(--fb-positive-bg); color: var(--fb-positive-fg); }
+.bf__ruleno.is-mfa { background: var(--fb-positive-strong-bg); color: var(--fb-positive-strong-fg); }
+.bf__ruleno.is-deny { background: var(--fb-negative-bg); color: var(--fb-negative-fg); }
+.bf .bf__ruleName {
+  flex: 1; min-width: 0; height: 34px; padding: 0 var(--space-4);
+  background: none; border: 1px solid transparent; border-radius: var(--radius-md);
+  font-size: var(--fs-xl); font-weight: var(--fw-semibold); color: var(--text-primary);
+}
+.bf .bf__ruleName::placeholder { color: var(--text-muted); font-weight: var(--fw-regular); }
+/* An empty name shows its edge, so it reads as a field waiting for a value. */
+.bf .bf__ruleName:placeholder-shown { border-color: var(--border-default); }
+.bf .bf__ruleName:hover { border-color: var(--border-default); }
+.bf .bf__ruleName:focus-visible { outline: none; border-color: var(--ctl-border-focus); box-shadow: 0 0 0 4px var(--focus-halo); }
+.bf__ruleon { display: inline-flex; align-items: center; gap: var(--space-3); font-size: var(--fs-xs); color: var(--text-tertiary); }
+
+/* The blank screen of a policy with no rules is the kit EmptyState now, like
+   every other empty state; `.bf__blank` and its two rows of links are gone. */
+
+/* The list of what Discard throws away moved to the kit's `Confirm` rows on
+   22 Oct 2026 (`shape="rows"`), so `.bf__discardlist` has no markup left. */
+
+/* --- Sections ------------------------------------------------------------------ */
+
+.bf__sec { padding: var(--space-8) 0; border-bottom: 1px solid var(--border-subtle); }
+.bf__sec > header { display: flex; align-items: flex-start; gap: var(--space-5); margin-bottom: var(--space-6); }
+.bf__sec > header > div { flex: 1; min-width: 0; }
+.bf__sec h2 { margin: 0; display: flex; align-items: center; gap: var(--space-3); font-size: var(--fs-lg); font-weight: var(--fw-semibold); color: var(--text-primary); }
+.bf__sec > header p { margin: var(--space-2) 0 0; font-size: var(--fs-md); color: var(--text-tertiary); max-width: 70ch; }
+
+/* Hosted by the trail, which names the step it is on. A second copy of the
+   title inside the panel is furniture. */
+.bf__sec.is-bare { padding: 0; border-bottom: none; }
+.bf__secbar { display: flex; align-items: center; gap: var(--space-4); margin-bottom: var(--space-5); }
+.bf__secbar h2 { flex: 1; min-width: 0; margin: 0; display: flex; align-items: center; gap: var(--space-3); font-size: var(--fs-lg); font-weight: var(--fw-semibold); color: var(--text-primary); }
+.bf__secn {
+  flex: none; display: grid; place-items: center; width: 22px; height: 22px; margin-top: 1px;
+  border-radius: var(--radius-full); background: var(--surface-inset);
+  font-size: var(--fs-xs); font-weight: var(--fw-semibold); color: var(--text-tertiary);
+}
+/* --- WHEN: the composer -------------------------------------------------------------
+
+   Two levels, and the levels are drawn rather than declared. A card is a box
+   holding conditions that are all required; a second box is an alternative. The
+   containment reads by radius step — the card is `--radius-lg`, the rows inside
+   it `--radius-md` — rather than by a coloured left rail, which the design
+   system bans on cards and rows.
+
+   Nothing here is an AND/OR control, and that is the point. */
+
+.bf__when { max-width: 100%; }
+
+/* The rule, as a sentence, always visible. */
+.bf__whenread {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-3);
+  margin: 0 0 var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-md); line-height: 1.6; color: var(--text-body);
+}
+.bf__readany { font-style: normal; color: var(--text-muted); }
+.bf__readexpr { display: inline; }
+.bf__readcard i { font-style: normal; color: var(--text-muted); }
+.bf__readcard u { text-decoration: none; font-weight: var(--fw-medium); color: var(--text-primary); margin-right: 2px; }
+/* Lowercase in prose, uppercase on the rail — the sentence is read, the rail is
+   scanned, and they are doing different jobs. */
+.bf__readand { font-weight: var(--fw-regular); color: var(--text-muted); margin: 0 4px; }
+.bf__reador {
+  font-weight: var(--fw-semibold); color: var(--fb-accent-fg);
+  margin: 0 var(--space-3);
+}
+.bf__whenread [data-node-id] { border-bottom: 1px solid transparent; }
+.bf__whenread [data-node-id]:hover { border-bottom-color: var(--border-strong); }
+
+/* --- Empty ------------------------------------------------------------------------- */
+
+.bf__whenempty {
+  padding: var(--space-6);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-md);
+}
+.bf__whenempty p { margin: 0 0 var(--space-4); font-size: var(--fs-md); color: var(--text-tertiary); }
+
+/* --- Cards --------------------------------------------------------------------------- */
+
+.bf__cards { margin: 0; padding: 0; list-style: none; }
+
+.bf__card {
+  container: cond / inline-size;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4) var(--space-4) var(--space-3);
+  transition: border-color var(--dur-fast) var(--ease-standard), box-shadow var(--dur-fast) var(--ease-standard);
+}
+/* The card the docked tester says is carrying the match. Never colour alone —
+   the header carries the word "Matches" beside it. */
+
+/* 30px, not 37. The head's height was set by a full-size icon button in a row
+   whose other contents are 20 and 24px tall. */
+.bf__cardhead {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: 0 0 var(--space-3) var(--space-1);
+  min-height: 26px;
+}
+.bf__cardhead .bx-btn--sm { height: 24px; min-width: 24px; }
+/* Lettered, never numbered: cards have no evaluation order, and rules do. */
+.bf__cardn {
+  flex: none; display: grid; place-items: center; width: 20px; height: 20px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-inset); color: var(--text-tertiary);
+  font-size: var(--fs-xs); font-weight: var(--fw-semibold);
+}
+.bf .bf__cardname {
+  flex: 1; min-width: 0; height: 24px; padding: 0 var(--space-3);
+  background: none; border: 1px solid transparent; border-radius: var(--radius-sm);
+  font-family: inherit; font-size: var(--fs-md); font-weight: var(--fw-medium); color: var(--text-primary);
+}
+.bf .bf__cardname:hover { border-color: var(--border-subtle); }
+.bf .bf__cardname:focus-visible { outline: none; border-color: var(--ctl-border-focus); box-shadow: 0 0 0 4px var(--focus-halo); }
+.bf__cardcount { flex: none; font-style: normal; font-size: var(--fs-xs); color: var(--text-muted); }
+.bf__cardconds { margin: 0; list-style: none; }
+
+/* The AND, drawn once instead of spelled n-1 times.
+
+   Every pair used to carry a 26px `and` row, which is the card header's own
+   sentence repeated at every gap — 130px of it in a card of six. The spine
+   states the same relationship in the space between the rows, which they need
+   anyway. */
+.bf__cardconds {
+  position: relative;
+  display: flex; flex-direction: column; gap: var(--space-3);
+  padding-left: var(--space-5);
+}
+.bf__cardconds::before {
+  content: ''; position: absolute; left: 7px; top: 14px; bottom: 14px;
+  width: 1px; background: var(--border-default);
+}
+.bf__cardconds:has(> :only-child)::before { display: none; }
+
+/* The alternative boundary. Bigger than `and` by exactly as much as it is a
+   bigger commitment. */
+.bf__or {
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+  height: 34px;
+  list-style: none;
+}
+.bf__or::before {
+  content: ''; position: absolute; left: 0; right: 0; top: 50%;
+  height: 1px; background: var(--border-subtle);
+}
+.bf__or span {
+  position: relative;
+  padding: 2px var(--space-4);
+  background: var(--fb-accent-bg);
+  border: 1px solid var(--fb-accent-border); border-radius: var(--radius-full);
+  font-size: var(--fs-xs); font-weight: var(--fw-semibold);
+  color: var(--fb-accent-fg);
+}
+
+/* --- One condition -------------------------------------------------------------------
+
+   `overflow: hidden` is gone from this row and is not coming back. It was there
+   to clip a 3px absolutely-positioned category edge to the row's radius, and it
+   was the cause of the only genuinely broken state in the old editor: below
+   ~342px of row width the fixed columns collapsed the value slot to zero and
+   the select rendered at 17.6px, entirely inside a clip box. An inset
+   box-shadow respects `border-radius` with no clipping at all, and `minmax`
+   columns plus a container query remove the cliff. */
+
+.bf__cond {
+  position: relative;
+  display: grid;
+  /* Four cells, not six. The three that held the attribute, the operator and
+     the value have collapsed into one pill — see ConditionPopover — so the
+     tracks sized for them would leave the pill in a 180px column with its value
+     elided to nothing. */
+  grid-template-columns: 22px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: inset 3px 0 0 0 var(--cond-dot, var(--border-default));
+}
+/* The two narrow-row container queries have gone with the columns they folded.
+
+   They existed because a condition was six cells and four of them do not fit
+   across a narrow card: below 560px the value dropped to its own line, below
+   360 the attribute did too. A row is a pill and a menu now, which fits at
+   every width the card can be, so there is nothing left to fold — and a
+   breakpoint that only ever reshuffles tracks that no longer exist is a rule
+   the next person has to read before discovering it does nothing.
+
+   The container declaration itself stays on `.bf__condwrap`; it is what let
+   this respond to the CARD rather than the viewport, and that is still the
+   right axis for anything added here later. */
+
+.bf__cond.is-info { --cond-dot: var(--fb-info-dot); --cond-bg: var(--fb-info-bg); --cond-fg: var(--fb-info-fg); }
+.bf__cond.is-lime { --cond-dot: var(--fb-lime-dot); --cond-bg: var(--fb-lime-bg); --cond-fg: var(--fb-lime-fg); }
+.bf__cond.is-accent { --cond-dot: var(--fb-accent-dot); --cond-bg: var(--fb-accent-bg); --cond-fg: var(--fb-accent-fg); }
+.bf__cond.is-magenta { --cond-dot: var(--fb-magenta-dot); --cond-bg: var(--fb-magenta-bg); --cond-fg: var(--fb-magenta-fg); }
+.bf__cond.is-positive { --cond-dot: var(--fb-positive-dot); --cond-bg: var(--fb-positive-bg); --cond-fg: var(--fb-positive-fg); }
+.bf__cond.is-notice { --cond-dot: var(--fb-notice-dot); --cond-bg: var(--fb-notice-bg); --cond-fg: var(--fb-notice-fg); }
+.bf__cond.is-neutral { --cond-dot: var(--fb-neutral-dot); --cond-bg: var(--fb-neutral-bg); --cond-fg: var(--fb-neutral-fg); }
+
+/* Pass and fail against the docked tester. A thin left edge only — the row is
+   still an editor, and painting it green would make it look like a result. */
+
+.bf__condicon {
+  flex: none; display: grid; place-items: center; width: 22px; height: 22px;
+  border-radius: var(--radius-sm);
+  background: var(--cond-bg, var(--surface-inset)); color: var(--cond-fg, var(--text-muted));
+}
+
+.bf__val { min-width: 0; display: flex; align-items: center; gap: var(--space-3); }
+.bf__val > input {
+  width: 100%; height: var(--ctl-height-sm); padding: 0 var(--space-4);
+  background: var(--surface-raised); border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  font-family: inherit; font-size: var(--fs-md); color: var(--text-body);
+}
+.bf__val > input:focus-visible { outline: none; border-color: var(--ctl-border-focus); box-shadow: 0 0 0 4px var(--focus-halo); }
+.bf__val--chips { flex-wrap: wrap; gap: var(--space-2); }
+.bf__val--range input {
+  height: var(--ctl-height-sm); padding: 0 var(--space-3);
+  background: var(--surface-raised); border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  font-family: inherit; font-size: var(--fs-md); color: var(--text-body);
+}
+.bf__val--range em { font-style: normal; font-size: var(--fs-xs); color: var(--text-muted); }
+.bf__val--range input { width: 82px; }
+.bf__val--range em.bf__valerr { color: var(--fb-negative-fg); }
+
+/* Multi-value as toggles. `values` has always been an array on the model; a
+   single select was the control lying about it. */
+.bf__vchip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px var(--space-3); border-radius: var(--radius-full);
+  border: 1px solid var(--border-default); background: var(--surface-raised);
+  font-size: var(--fs-sm); color: var(--text-secondary); cursor: pointer;
+}
+.bf__vchip:hover { border-color: var(--border-strong); }
+.bf__vchip.is-on { background: var(--accent); border-color: var(--accent); color: var(--text-on-brand); }
+
+.bf__condstate { display: flex; align-items: center; gap: var(--space-2); }
+/* Neutral, not negative: a row somebody is halfway through writing is a
+   lifecycle state, and lifecycle states are not alarms in this kit. It
+   escalates only when the linter promotes it to a publish blocker. */
+.bf__condbadge {
+  padding: 2px var(--space-3); border-radius: var(--radius-full);
+  background: var(--surface-inset); color: var(--text-tertiary);
+  font-size: var(--fs-xs); white-space: nowrap;
+}
+.bf__conddupe { display: grid; place-items: center; width: 20px; height: 20px; color: var(--text-muted); }
+
+/* --- The terminal rule's card --------------------------------------------------
+
+   The same card as any other rule, minus a name field, an enable toggle, a ⋯
+   and a WHEN. What is left has to say WHY those are missing without a paragraph
+   of apology, so the index is a house glyph rather than a number and one quiet
+   line states the two rules the row lives under. */
+
+.bf__rule.is-terminal { background: var(--surface-sunken); }
+.bf__ruleno.is-lock {
+  background: var(--surface-inset); color: var(--text-tertiary);
+  border: 1px solid var(--border-subtle);
+}
+.bf__rulefixed {
+  flex: 0 1 auto; min-width: 0;
+  font-size: var(--fs-xl); font-weight: var(--fw-semibold); color: var(--text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* The note on why it is fixed sits in a tip beside the name; the chip keeps the far edge. */
+.bf__rule.is-terminal .bf__rulehead .bx-decision { margin-left: auto; }
+
+/* Stated, not drawn. An empty condition block here would invite somebody to
+   write a condition, and the one they wrote would be silently ignored — the
+   terminal's condition is a POSITION in the list, not a predicate. */
+.bf__terminalwhen {
+  display: flex; align-items: baseline; gap: var(--space-4);
+  max-width: 900px; margin: 0 0 var(--space-6);
+  padding: var(--space-4) var(--space-5);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-lg);
+  font-size: var(--fs-md); color: var(--text-secondary);
+}
+.bf__terminalwhen .u-label { flex: none; }
+
+/* --- Adding ---------------------------------------------------------------------------- */
+
+.bf__addwrap { position: relative; margin-top: var(--space-3); padding-left: var(--space-5); }
+.bf__whenempty .bf__addwrap { padding-left: 0; }
+.bf__addwrap.is-or { margin-top: var(--space-4); }
+
+.bf__add {
+  display: inline-flex; align-items: center; gap: var(--space-3);
+  height: var(--ctl-height-sm); padding: 0 var(--space-4);
+  border: 1px solid var(--border-default); border-radius: var(--radius-md);
+  background: var(--surface-raised); font-family: inherit;
+  font-size: var(--fs-sm); color: var(--text-tertiary); cursor: pointer;
+}
+.bf__add:hover { border-color: var(--accent); color: var(--accent); }
+.bf__add.is-solid {
+  border-style: solid; border-color: var(--accent);
+  background: var(--accent); color: var(--text-on-brand);
+  font-size: var(--fs-md);
+}
+/* The `or` affordance is visibly a bigger commitment than the `and` one. That
+   asymmetry is what teaches the grammar without a word of instruction. */
+.bf__add.is-or {
+  width: 100%; height: 40px; justify-content: center;
+  border-radius: var(--radius-lg);
+  border-color: var(--fb-accent-border); color: var(--fb-accent-fg);
+  font-size: var(--fs-md);
+}
+.bf__add.is-or:hover { background: var(--fb-accent-bg); }
+
+/* A row is a name and what it checks. The hint used to be dropped for space;
+   there is space now, and "Auth State" alone does not tell anybody it covers
+   first logins and MFA resets. */
+
+/* --- The duplication hint ---------------------------------------------------------------
+   The cost of a normal form, named rather than engineered around. A third
+   container above the cards would break the invariant the whole linter rests
+   on, so this says so and suggests two rules instead. */
+.bf__dupehint {
+  display: flex; align-items: flex-start; gap: var(--space-3);
+  margin: var(--space-4) 0 0;
+  padding: var(--space-4) var(--space-5);
+  background: var(--fb-info-bg); border-radius: var(--radius-md);
+  font-size: var(--fs-sm); color: var(--fb-info-fg);
+}
+.bf__dupehint svg { flex: none; margin-top: 2px; }
+
+/* The 122 lines that stood here are gone, not moved.
+
+   They were a byte-identical copy of the rule-card block further down this file
+   — `.bf__rule`, `.bf__rulehead`, `.bf__rulebody`, `.bf__rulegrid` with its
+   WHEN/THEN gutter, `.bf__rulechecks`, `.bf__ruleprose` — and being first, this
+   copy lost every one of them on source order. Editing it changed nothing,
+   which is the worst thing a stylesheet can do to somebody reading it. */
+/* --- The review stage ------------------------------------------------------------------ */
+
+.bf__reviewstage { flex: 1; min-height: 0; overflow-y: auto; padding: var(--space-6) var(--space-7) var(--space-8); }
+.bf__backrules {
+  display: inline-flex; align-items: center; gap: var(--space-3);
+  margin-bottom: var(--space-5);
+  background: none; border: none; font-family: inherit;
+  font-size: var(--fs-sm); color: var(--text-secondary); cursor: pointer;
+}
+.bf__backrules:hover { color: var(--accent); }
+
+/* --- THEN ------------------------------------------------------------------------ */
+
+/* `auto-fit` rather than a hard three, so the tiles drop to two-up and then
+   one-up instead of shrinking until "One factor, nothing further asked" wraps
+   to four lines inside a 140px box. */
+/* --- The two outcomes ----------------------------------------------------------
+
+   Stacked, not side by side, because each one now carries its own consequence
+   underneath it and two columns of unequal height read as a bug. The spine down
+   the left is the decision's own tint — the same three the flow rail and the
+   policy list use — so Allow-with-a-second-factor is amber here exactly where
+   it is amber there. */
+
+.bf__outs { display: flex; flex-direction: column; gap: var(--space-4); }
+
+.bf__outrow {
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  overflow: hidden;
+  transition: border-color var(--dur-fast) var(--ease-standard);
+}
+.bf__outrow:not(.is-on):hover { border-color: var(--border-strong); }
+.bf__outrow.is-on { border-color: var(--out-dot); box-shadow: inset 3px 0 0 0 var(--out-dot); }
+.bf__outrow.is-allow { --out-dot: var(--fb-positive-dot); --out-bg: var(--fb-positive-bg); --out-fg: var(--fb-positive-fg); }
+.bf__outrow.is-mfa { --out-dot: var(--fb-positive-strong-dot); --out-bg: var(--fb-positive-strong-bg); --out-fg: var(--fb-positive-strong-fg); }
+.bf__outrow.is-deny { --out-dot: var(--fb-negative-dot); --out-bg: var(--fb-negative-bg); --out-fg: var(--fb-negative-fg); }
+
+.bf__outpick {
+  display: flex; align-items: center; gap: var(--space-4); width: 100%;
+  padding: var(--space-4) var(--space-5);
+  background: none; border: none; font-family: inherit; text-align: left; cursor: pointer;
+  color: var(--text-muted);
+}
+.bf__outrow.is-on .bf__outpick { background: var(--out-bg); color: var(--out-fg); }
+.bf__outpick > svg { flex: none; }
+
+/* The chosen outcome carries a check in the decision's tint; the other one
+   keeps the slot empty so both labels line up. An icon, not a radio dot. */
+.bf__outmark { flex: none; display: grid; place-items: center; width: 16px; height: 16px; }
+.bf__outrow.is-on .bf__outmark { color: var(--out-fg); }
+
+.bf__outname { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.bf__outname strong { font-size: var(--fs-base); font-weight: var(--fw-semibold); color: var(--text-primary); }
+.bf__outrow.is-on .bf__outname strong { color: inherit; }
+.bf__outname em { font-style: normal; font-size: var(--fs-sm); color: var(--text-tertiary); }
+.bf__outrow.is-on .bf__outname em { color: inherit; opacity: 0.85; }
+
+/* The option's consequence, inside the option. Indented past the mark so it is
+   plainly owned by the row above it rather than floating between the two. */
+.bf__factors { overflow: hidden; }
+.bf__outbody {
+  margin: 0;
+  padding: var(--space-5) var(--space-5) var(--space-5) calc(var(--space-5) + 16px + var(--space-4));
+  border-top: 1px solid var(--border-subtle);
+}
+.bf__denynote { font-size: var(--fs-md); color: var(--text-secondary); }
+
+.bf__outnote {
+  margin: var(--space-5) 0 0;
+  font-size: var(--fs-sm); color: var(--text-muted);
+}
+/* Sentence left, control right — the row grammar the rest of this console's
+   settings already use. It was three columns: a label naming the form field, a
+   control, and a sentence beside the control explaining it. The field name was
+   the column carrying nothing. */
+.bf__prop {
+  display: flex; align-items: center; gap: var(--space-5);
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--border-subtle);
+}
+.bf__prop:first-child { border-top: none; }
+/* A row that exists only because of the one above it. */
+.bf__prop.is-sub { padding-left: var(--space-7); }
+.bf__proplabel {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; gap: 1px;
+  font-size: var(--fs-md); color: var(--text-body);
+}
+.bf__prop.is-sub .bf__proplabel { font-size: var(--fs-sm); color: var(--text-secondary); }
+/* The only place a second line survives: a switch cannot say what OFF means. */
+.bf__proplabel em { font-style: normal; font-size: var(--fs-xs); color: var(--text-muted); }
+.bf__propctl { flex: none; min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: var(--space-4); flex-wrap: wrap; }
+/* The wide controls still want the room; only the switches sit at the edge. */
+.bf__propctl:has(> .bx-picker),
+.bf__propctl:has(> .bf__chain),
+.bf__propctl:has(> .bf__val--chips) { flex: 1; }
+.bf__propctl > .bx-picker,
+.bf__propctl > .bf__chain,
+.bf__propctl > .bf__val--chips { flex: 1; min-width: 0; }
+
+.bf__seg { display: flex; gap: 2px; padding: 2px; background: var(--surface-inset); border-radius: var(--radius-md); }
+.bf__seg button { padding: 4px 12px; border-radius: var(--radius-sm); font-size: var(--fs-sm); color: var(--text-secondary); cursor: pointer; }
+.bf__seg button.is-on { background: var(--surface-raised); color: var(--text-primary); box-shadow: var(--el-low); }
+
+.bf__chain { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.bf__chainstep { display: inline-flex; align-items: center; gap: var(--space-3); }
+.bf__chainstep b {
+  display: grid; place-items: center; width: 20px; height: 20px;
+  border-radius: var(--radius-sm); background: var(--surface-inset);
+  font-size: var(--fs-xs); color: var(--text-tertiary);
+}
+.bf__chainstep button { display: grid; place-items: center; width: 20px; height: 20px; border-radius: var(--radius-sm); color: var(--text-muted); }
+.bf__chainstep button:hover:not(:disabled) { background: var(--fb-negative-bg); color: var(--fb-negative-fg); }
+.bf__chainstep button:disabled { opacity: var(--disabled-opacity); }
+.bf__chainadd {
+  display: inline-flex; align-items: center; gap: 4px;
+  height: var(--ctl-height-sm); padding: 0 var(--space-4);
+  border: 1px solid var(--border-default); border-radius: var(--radius-sm);
+  font-size: var(--fs-sm); color: var(--text-secondary); cursor: pointer;
+}
+.bf__chainsum { flex-basis: 100%; margin: var(--space-2) 0 0; font-size: var(--fs-xs); color: var(--text-tertiary); }
+
+.bf__factorwarn {
+  display: flex; align-items: flex-start; gap: var(--space-3);
+  margin: var(--space-4) 0 0; padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-md);
+  background: var(--fb-negative-bg); color: var(--fb-negative-fg); font-size: var(--fs-md);
+}
+.bf__factorwarn.is-warn { background: var(--fb-notice-bg); color: var(--fb-notice-fg); }
+
+/* --- The two halves, one at a time ----------------------------------------------
+
+   WHEN and THEN were stacked in the only scroller on the screen. Measured, a
+   rule with two alternatives of three conditions each ran 1499px in a 699px
+   stage — so changing what a rule DOES meant scrolling past everything it
+   matches on. They are not read together; each pane's readback says what the
+   other one is. */
+
+.bf .bf__panes { display: flex; width: 100%; margin-bottom: var(--space-5); }
+.bf .bf__panes .bx-tabs__tab { flex: 1; min-width: 0; padding: var(--space-3) var(--space-5); }
+.bf .bf__panes .bx-tabs__label { display: flex; align-items: center; gap: var(--space-3); font-size: var(--fs-md); }
+/* What the half you are NOT looking at currently says — and only that half.
+   Without it the switch is two words and you have to open the other side to
+   find out whether it is set; on the open side it restates the pane below it. */
+.bf .bf__panes .bx-tabs__sub { display: none; }
+.bf .bf__panes .bx-tabs__tab:not(.is-on) .bx-tabs__sub {
+  position: relative; z-index: 1;
+  display: block; margin-top: 1px; padding-left: 20px;
+  font-size: var(--fs-xs); color: var(--text-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Not colour alone: the selected half is also the heavier one, which survives
+   forced-colors where the panel behind it does not. */
+.bf .bf__panes .bx-tabs__tab.is-on .bx-tabs__label { font-weight: var(--fw-semibold); }
+@media (forced-colors: active) {
+  .bf .bf__panes .bx-tabs__bg { forced-color-adjust: none; outline: 1px solid ButtonText; }
+}
+
+.bf__pane { min-width: 0; }
+.bf__pane:focus-visible { outline: none; }
+/* --- Review, the last stop on the trail ------------------------------------------------
+
+   Not a modal. A dialog behind Publish puts the summary of a policy on the far
+   side of the decision to ship it; on the trail it is a place you can stand. */
+
+.bf__review { max-width: 880px; }
+
+.bf__gate { display: flex; align-items: center; gap: var(--space-5); margin-bottom: var(--space-5); }
+.bf__gatetrack { flex: 1; height: 6px; border-radius: var(--radius-full); background: var(--surface-inset); overflow: hidden; }
+.bf__gatetrack span { display: block; height: 100%; border-radius: var(--radius-full); background: var(--fb-notice-dot); }
+.bf__gatetrack span.is-clear { background: var(--fb-positive-dot); }
+.bf__gatecount { margin: 0; flex: none; font-size: var(--fs-md); color: var(--text-tertiary); }
+.bf__gatecount strong { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+
+.bf__gates { margin: 0 0 var(--space-7); padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-3); }
+.bf__gates li {
+  display: flex; align-items: flex-start; gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  background: var(--surface-raised); border: 1px solid var(--border-subtle); border-radius: var(--radius-md);
+}
+.bf__gates li.is-block { border-color: var(--fb-negative-border); background: var(--fb-negative-bg); }
+.bf__gates li.is-open { border-color: var(--fb-notice-border); background: var(--fb-notice-bg); }
+.bf__gatemark { flex: none; display: grid; place-items: center; width: 18px; height: 18px; margin-top: 1px; border-radius: var(--radius-full); }
+.bf__gates li.is-ok .bf__gatemark { background: var(--fb-positive-bg); color: var(--fb-positive-fg); }
+.bf__gates li.is-open .bf__gatemark { color: var(--fb-notice-fg); }
+.bf__gates li.is-block .bf__gatemark { color: var(--fb-negative-fg); }
+.bf__gatetext { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.bf__gatetext strong { font-size: var(--fs-md); font-weight: var(--fw-medium); color: var(--text-primary); }
+.bf__gatetext em { font-style: normal; font-size: var(--fs-xs); color: var(--text-tertiary); }
+.bf__gatego {
+  flex: none; display: inline-flex; align-items: center; gap: 4px; align-self: center;
+  font-size: var(--fs-xs); color: var(--text-link); cursor: pointer;
+}
+.bf__gatego:hover { text-decoration: underline; }
+
+.bf__revblock { margin-bottom: var(--space-7); }
+.bf__revblock > .u-label { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }
+
+.bf__revchanges { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-3); }
+.bf__revchanges li {
+  padding: var(--space-3) var(--space-5);
+  border-left: 2px solid var(--accent); background: var(--surface-sunken);
+  font-size: var(--fs-md); color: var(--text-body);
+}
+
+.bf__revrules { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-3); }
+.bf__revrules li { display: flex; }
+.bf__revrules li.is-off { opacity: 0.55; }
+.bf__revrules li.is-fallback {
+  gap: var(--space-4); padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface-sunken);
+}
+.bf__revrules li > button {
+  flex: 1; display: flex; align-items: flex-start; gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  background: var(--surface-raised); border: 1px solid var(--border-subtle); border-radius: var(--radius-md);
+  text-align: left; cursor: pointer;
+}
+.bf__revrules li > button:hover { border-color: var(--border-strong); }
+.bf__revn {
+  flex: none; display: grid; place-items: center; width: 22px; height: 22px;
+  border-radius: var(--radius-sm); background: var(--surface-inset);
+  font-size: var(--fs-xs); font-weight: var(--fw-semibold); color: var(--text-tertiary);
+}
+.bf__revbody { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.bf__revbody strong { display: flex; align-items: center; gap: var(--space-4); font-size: var(--fs-md); color: var(--text-primary); overflow-wrap: anywhere; }
+.bf__revbody em { font-style: normal; font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.5; }
+.bf__revbody em b { font-weight: var(--fw-semibold); color: var(--text-muted); margin-right: var(--space-3); }
+
+.bf__revfoot {
+  display: flex; align-items: center; gap: var(--space-5);
+  padding-top: var(--space-6); border-top: 1px solid var(--border-subtle);
+}
+.bf__revfootacts { flex: 1; display: flex; gap: var(--space-3); }
+/* --- Policy overview -----------------------------------------------------------
+
+   The read-only reading surface. Prefix `bov`. Deliberately plainer than the
+   builder around it: no controls, no affordances competing with the sequence,
+   and the only colour is the decision chip and whatever the shadow state is
+   saying.
+   --------------------------------------------------------------------------- */
+
+.bov { padding: var(--space-6) var(--space-7) var(--space-7); max-height: 62vh; overflow-y: auto; }
+.bov__list { margin: 0; padding: 0; list-style: none; }
+
+.bov__step {
+  display: flex; align-items: flex-start; gap: var(--space-5);
+  width: 100%; padding: var(--space-5);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-lg);
+  text-align: left;
+  transition: opacity var(--dur-normal) var(--ease-standard), border-color var(--dur-fast) var(--ease-standard);
+}
+button.bov__step { cursor: pointer; }
+button.bov__step:hover { border-color: var(--border-strong); }
+button.bov__step:focus-visible { outline: none; box-shadow: 0 0 0 4px var(--focus-halo); }
+.bov__step.is-off { opacity: 0.55; }
+.bov__step.is-dimmed { opacity: 0.3; }
+.bov__step.is-dead { border-color: var(--fb-negative-border); }
+.bov__step.is-trigger { background: var(--surface-inverse); border-color: transparent; }
+.bov__step.is-trigger h3 { color: var(--text-inverse); }
+.bov__step.is-trigger .bov__eyebrow { color: color-mix(in srgb, var(--text-inverse) 62%, transparent); }
+.bov__step.is-fallback { background: var(--surface-sunken); }
+
+.bov__step > div { flex: 1; min-width: 0; }
+.bov__step h3 { margin: 2px 0 0; font-size: var(--fs-base); font-weight: var(--fw-semibold); color: var(--text-primary); overflow-wrap: anywhere; }
+.bov__step p { margin: 3px 0 0; font-size: var(--fs-md); color: var(--text-secondary); }
+.bov__step p em { font-style: normal; color: var(--text-body); }
+
+.bov__eyebrow { display: flex; align-items: center; gap: var(--space-3); font-size: var(--fs-xs); color: var(--text-muted); }
+
+.bov__n {
+  flex: none; display: grid; place-items: center; width: 28px; height: 28px;
+  border-radius: var(--radius-md); border: 1px solid var(--border-subtle);
+  background: var(--surface-inset);
+  font-size: var(--fs-sm); font-weight: var(--fw-semibold); color: var(--text-secondary);
+}
+.bov__n.is-allow { background: var(--fb-positive-bg); border-color: var(--fb-positive-border); color: var(--fb-positive-fg); }
+.bov__n.is-mfa { background: var(--fb-positive-strong-bg); border-color: var(--fb-positive-strong-border); color: var(--fb-positive-strong-fg); }
+.bov__n.is-deny { background: var(--fb-negative-bg); border-color: var(--fb-negative-border); color: var(--fb-negative-fg); }
+.bov__n.is-trigger { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* The connector, drawn between rows rather than on them. */
+.bov__list li + li,
+.bov > .bov__list,
+.bov__step.is-fallback { position: relative; }
+.bov__list li { position: relative; padding-top: var(--space-5); }
+.bov__list li::before,
+.bov__step.is-fallback::before {
+  content: ''; position: absolute; left: 33px; top: 0; height: var(--space-5); width: 1px;
+  background: var(--border-default);
+}
+.bov__step.is-fallback { margin-top: var(--space-5); }
+
+.bov > .bempty { margin: var(--space-5) 0 0; }
+.bov__foot { flex: 1; font-size: var(--fs-xs); color: var(--text-tertiary); }
+
+/* Two ship buttons, keep off or turn on. Kept on one row: they are one
+   decision with two answers, and stacking them would read as two steps. */
+.bf__revship { display: flex; align-items: center; gap: var(--space-4); }
+
+/* =============================================================================
+   The shell: the rules panel, the playground, and what sits between them.
+
+   `.is-main` is still on the root. There were three shells over one model and
+   the other two are gone, but the scope stays until something else needs the
+   name — unscoping it is a rename of forty selectors that buys nothing.
+   ========================================================================== */
+
+/* --- Work area ----------------------------------------------------------------
+
+   Two panes: the rules on the left, the playground on the right.
+
+   The playground is where the work happens, so it gets everything the rules
+   panel is not using — and the rules panel collapses, because half the time you
+   are inside one rule and the sequence is a thing you glance at rather than a
+   thing you need. Below 900 it stops being a column at all and floats over the
+   playground, where a 320px track would be a third of the screen. */
+
+.bf.is-main .bf__work {
+  --rail-w: 320px;
+  flex: 1; min-height: 0; position: relative;
+  display: grid;
+  grid-template-columns: var(--rail-track, var(--rail-w)) minmax(0, 1fr);
+  transition: grid-template-columns 200ms var(--ease-standard);
+}
+/* The stub stays on an empty policy too: the panel still holds the default
+   outcome, and there is no other way back to it. */
+.bf.is-main .bf__work:not(.is-flowopen) { --rail-track: 40px; }
+@media (prefers-reduced-motion: reduce) { .bf.is-main .bf__work { transition: none; } }
+/* Placed explicitly, not auto-placed.
+
+   The stub and the panel are alternatives that share one track — with the
+   panel still mounted for the width transition, three items in a two-column
+   grid put the playground on a second row forty pixels wide. */
+.bf.is-main .bf__flowdock,
+.bf.is-main .bf__railstub { grid-area: 1 / 1; }
+.bf.is-main .bf__work > .bf__main {
+  grid-area: 1 / 2;
+  display: flex; flex-direction: column;
+  min-height: 0; min-width: 0;
+}
+
+/* The dock the sequence lives in.
+
+   Wide, it is the left track of the grid: the collapse animates the track to
+   0px and `overflow: hidden` clips the panel as it closes, so the playground
+   takes the room back rather than the two of them sliding past each other.
+   Either way it is taken out of the tab order while it is away — a panel nobody
+   can see must not be a place the keyboard can wander into. */
+.bf.is-main .bf__flowdock {
+  position: relative; min-height: 0; min-width: 0; overflow: hidden;
+  background: var(--surface-sunken);
+}
+/* The panel keeps its own width while the track closes around it, so the list
+   inside slides out of view intact instead of reflowing to nothing on the way. */
+.bf.is-main .bf__flowdock > * { width: var(--rail-w); }
+.bf.is-main .bf__flowdock[aria-hidden='true'] { visibility: hidden; }
+@media (prefers-reduced-motion: reduce) { .bf.is-main .bf__flowdock { transition: none; } }
+
+/* Below 900 there is no room for a third column, so it goes back to being a
+   drawer: over the work, above the scrim, gone once it has been used. */
+@media (max-width: 900px) {
+  .bf.is-main .bf__work { display: flex; }
+  .bf.is-main .bf__work > .bf__main { flex: 1; }
+  .bf.is-main .bf__flowdock {
+    position: absolute; z-index: var(--z-modal);
+    left: 0; top: 0; bottom: 0;
+    width: min(var(--flow-w, 340px), 88vw);
+    transform: translateX(-102%);
+    transition: transform 220ms var(--ease-standard), visibility 220ms;
+    box-shadow: var(--el-high);
+  }
+  .bf.is-main .bf__flowdock > * { width: 100%; }
+  .bf.is-main .bf__work.is-flowopen .bf__flowdock { transform: translateX(0); visibility: visible; }
+}
+
+.bf__flowscrim {
+  position: absolute; inset: 0; z-index: calc(var(--z-modal) - 1);
+  background: rgb(12 17 23 / 0.28);
+  border: none; cursor: pointer;
+}
+
+.bf__flowclose {
+  flex: none; display: grid; place-items: center; width: 26px; height: 26px;
+  border: none; background: none; border-radius: var(--radius-sm);
+  color: var(--text-muted); cursor: pointer;
+}
+.bf__flowclose:hover { background: var(--surface-raised); color: var(--text-primary); }
+
+/* The stub the panel leaves behind: its own grid track, so the playground's
+   left edge does not move under the button that reopens it. */
+.bf__railstub {
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-3);
+  padding: var(--space-5) 0;
+  background: var(--surface-sunken);
+  border-right: 1px solid var(--border-subtle);
+}
+.bf__railstub button {
+  display: grid; place-items: center; width: 26px; height: 26px;
+  border: none; background: none; border-radius: var(--radius-sm);
+  color: var(--text-muted); cursor: pointer;
+}
+.bf__railstub button:hover { background: var(--surface-raised); color: var(--text-primary); }
+
+@media (max-width: 900px) {
+  .bf__pips .bgt__pip em, .bf__pips .bia__pip b { display: none; }
+  .bf__pips .bgt__pip, .bf__pips .bia__pip { white-space: nowrap; }
+  .bf.is-main .bf__stage { padding: var(--space-5) var(--space-5) var(--space-7); }
+  .bf__bar { padding: 0 var(--space-4); }
+}
+
+/* --- Audience chips ------------------------------------------------------------ */
+
+.bf__aud { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); min-width: 0; }
+.bf__aud.is-all { font-size: var(--fs-md); font-weight: var(--fw-medium); color: var(--text-primary); }
+.bf__aud.is-none { font-size: var(--fs-md); color: var(--fb-negative-fg); }
+
+.bf__audchip {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  height: 24px; padding: 0 var(--space-3);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-full);
+  font-size: var(--fs-sm); color: var(--text-body);
+  white-space: nowrap;
+}
+.bf__audchip em { font-style: normal; font-size: var(--fs-xs); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+/* A person is a circle, because it is an avatar and not a pill. */
+.bf__audchip i {
+  display: grid; place-items: center; width: 20px; height: 20px;
+  margin-left: -4px;
+  border-radius: var(--radius-full);
+  background: var(--accent-soft); color: var(--accent);
+  font-style: normal; font-size: var(--fs-xs); font-weight: var(--fw-semibold); letter-spacing: -0.02em;
+}
+/* A name that no longer resolves renders as itself, never as somebody else. */
+.bf__audchip.is-gone { border-color: var(--fb-negative-border); color: var(--fb-negative-fg); }
+.bf__audmore { font-size: var(--fs-sm); color: var(--text-muted); }
+
+/* --- The rules, as cards ------------------------------------------------------------
+
+   Replaces the five-step trail and the "All together" toggle in one move. A
+   rule is one card; open, every part of it is on screen at the same time, which
+   is what the toggle existed to ask for. */
+
+.bf__rules { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-4); }
+
+.bf__rule {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  overflow: visible;
+  transition: border-color var(--dur-fast) var(--ease-standard), box-shadow var(--dur-fast) var(--ease-standard);
+}
+.bf__rule.is-open { border-color: var(--border-default); box-shadow: var(--el-low); }
+.bf__rule.is-off { opacity: 0.62; }
+
+.bf__rule .bf__rulehead {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  max-width: none;
+}
+.bf__ruleopen {
+  flex: 1; min-width: 0; display: flex; align-items: baseline; gap: var(--space-4);
+  background: none; border: none; font-family: inherit; text-align: left; cursor: pointer;
+  padding: var(--space-2) 0;
+}
+.bf__ruleopen strong { font-size: var(--fs-lg); font-weight: var(--fw-semibold); color: var(--text-primary); white-space: nowrap; }
+.bf__ruleopen em {
+  flex: 1; min-width: 0; font-style: normal; font-size: var(--fs-sm); color: var(--text-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bf__ruleopen:focus-visible { outline: none; box-shadow: 0 0 0 4px var(--focus-halo); border-radius: var(--radius-sm); }
+
+/* The rule's state is a kit Badge beside its decision: a tinted pill with a
+   word, never a dot. */
+.bf__rule .bf__rulehead > .bx-badge { flex: none; }
+
+.bf__rulebody { overflow: hidden; }
+/* The clip is for the open/close animation. The Who list opens over whatever
+   is below the field, which can be shorter than the list. */
+.bf__rulebody:has(.wp__list) { overflow: visible; }
+.bf__ruleinner { padding: 0 var(--space-5) var(--space-5); }
+
+/* Who the rule is for: a field of its own above When and Then. */
+.bf__who {
+  display: flex; align-items: flex-start; gap: var(--space-4);
+  margin: 0 0 var(--space-5);
+}
+.bf__wholabel {
+  flex: none; min-width: 32px; padding-top: 7px;
+  font-size: var(--fs-md); font-weight: var(--fw-medium); color: var(--text-primary);
+}
+.bf__who > .wp { flex: 1 1 auto; }
+
+/* `.bf__rulegrid` is gone.
+
+   It stacked WHEN above THEN in one column with a gutter drawing them as two
+   clauses of one statement, which was right about the grammar and wrong about
+   the room: the sentence it drew was 1499px long in a 699px scroller. The two
+   halves are a switch now, and each pane reads its own half back at the top —
+   the clause marker's job, done by the thing it was labelling. */
+
+.bf__rulechecks {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+  display: flex; flex-direction: column; gap: var(--space-3);
+}
+.bf__rulecheck {
+  display: flex; align-items: flex-start; gap: var(--space-3);
+  margin: 0; font-size: var(--fs-sm); color: var(--text-secondary);
+}
+.bf__rulecheck svg { flex: none; margin-top: 2px; }
+.bf__rulecheck strong { font-weight: var(--fw-medium); color: var(--text-primary); }
+.bf__rulecheck.is-error svg { color: var(--fb-negative-fg); }
+.bf__rulecheck.is-warning svg { color: var(--fb-notice-fg); }
+.bf__rulecheck.is-info svg { color: var(--fb-info-fg); }
+.bf__rulecheck button {
+  flex: none; margin-left: auto; background: none; border: none;
+  font-family: inherit; font-size: var(--fs-sm); color: var(--accent); cursor: pointer; white-space: nowrap;
+}
+
+.bf__ruleprose {
+  display: flex; align-items: baseline; gap: var(--space-3);
+  margin: var(--space-5) 0 0;
+  font-size: var(--fs-sm); color: var(--text-tertiary);
+}
+

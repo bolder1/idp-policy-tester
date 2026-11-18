@@ -1,0 +1,279 @@
+import { Fragment, Suspense, lazy, useEffect, type ComponentProps } from 'react'
+import { MotionConfig } from 'motion/react'
+
+import { screenOffered } from './edition-screens'
+import { ScreenErrorBoundary } from './error-boundary'
+import { LeaveDialog } from './leave-guard'
+import { Shell, Toast } from './Shell'
+import { UserShell } from './UserShell'
+import { Policies } from './screens/Policies'
+import { TestingSessionProvider } from './screens/testing/session'
+import { UserApps } from './screens/UserApps'
+import { BrandProvider, useBrand, type BrandScreen } from './store'
+import { FRESH_BUILDER } from './migrate/legacy'
+import { IntroCarousel } from './migrate/IntroCarousel'
+import { MoveTour } from './migrate/MoveTour'
+import { HomeHub } from './migrate/HomeHub'
+import { MigrationGuide } from './migrate/MigrationGuide'
+import { guideRequested } from './migrate/guide-link'
+import './theme-mode'
+
+/* -----------------------------------------------------------------------------
+   Screens, split by route — and then prefetched so the split cannot be felt.
+
+   Policies is the landing screen, so it ships with the entry. The other seven
+   are a click away and were costing everyone their weight on first paint:
+   roughly 5,700 lines of screen code for the one screen you happen to open.
+
+   The usual objection to route splitting is the stall on first navigation, and
+   in a prototype that gets demoed live that objection is the whole argument —
+   nobody wants a spinner in the middle of a walkthrough. So the split is paired
+   with `warm()` below: once the browser is idle after first paint, every screen
+   chunk is fetched in the background. By the time a nav item is clicked the
+   module is already in memory and the Suspense fallback never renders.
+
+   The result is a smaller critical path with the same instant navigation, which
+   is the only version of this trade worth making here.
+   -------------------------------------------------------------------------- */
+
+const Templates = lazy(() => import('./screens/Library').then((m) => ({ default: m.Templates })))
+import { AutoAdd } from './migrate/finale'
+import { StartAfterMigration } from './migrate/start-after'
+import { MigratePopup } from './migrate/MoveDialog'
+const ReviewMoved = lazy(() => import('./migrate/ReviewPage').then((m) => ({ default: m.ReviewPage })))
+const MovePolicies = lazy(() => import('./migrate/MovePolicies').then((m) => ({ default: m.MovePolicies })))
+const OldLoginPolicies = lazy(() => import('./migrate/OldPolicies').then((m) => ({ default: m.OldLoginPolicies })))
+const OldPasswordPolicy = lazy(() => import('./migrate/OldPolicies').then((m) => ({ default: m.OldPasswordPolicy })))
+const OldAdaptivePolicies = lazy(() => import('./migrate/OldPolicies').then((m) => ({ default: m.OldAdaptivePolicies })))
+const FingerprintPage = lazy(() => import('./screens/FingerprintPage').then((m) => ({ default: m.FingerprintPage })))
+const RiskSignals = lazy(() => import('./screens/RiskSignals').then((m) => ({ default: m.RiskSignals })))
+const Hooks = lazy(() => import('./screens/Hooks').then((m) => ({ default: m.Hooks })))
+const ZonesPage = lazy(() => import('./screens/ZonesPage').then((m) => ({ default: m.ZonesPage })))
+const AuthMethodsPage = lazy(() => import('./screens/AuthMethodsPage').then((m) => ({ default: m.AuthMethodsPage })))
+const DisplayTokensPage = lazy(() => import('./screens/DisplayTokensPage').then((m) => ({ default: m.DisplayTokensPage })))
+const BuilderPage = lazy(() => import('./screens/BuilderPage').then((m) => ({ default: m.BuilderPage })))
+const BoardPage = lazy(() => import('./screens/board/BoardPage').then((m) => ({ default: m.BoardPage })))
+const PolicyDetails = lazy(() => import('./screens/PolicyDetails').then((m) => ({ default: m.PolicyDetails })))
+const Applications = lazy(() => import('./screens/Applications').then((m) => ({ default: m.Applications })))
+const ApplicationPage = lazy(() => import('./screens/ApplicationPage').then((m) => ({ default: m.ApplicationPage })))
+/* The unsaved application is the application page in its "new" mode (spec
+   APP-CREATE-AND-ACCESS.md §3.2: one form for create and edit), so it comes
+   out of the same chunk. */
+const NewApplicationPage = lazy(() => import('./screens/ApplicationPage').then((m) => ({ default: m.NewApplicationPage })))
+const AppCatalog = lazy(() => import('./screens/AppCatalog').then((m) => ({ default: m.AppCatalog })))
+const UsersPage = lazy(() => import('./screens/UsersPage').then((m) => ({ default: m.UsersPage })))
+const UserRolesPage = lazy(() => import('./screens/UsersPage').then((m) => ({ default: m.UserRolesPage })))
+const GroupsPage = lazy(() => import('./screens/GroupsPage').then((m) => ({ default: m.GroupsPage })))
+const SignInActivity = lazy(() => import('./screens/SignInActivity').then((m) => ({ default: m.SignInActivity })))
+const SignInTests = lazy(() => import('./screens/SignInTests').then((m) => ({ default: m.SignInTests })))
+
+/* Same specifiers as the lazy() calls above — Vite dedupes them to one chunk
+   each, so this warms exactly what navigation will ask for and nothing else.
+   Every lazy() specifier has to be here; routes.test.ts checks. */
+const warm = () => {
+  void import('./screens/Library')
+  void import('./migrate/MovePolicies')
+  void import('./migrate/ReviewPage')
+  void import('./migrate/OldPolicies')
+  void import('./screens/FingerprintPage')
+  void import('./screens/RiskSignals')
+  void import('./screens/Hooks')
+  void import('./screens/ZonesPage')
+  void import('./screens/AuthMethodsPage')
+  void import('./screens/DisplayTokensPage')
+  void import('./screens/BuilderPage')
+  void import('./screens/board/BoardPage')
+  void import('./screens/PolicyDetails')
+  void import('./screens/Applications')
+  void import('./screens/ApplicationPage')
+  void import('./screens/AppCatalog')
+  void import('./screens/UsersPage')
+  void import('./screens/GroupsPage')
+  void import('./screens/SignInTests')
+  void import('./screens/SignInActivity')
+}
+
+function usePrefetchScreens() {
+  useEffect(() => {
+    /* requestIdleCallback where it exists, a timeout where it does not (Safari).
+       Either way this is after first paint, which is the point — prefetching
+       during the initial render would put back exactly what the split took out. */
+    const ric = window.requestIdleCallback
+    if (ric) {
+      const id = ric(warm, { timeout: 3000 })
+      return () => window.cancelIdleCallback?.(id)
+    }
+    const id = window.setTimeout(warm, 1200)
+    return () => window.clearTimeout(id)
+  }, [])
+}
+
+function Screen() {
+  const { visit } = useBrand()
+  return (
+    <Fragment key={visit}>
+      <ScreenBody />
+    </Fragment>
+  )
+}
+
+function ScreenBody() {
+  const { screen, features, go } = useBrand()
+  /* A page this edition withholds (edition-screens.ts): a stale route, or a
+     link from a board, lands on the policies instead. The list draws at once,
+     and the route follows it — the same element, so it is not drawn twice. */
+  const withheld = !screenOffered(screen, features)
+  useEffect(() => {
+    if (withheld) go({ name: 'policies' })
+  }, [withheld, go])
+  if (withheld) return <Policies />
+  switch (screen.name) {
+    /* The admin catalogue and the end-user launcher, adjacent so the two
+       names cannot be confused by anyone reading this switch. */
+    case 'applications':
+      return <Applications />
+    /* Keyed on the object, so going from one application or group to another
+       starts the page again (its tab, its draft, its filters) rather than
+       showing the last one's state against the new one. */
+    case 'application': {
+      const { appId, tab, group, policy, flash, from, open } = screen
+      return <ApplicationPage key={appId} appId={appId} tab={tab} group={group} policy={policy} flash={flash} from={from} open={open} />
+    }
+    /* Add application: the catalogue until an entry is picked, then that
+       entry's unsaved application. Keyed on the entry, so Back to the
+       catalogue and another pick starts a fresh form rather than the last
+       one's answers against a different application. */
+    case 'application-new':
+      return screen.catalogId ? <NewApplicationPage key={screen.catalogId} catalogId={screen.catalogId} /> : <AppCatalog />
+
+    case 'users':
+      return <UsersPage role={screen.role} />
+    case 'user-roles':
+      return <UserRolesPage />
+    case 'groups': {
+      const { groupId, tab, from } = screen
+      return <GroupsPage key={groupId ?? 'list'} groupId={groupId} tab={tab} from={from} />
+    }
+    case 'apps':
+      return <UserApps />
+    case 'home':
+      return <HomeHub />
+    case 'policies':
+      return <Policies />
+    case 'builder':
+      return <BuilderPage policyId={screen.policyId} open={screen.open} />
+    case 'board':
+      /* `from` is not a prop: the bar reads it off the route (BoardBar.tsx). */
+      return <BoardPage policyId={screen.policyId} open={screen.open} rule={screen.rule} fix={screen.fix} />
+    case 'policy-details':
+      /* Cast to the screen's own prop type, so the route can offer a return
+         target a moment before the screen handles it. */
+      return <PolicyDetails policyId={screen.policyId} from={screen.from as ComponentProps<typeof PolicyDetails>['from']} />
+    /* Keyed on the pick, so Merge from another row starts the flow again with that row. */
+    case 'move-policies':
+      return <MovePolicies key={screen.pick?.join(',') ?? 'all'} pick={screen.pick} />
+    case 'review-moved':
+      return <ReviewMoved />
+    case 'old-login':
+      return <OldLoginPolicies />
+    case 'old-password':
+      return <OldPasswordPolicy />
+    case 'old-adaptive':
+      return <OldAdaptivePolicies />
+    case 'templates':
+      return <Templates />
+    case 'zones':
+      return <ZonesPage />
+    case 'fingerprint':
+      return <FingerprintPage />
+    case 'risk-signals':
+      return <RiskSignals />
+    case 'hooks':
+      return <Hooks />
+    case 'methods':
+      return <AuthMethodsPage />
+    case 'display-tokens':
+      return <DisplayTokensPage tab={screen.tab ?? 'assignments'} />
+    case 'sign-in-tests':
+      return <SignInTests tab={screen.tab} />
+    /* Keyed on its way in, so an application's View all lands narrowed even from the page itself. */
+    case 'sign-in-activity': {
+      const { appId, view, q, from } = screen
+      return <SignInActivity key={`${appId ?? ''}|${view ?? ''}|${q ?? ''}`} appId={appId} view={view} q={q} from={from} />
+    }
+  }
+}
+
+/* What a screen's boundary resets on: which screen, which policy, which visit.
+   Not `open`, so a builder opening its own sheet is not a navigation. */
+const screenKey = (s: BrandScreen, visit: number) => `${s.name}|${'policyId' in s ? s.policyId : ''}|${visit}`
+
+/* Which chrome, decided inside the provider because the role lives there.
+
+   The two shells are not two skins over one navigation — they are different
+   navigations, which is the thing worth showing. An admin gets a rail of
+   fourteen destinations; a person gets a top bar with two. */
+function Chrome() {
+  const { role, screen, visit, go } = useBrand()
+  /* Inside whichever shell, so the chrome stays put if a fallback ever does
+     render — a navigation that blanks the frame reads as a page load rather
+     than a tab change. In practice the prefetch means this is only reachable by
+     clicking a nav item within the first second of the app being open. */
+  const body = (
+    <ScreenErrorBoundary
+      resetKey={screenKey(screen, visit)}
+      onHome={() => go(role === 'user' ? { name: 'apps' } : { name: 'policies' })}
+      homeLabel={role === 'user' ? 'Back to dashboard' : 'Back to policies'}
+    >
+      <Suspense fallback={<div className="bpage" aria-busy="true" />}>
+        <Screen />
+      </Suspense>
+    </ScreenErrorBoundary>
+  )
+  /* The toast and the leave dialog belong to both sides, so they sit beside
+     the shell rather than inside one of them. The end-user side had neither,
+     and every confirmation on Setup 2FA went nowhere.
+
+     The testing session goes round both shells, not inside one: switching
+     role swaps the shell, and a session inside it went with it, so a trip to
+     the User Dashboard came back to a fresh sign-in. It is outside the error
+     boundary too, so a screen that recovers keeps the sign-in being tried. It
+     resets itself for another persona (screens/testing/session.tsx). */
+  return (
+    <TestingSessionProvider>
+      {role === 'user' ? <UserShell>{body}</UserShell> : <Shell>{body}</Shell>}
+      <Toast />
+      <LeaveDialog />
+      {role !== 'user' && <IntroCarousel />}
+      {role !== 'user' && <MoveTour />}
+      <StartAfterMigration />
+      {role !== 'user' && <AutoAdd />}
+      {role !== 'user' && <MigratePopup />}
+    </TestingSessionProvider>
+  )
+}
+
+export function BrandApp() {
+  usePrefetchScreens()
+
+  /* "See how it works" opens the migration guide in a tab of its own: an article, with no console around it. */
+  if (guideRequested())
+    return (
+      <MotionConfig reducedMotion="user">
+        <div className="brand-root">
+          <MigrationGuide />
+        </div>
+      </MotionConfig>
+    )
+
+  return (
+    <MotionConfig reducedMotion="user">
+      <div className="brand-root">
+        {/* The new builder opens empty, as a tenant first meets it after the release (migrate/legacy.ts). */}
+        <BrandProvider fresh={FRESH_BUILDER}>
+          <Chrome />
+        </BrandProvider>
+      </div>
+    </MotionConfig>
+  )
+}

@@ -1,0 +1,292 @@
+/* -----------------------------------------------------------------------------
+   The run as a BRIEF (BriefLayout.tsx): the answer as one sentence, set
+   large, the conflict line under it, and one quiet button, "How it was
+   decided" — the evidence is in the page's right-hand panel (brief-panel.tsx,
+   brief-panel.css). The sign-in row on top and the assistant dock under are
+   the shared shell's (shared/, assistant/), styled there. Light is the
+   console's own look on the dotted ground; dark is the dimmed stage, behind
+   the dock's toggle. Every colour here is a custom property of the stage,
+   set per stage.
+
+   Colour is meaning: the console blue only on what the engine works on now
+   (a blank being written); green matched / allowed;
+   red failed / denied; amber a conflict or can't tell; grey not reached.
+   What the admin picked is named in ink — its colour is on its icon only
+   (owner, 3 Oct 2026): the face and a group's people blue, the application its
+   own logo, a condition's mark violet. No transforms or transitions on
+   anything the camera moves.
+   -------------------------------------------------------------------------- */
+
+.rl-brief[data-stage='light'] {
+  --bf-text: var(--text-primary);
+  --bf-text-2: var(--text-secondary);
+  --bf-text-3: var(--text-tertiary);
+  --bf-card: var(--surface-raised);
+  --bf-sunken: var(--surface-sunken);
+  --bf-line: var(--border-subtle);
+  --bf-line-2: var(--border-default);
+  --bf-line-3: var(--border-strong);
+  --bf-shadow-up: var(--el-high);
+  --bf-blank: color-mix(in srgb, var(--text-tertiary) 14%, transparent);
+  --bf-work: #0d6efd;
+  --bf-work-soft: rgba(13, 110, 253, 0.1);
+  --bf-work-line: rgba(13, 110, 253, 0.42);
+  --bf-ok: var(--fb-positive-fg);
+  --bf-ok-bg: var(--fb-positive-bg);
+  --bf-ok-line: var(--fb-positive-border);
+  --bf-bad: var(--fb-negative-fg);
+  --bf-bad-bg: var(--fb-negative-bg);
+  --bf-bad-line: var(--fb-negative-border);
+  --bf-warn: var(--fb-notice-fg);
+  --bf-warn-bg: var(--fb-notice-bg);
+  --bf-warn-line: var(--fb-notice-border);
+  --bf-ink: var(--text-primary);
+  --bf-ink-on: var(--surface-raised);
+  --bf-hl: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  /* The icons' own colours: who blue, conditions violet. */
+  --bf-who: #0a58ca;
+  --bf-who-bg: #e7f1ff;
+  --bf-cond: #6d4fd8;
+  /* The live blue (the engine working), the console's: not the slate --accent. */
+  --bf-live: #0d6efd;
+}
+
+.rl-brief[data-stage='dark'] {
+  --bf-text: #eef3f8;
+  --bf-text-2: #b9c6d3;
+  --bf-text-3: #8c9daf;
+  --bf-card: rgba(28, 42, 55, 0.96);
+  --bf-sunken: rgba(255, 255, 255, 0.05);
+  --bf-line: rgba(255, 255, 255, 0.1);
+  --bf-line-2: rgba(255, 255, 255, 0.16);
+  --bf-line-3: rgba(255, 255, 255, 0.32);
+  --bf-shadow-up: 0 2px 6px rgba(0, 0, 0, 0.4), 0 18px 44px rgba(0, 0, 0, 0.4);
+  --bf-blank: rgba(255, 255, 255, 0.08);
+  --bf-work: #8ab8ff;
+  --bf-work-soft: rgba(77, 148, 255, 0.2);
+  --bf-work-line: rgba(77, 148, 255, 0.55);
+  --bf-ok: #6fe0ab;
+  --bf-ok-bg: rgba(63, 207, 142, 0.12);
+  --bf-ok-line: rgba(63, 207, 142, 0.45);
+  --bf-bad: #ff9aaa;
+  --bf-bad-bg: rgba(255, 107, 129, 0.12);
+  --bf-bad-line: rgba(255, 107, 129, 0.45);
+  --bf-warn: #f7cf73;
+  --bf-warn-bg: rgba(245, 192, 78, 0.12);
+  --bf-warn-line: rgba(245, 192, 78, 0.45);
+  --bf-ink: #eef3f8;
+  --bf-ink-on: #142029;
+  --bf-hl: rgba(255, 255, 255, 0.08);
+  --bf-who: #9ec5fe;
+  --bf-who-bg: rgba(77, 148, 255, 0.16);
+  --bf-cond: #c4b5fd;
+  --bf-live: #5b9dff;
+}
+
+/* The dark stage: deep slate and its own fine dots, following the pan and zoom. */
+.rl-brief-stage.is-dark {
+  background-color: #142029;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24'%3E%3Ccircle cx='1' cy='1' r='0.9' fill='%23ffffff' fill-opacity='0.09'/%3E%3C/svg%3E");
+  background-size: calc(24px * var(--bb-z, 1)) calc(24px * var(--bb-z, 1));
+  background-position: var(--bb-x, 0) var(--bb-y, 0);
+}
+
+/* The canvas's top fade (the host's, under the sign-in row): the dark stage's own slate, not the console's white. */
+.tj-canvas.is-brief:has(.rl-brief-stage.is-dark)::after { background: linear-gradient(to bottom, #142029 40%, rgba(20, 32, 41, 0)); }
+
+/* --- The world ------------------------------------------------------------------------- */
+
+.rl-brief {
+  /* The sentence's size, named once: Focus's brief grows to it (focus2-brief.css). */
+  --bf-say: clamp(24px, 2.1vw, 30px);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  box-sizing: border-box;
+  padding: 0;
+  color: var(--bf-text);
+  font-family: inherit;
+  font-size: 13px;
+}
+.rl-brief button { font: inherit; color: inherit; }
+.rl-brief :focus-visible { outline: 2px solid var(--focus-ring, var(--bf-live)); outline-offset: 2px; border-radius: 6px; }
+
+/* The dock's "2 of 5": what is pinned, or how many parts are cited. */
+.rl-brief__stepno { min-width: 52px; text-align: center; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--ad-text-2); }
+
+/* --- The answer ------------------------------------------------------------------------ */
+
+.rl-brief__answer { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%; }
+.rl-brief__sentence {
+  margin: 0;
+  font-size: var(--bf-say);
+  line-height: 1.35;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  color: var(--bf-text-2);
+  text-align: center;
+  text-wrap: balance;
+}
+.rl-brief__sentence.is-after { font-size: 15px; line-height: 24px; letter-spacing: 0; }
+.rl-brief__w { display: inline; }
+
+/* A blank: words not yet written, at their own width. Blue where the engine works. */
+.rl-brief__blank {
+  color: transparent;
+  border-radius: 6px;
+  background-color: var(--bf-blank);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  user-select: none;
+}
+.rl-brief__blank svg { visibility: hidden; }
+.rl-brief__blank.is-working {
+  background-color: var(--bf-work-soft);
+  box-shadow: inset 0 0 0 1px var(--bf-work-line);
+  animation: rl-brief-breathe 1.2s ease-in-out infinite;
+}
+@keyframes rl-brief-breathe {
+  50% { background-color: color-mix(in srgb, var(--bf-work) 24%, transparent); }
+}
+
+/* A cited phrase: ink, a fine underline, its number. */
+.rl-brief__cite {
+  color: var(--bf-text);
+  font-weight: 500;
+  border-radius: 6px;
+  text-decoration: underline;
+  text-decoration-color: var(--bf-line-3);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 6px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  cursor: pointer;
+  transition: background-color 0.16s ease, text-decoration-color 0.16s ease;
+}
+.rl-brief__cite:hover,
+.rl-brief__cite.is-lit { background-color: var(--bf-hl); text-decoration-color: var(--bf-text); text-decoration-thickness: 2px; }
+.rl-brief__cite.is-notice,
+.rl-brief__glue.is-notice { color: var(--bf-warn); text-decoration-color: var(--bf-warn-line); }
+.rl-brief__cite.is-answer { font-weight: 600; }
+.rl-brief__sentence.is-landed.is-positive .rl-brief__cite.is-answer { color: var(--bf-ok); text-decoration-color: var(--bf-ok-line); }
+.rl-brief__sentence.is-landed.is-negative .rl-brief__cite.is-answer { color: var(--bf-bad); text-decoration-color: var(--bf-bad-line); }
+.rl-brief__sentence.is-landed.is-notice .rl-brief__cite.is-answer { color: var(--bf-warn); text-decoration-color: var(--bf-warn-line); }
+
+.rl-brief__mk {
+  display: inline;
+  margin: 0 1px 0 3px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--bf-sunken);
+  box-shadow: inset 0 0 0 1px var(--bf-line-2);
+  color: var(--bf-text-2);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0;
+  vertical-align: 0.9em;
+  text-decoration: none;
+}
+.rl-brief__sentence .rl-brief__mk { vertical-align: 0.75em; }
+.rl-brief__mk.is-hidden { visibility: hidden; }
+.rl-brief__cite.is-lit .rl-brief__mk,
+.rl-brief__cite:hover .rl-brief__mk { background: var(--bf-ink); color: var(--bf-ink-on); box-shadow: none; }
+
+/* What the admin picked: ink words (no tint); the colour is the mark's. */
+.rl-brief__ent { color: inherit; }
+.rl-brief__lead { white-space: nowrap; }
+.rl-brief__g { display: inline-block; overflow: hidden; margin-right: 0.24em; line-height: 0; vertical-align: -0.16em; }
+.rl-brief__g > svg { display: block; }
+.rl-brief__g > .bx-face { display: grid; }
+.rl-brief__g > .applogo { display: flex; }
+.rl-brief__g.is-face .bx-face { box-shadow: none; background: var(--bf-who-bg); color: var(--bf-who); }
+.rl-brief__sentence:not(.is-after) .rl-brief__g.is-face { vertical-align: -0.2em; }
+.rl-brief__sentence:not(.is-after) .rl-brief__g.is-face .bx-face { width: 24px; height: 24px; font-size: 12px; }
+.rl-brief__g.is-group { color: var(--bf-who); }
+.rl-brief__g.is-fact,
+.rl-brief__g.is-place { color: var(--bf-cond); }
+.rl-brief__g.is-policy,
+.rl-brief__g.is-rule { color: var(--bf-text-3); }
+.rl-brief__g.is-outcome { color: var(--bf-text-3); }
+.rl-brief__sentence.is-landed.is-positive .rl-brief__g.is-outcome { color: var(--bf-ok); }
+.rl-brief__sentence.is-landed.is-negative .rl-brief__g.is-outcome { color: var(--bf-bad); }
+.rl-brief__sentence.is-landed.is-notice .rl-brief__g.is-outcome { color: var(--bf-warn); }
+.rl-brief__sentence.is-after .rl-brief__g { margin-right: 0.2em; vertical-align: -0.18em; }
+.rl-brief__blank .rl-brief__g { visibility: hidden; }
+
+@media (prefers-reduced-motion: reduce) {
+  .rl-brief__blank.is-working { animation: none; }
+}
+
+/* --- How it was decided: the one press on the canvas -------------------------------------- */
+
+/* Under the sentence, centred: a quiet text button, the console's link look, no box. Pressed (the panel open), ink with a blue mark. */
+.rl-brief .rl-brief__how {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 20px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--bf-text-2);
+  cursor: pointer;
+}
+.rl-brief .rl-brief__how > svg { color: var(--bf-text-3); }
+.rl-brief .rl-brief__how:hover { color: var(--bf-text); text-decoration: underline; text-underline-offset: 3px; }
+.rl-brief .rl-brief__how.is-on { color: var(--bf-text); }
+.rl-brief .rl-brief__how.is-on > svg { color: var(--bf-live); }
+.rl-brief .rl-brief__how.is-waiting { visibility: hidden; }
+
+/* --- What they see: the sign-in pages (brief-see.tsx), in the panel ------------------------- */
+
+.rl-brief__seeframe {
+  position: absolute;
+  right: 0;
+  bottom: 20px;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+  border: 1px solid var(--bf-line-2);
+  border-radius: 8px;
+  background: var(--bf-card);
+  color: var(--bf-text);
+}
+.rl-brief__seeframe.is-open { z-index: 6; box-shadow: var(--bf-shadow-up); }
+.rl-brief__seebar { display: flex; flex: none; gap: 4px; align-items: center; height: 14px; padding: 0 6px; border-bottom: 1px solid var(--bf-line); background: var(--bf-sunken); }
+.rl-brief__seebar > i { width: 5px; height: 5px; border-radius: 50%; background: var(--bf-line-3); }
+.rl-brief__seepage { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 5px; min-width: 0; padding: 6px 10px; }
+.rl-brief__seeframe.is-open .rl-brief__seepage { gap: 8px; padding: 8px 18px; }
+.rl-brief__seeapp { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
+.rl-brief__seeprompt {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  max-width: 100%;
+  font-size: 12px;
+  line-height: 16px;
+  text-align: center;
+}
+.rl-brief__seeframe.is-open .rl-brief__seeprompt { -webkit-line-clamp: 3; font-size: 13px; line-height: 18px; }
+.rl-brief__seefield,
+.rl-brief__seego { display: block; width: 78%; height: 9px; border-radius: 3px; }
+.rl-brief__seefield { box-sizing: border-box; border: 1px solid var(--bf-line-2); }
+.rl-brief__seego { background: var(--bf-line-3); }
+.rl-brief__seeframe.is-open :is(.rl-brief__seefield, .rl-brief__seego) { width: 70%; height: 22px; border-radius: 5px; }
+.rl-brief__seecode { display: flex; gap: 3px; }
+.rl-brief__seecode > i { width: 9px; height: 11px; box-sizing: border-box; border: 1px solid var(--bf-line-2); border-radius: 2px; }
+.rl-brief__seeframe.is-open .rl-brief__seecode > i { width: 22px; height: 26px; border-radius: 4px; }
+.rl-brief__seepage.is-deny .rl-brief__seeprompt { color: var(--bf-text); }
+.rl-brief__seeban { color: var(--bf-bad); }
+
+/* Narrow (the Configure panel open): the sentence at its floor size, so the brief fits unscaled. */
+.rl-brief.is-narrow { --bf-say: 24px; }
+.rl-brief.is-narrow .rl-brief__sentence:not(.is-after) { font-size: var(--bf-say); line-height: 1.33; }

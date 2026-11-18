@@ -1,0 +1,561 @@
+import { ArrowLeft } from 'lucide-react'
+import { TemplateIcon } from '../../template-icon'
+import { AlignLeft, Headset, Undo2, ChevronRight, CopyPlus, GraduationCap, LogIn, Pencil } from 'lucide-react'
+import { useEffect, useRef, useState, type ReactNode, type Ref } from 'react'
+
+import { DemoButton } from '../../tour/DemoButton'
+import { Button, IconButton, NameField, RowMenu } from '../../kit'
+import type { Policy } from '../../data'
+import { ChangeState } from '../../leave-guard'
+import { isUntitled, type RuleSet } from '../../policy-draft'
+import { POLICY_NAME_MAX, policyNameIssue } from '../../policy-name'
+import { isPostSignIn } from '../../post-sign-in'
+import { useBrand } from '../../store'
+import { ACCESS_CHECK } from '../sign-in-tests/names'
+import { StatusControl } from '../status-control'
+import { BAR_DEMO, BAR_READ, BAR_TOUR } from './bar-tools'
+import { BuilderVersionSwitch } from './BuilderVersionSwitch'
+import { useShows } from './builder-version'
+import { MARK_LABEL } from '../../tester'
+
+/* -----------------------------------------------------------------------------
+   The board's top row.
+
+   The policy's header used to FLOAT over the canvas — 76px of opaque strip laid
+   across the top of the stage, with a focus mode that slid it away so you could
+   have the space back. That bought the canvas its full height and cost
+   something worse: nothing on this screen had a fixed home. The header covered
+   the chain's first node until you panned; the publishing cluster hovered in
+   the top-right corner and stepped sideways whenever the panel opened; and the
+   one way to see the whole board was to learn that a button in the zoom toolbar
+   hid the title.
+
+   So the strip stops floating and starts being a region. It is 48px, flat, and
+   in the flow — a breadcrumb on the left, the publishing verbs on the right,
+   one rule underneath it — and the canvas below it is a region of its own with
+   the config panel beside it rather than on top of it. Three bands, three
+   jobs, and no piece of chrome standing on another piece's work.
+
+   Not `PolicyBar` with a `slim` prop. Two reasons, and both are about what the
+   bar CONTAINS rather than how tall it is: everything the board's bar gained —
+   Discard, Review & publish, the Check and What-changes readings — closes over
+   `BoardBuilder`'s draft state, which a component shared with the trail cannot
+   reach; and the trail's bar is the anchor for a tour stop that a test asserts
+   by name. Leaving it alone is the version of this change that breaks nothing.
+
+   Where the space came from, since 48px is a third of what the old strip used:
+
+   · The application stops being a labelled FACT. It was a 16px mark (and a
+     "+N") on the name chip; since 21 Sep 2026 it is not in the bar at all —
+     the start node names the applications and opens the pane that edits
+     them, and the name is a heading renamed in place.
+   · `policy.type` goes. "App Access" is true of almost every policy here and
+     is not a thing anybody navigates by.
+   · The audience goes too. It was the last labelled fact standing, and it is
+     the one thing in the row that is neither where you are nor what you can do
+     to the draft — a reading, in a bar whose job is to be quiet. Each rule's
+     Who pane says who that rule covers, which is where the narrowing is
+     actually done.
+   -------------------------------------------------------------------------- */
+
+export function BoardBar({
+  policy,
+  unsaved = false,
+  draftSaved = false,
+  edits,
+  onEditsFix,
+  onRevealRule,
+  onOpenBreakIn,
+  turnOnAsk,
+  actions,
+  onLearn,
+  onWatchDemo,
+}: {
+  policy: Policy
+  /* The change-state pill beside the status: edits since the last save, or a
+     saved draft that is not live yet. */
+  unsaved?: boolean
+  draftSaved?: boolean
+  /* The unsaved rules, for the status control: a switch never takes them, and
+     its confirmation says so. Undefined when nothing is unsaved. */
+  edits?: RuleSet
+  /* Before turning on's ready fix, landed on the board's draft with Undo. */
+  onEditsFix?: (next: RuleSet, toast: string) => void
+  /* Before turning on's rule links: show the rule on the chain. */
+  onRevealRule?: (index: number | null) => void
+  /* Version 3: a guard page's Break-in row opens the test in the board's own
+     test panel, where that version keeps it. */
+  onOpenBreakIn?: () => void
+  /* The toast after a first save, pressed on Turn on: the status control asks for that switch (status-control.tsx). */
+  turnOnAsk?: number
+  /* The publishing verbs, which belong to the builder's draft rather than to
+     the policy. Passed in rather than reached for: this component knows what a
+     policy IS, and the host knows what is unsaved about it. */
+  actions?: ReactNode
+  /* The way back into the guided demo.
+
+     On the bar rather than in a menu, for the reason the trail's tour button
+     was moved onto its bar: the person who needs it is the person least likely
+     to know which menu it is in. Optional, so a caller that has no walkthrough
+     to offer simply does not draw one. */
+  onLearn?: () => void
+  /* And the way to the recording, which is a peer of it rather than something
+     inside it: watching and doing are two answers to one question, and burying
+     one of them a click behind the other makes the product pick for you. */
+  onWatchDemo?: () => void
+}) {
+  const store = useBrand()
+  /* Renaming in place, as on the library pages: the heading and an
+     always-shown pencil, and the kit's NameField while it is open.
+
+     Saved straight to the policy on ✓, Enter or leaving the field — a name is
+     a fact about the policy, not a rule edit, so it stays out of the rules'
+     draft and undo stack (see PolicyDetails.tsx). The builder reads the name
+     back from the store, so the heading and Review agree at once. */
+  /* A new policy opened with no form still carries the product's name: the field is open on arrival, so naming it is the
+     first thing on offer (create/NewPolicyDialog.tsx names it first now; this stays for one that is still untitled). */
+  const [renaming, setRenaming] = useState(() => !!policy.provisional && isUntitled(policy.name))
+  /* Selected on arrival, so typing replaces "Untitled policy" rather than adding to it. */
+  const nameInput = useRef<HTMLInputElement | null>(null)
+  const namedOnArrival = useRef(renaming)
+  useEffect(() => {
+    if (!namedOnArrival.current) return
+    const id = requestAnimationFrame(() => nameInput.current?.select())
+    return () => cancelAnimationFrame(id)
+  }, [])
+  /* Where focus goes when the rename ends. The field unmounts with the focus in
+     it, and focus on <body> is where the board's single-key shortcuts act. Only
+     rescued when it actually landed on <body> after a leave: a click or Tab to
+     a real control keeps it. */
+  const pencil = useRef<HTMLSpanElement | null>(null)
+  /* A copy's name is highlighted until it is renamed: then the admin has made it their own (owner, 23 Oct 2026: "if
+     the user renamed it once, we can remove the color"). The rename takes `copiedFrom` off the policy in the store
+     (store.tsx `keepsCopyMark`), so the highlight stays gone on the next visit too; it was a ref of the name the bar
+     mounted with, which a revisit after the rename took as the copy's name and lit again. */
+  const focusPencil = (onlyIfLost = false) =>
+    requestAnimationFrame(() => {
+      const at = document.activeElement
+      if (onlyIfLost && at && at !== document.body) return
+      pencil.current?.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true })
+    })
+  const [name, setName] = useState(policy.name)
+  const [nameErr, setNameErr] = useState<string | null>(null)
+  const problem = policyNameIssue(name, store.policies, policy.id)
+  const keepName = () => {
+    const saved = store.policyById(policy.id)
+    const trimmed = name.trim()
+    if (!saved || problem || trimmed === saved.name) return
+    store.savePolicy({ ...saved, name: trimmed })
+    store.showToast('Name saved')
+  }
+  const applyName = () => {
+    if (problem) {
+      setNameErr(problem)
+      return
+    }
+    keepName()
+    setRenaming(false)
+    focusPencil()
+  }
+  const cancelName = () => {
+    setName(policy.name)
+    setNameErr(null)
+    setRenaming(false)
+    focusPencil()
+  }
+
+  /* The way back goes where the board was opened from: an application's page
+     when it carried one (New policy, Edit policy, Add a copy there), lighting
+     this policy in its list; Policies otherwise. `apps.find`, never `appById`,
+     so an application deleted meanwhile falls back to Policies rather than to
+     the first app in the catalogue. */
+  const fromId = store.screen.name === 'board' ? store.screen.from?.appId : undefined
+  const fromApp = fromId ? store.apps.find((a) => a.id === fromId) : undefined
+  /* A post sign-in policy goes back to the application's Post sign-in tab,
+     where it was opened from and where its links are made. */
+  const back = () =>
+    store.go(fromApp ? { name: 'application', appId: fromApp.id, tab: isPostSignIn(policy) ? 'post-sign-in' : 'policies', flash: policy.id } : { name: 'policies' })
+
+  return (
+    <header className="bbtop">
+      <nav className="bbtop__crumbs" aria-label="Where this policy sits">
+        <button type="button" className="bbtop__back" aria-label={fromApp ? `Back to ${fromApp.name}` : 'Back to policies'} onClick={back}>
+          <ArrowLeft size={16} strokeWidth={2} aria-hidden />
+        </button>
+        <button type="button" className="bbtop__crumb" onClick={back}>
+          {fromApp ? fromApp.name : 'Policies'}
+        </button>
+
+        <ChevronRight size={13} strokeWidth={2} className="bbtop__sl" aria-hidden />
+
+        {/* The applications are not in this row any more. The mark and the
+            "+N" beside the name said which apps the policy protects; the start
+            node at the head of the chain says it in words and opens the pane
+            that edits them, so the bar keeps to where you are and what the
+            policy is called. */}
+        {renaming ? (
+          <div className="bbtop__rename">
+            <NameField
+              value={name}
+              max={POLICY_NAME_MAX}
+              label="Policy name"
+              inputRef={nameInput}
+              errorId={nameErr ? 'bbtop-name-err' : undefined}
+              invalid={!!nameErr}
+              onChange={(v) => {
+                setName(v)
+                setNameErr(null)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  applyName()
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault()
+                  cancelName()
+                }
+              }}
+              onLeave={keepName}
+              onClose={() => {
+                if (problem) setNameErr(problem)
+                else {
+                  setRenaming(false)
+                  focusPencil(true)
+                }
+              }}
+              onApply={applyName}
+              onCancel={cancelName}
+            />
+            {nameErr && (
+              <p id="bbtop-name-err" className="bbtop__nameerr" role="alert">
+                {nameErr}
+              </p>
+            )}
+          </div>
+        ) : (
+          <>
+            {/* A copy nobody has finished says so on its name: highlighted (owner, 23 Oct 2026: "add a highlighter on the
+                policy name so the user gets it that it is copied"; the Copy tag beside it was removed the same day). It goes
+                when the copy is turned on. */}
+            <h1 className={policy.copiedFrom && policy.status === 'draft' ? 'bbtop__title is-copy' : 'bbtop__title'} title={policy.name}>
+              {policy.name}
+            </h1>
+            <span className="bbtop__pencil" ref={pencil}>
+              <IconButton
+                icon={Pencil}
+                size="sm"
+                tone="ghost"
+                label="Rename"
+                onClick={() => {
+                  setName(policy.name)
+                  setNameErr(null)
+                  setRenaming(true)
+                }}
+              />
+            </span>
+          </>
+        )}
+
+        {/* Read from the store, not this bar's copy: the status is switched
+            here, and it is not part of the draft. */}
+        <StatusControl policyId={policy.id} edits={edits} onEditsFix={onEditsFix} onRevealRule={onRevealRule} onOpenBreakIn={onOpenBreakIn} turnOnAsk={turnOnAsk} />
+        <ChangeState unsaved={unsaved} draft={draftSaved} />
+      </nav>
+
+      {/* Who it governs stood here — a glyph, a phrase, a count and a hover
+          panel listing the groups. Removed: it is the one thing in this row
+          that is neither where you are nor what you can do to the draft, and
+          the bar is meant to be quiet. The rules themselves say who they cover on
+          the Who pane, per rule, which is where the narrowing actually happens. */}
+
+      {/* Demo · 1:16 and Learn the board are hidden (owner, 1 Oct 2026:
+          "Hide this 3 as of now"; bar-tools.ts): the flags, not the callers,
+          decide, so turning one back on brings its button back as it was. */}
+      <div className="bbtop__acts">
+        {BAR_DEMO && onWatchDemo && <DemoButton onClick={onWatchDemo} />}
+        {BAR_TOUR && onLearn && (
+          <button
+            type="button"
+            className="bbtop__learn"
+            aria-label="Learn the board"
+            title="Learn the board — a two-minute demo, or five steps that build a rule"
+            onClick={onLearn}
+          >
+            <GraduationCap size={16} strokeWidth={1.9} aria-hidden />
+          </button>
+        )}
+        <BuilderVersionSwitch />
+        {actions}
+      </div>
+    </header>
+  )
+}
+
+/* --- The same bar, for a page that is not a policy -----------------------------
+
+   Sign-in tests wears the builder's layout (TESTING-V4 §14.1): this row, the
+   dotted canvas, the floating panel. The page is not a policy, so it has no
+   status, no change-state pill and no rename — the crumbs are "← Policies ›"
+   and the page's name, and the page's own verbs sit at the right. The same
+   markup and classes as `BoardBar`, so the two rows cannot drift apart; the
+   builder's bar is untouched. */
+
+export function BoardBarPlain({ title, actions }: { title: string; actions?: ReactNode }) {
+  const store = useBrand()
+  const back = () => store.go({ name: 'policies' })
+  return (
+    <header className="bbtop">
+      <nav className="bbtop__crumbs" aria-label="Where this page sits">
+        <button type="button" className="bbtop__back" aria-label="Back to policies" onClick={back}>
+          <ArrowLeft size={16} strokeWidth={2} aria-hidden />
+        </button>
+        <button type="button" className="bbtop__crumb" onClick={back}>
+          Policies
+        </button>
+        <ChevronRight size={13} strokeWidth={2} className="bbtop__sl" aria-hidden />
+        <h1 className="bbtop__title" title={title}>
+          {title}
+        </h1>
+      </nav>
+      {actions && <div className="bbtop__acts">{actions}</div>}
+    </header>
+  )
+}
+
+/* --- Check access, and the verbs --------------------------------------------
+
+   Two pips stood first here — "Check · A · 2 through" and "What changes · 14"
+   — the readings of a graded deck and a before/after sweep, in the full
+   edition only. They are gone with the ideas they read (final spec, A.8),
+   and M4 retired the sheets they opened and the ⌘K commands that stood in for
+   them: the Break-in test is in Saved sign-ins, and What changes is a row of
+   the checks before saving. The bar's first control is the one testing verb
+   every edition has, Check access (it was Try a sign-in until 1 Oct 2026:
+   names.ts). Pressed while test mode is on, and blue then — the active
+   state, never the brand.
+
+   While it is on, its views stand before it (`views`: Past sign-ins — owner,
+   1 Oct: "past sign-ins can be a dedicated button in the top header";
+   PolicyCheck.tsx `CheckBarViews`), as the Sign-in tests page's Saved
+   sign-ins stands before its Try a sign-in.
+
+   Then the two things that end a draft.
+   -------------------------------------------------------------------------- */
+
+export function BoardBarActions({
+  reading,
+  onRead,
+  readRef,
+  testing,
+  canTest,
+  offerTest = true,
+  onTest,
+  testRef,
+  views,
+  quietSave = false,
+  toPublish,
+  unsaved,
+  canDiscard,
+  blockers,
+  saveBlocked,
+  stop = null,
+  checking = false,
+  post = false,
+  onSaveDraft,
+  onDiscard,
+  onSave,
+  onSaveTemplate,
+  onRollBack,
+  onContactSupport,
+  onCopyRules,
+  publish,
+}: {
+  /** A moved draft's Publish (migrate/moved-panel.tsx): beside it the save steps down to a secondary. */
+  publish?: ReactNode
+  /** Read as text is open in the panel's slot. */
+  reading: boolean
+  onRead: () => void
+  /** The button's wrapper, so focus can come back to it when the panel closes. */
+  readRef?: Ref<HTMLSpanElement>
+  /** Check access is on — pressed. Off while a view of its own (Past sign-ins) has the panel. */
+  testing: boolean
+  /** Only an app access policy decides sign-ins, so only one can be tried. */
+  canTest: boolean
+  /* There is something to check: a policy with no rules shows neither Check access nor its views (owner,
+     19 Oct 2026: "no need to add Check access in an empty policy"). */
+  offerTest?: boolean
+  onTest: () => void
+  /** The button's wrapper, so focus can come back to it when test mode closes. */
+  testRef?: Ref<HTMLSpanElement>
+  /* The views of their own (Past sign-ins), before Check access with a hairline between: a different thing
+     (owner, 19 Oct 2026: "Check access and Past sign-ins are two different things"), so on the bar whether or not
+     Check access is on, quieter, and pressed only while its own panel is open. */
+  views?: ReactNode
+  /* Check access's sign-in panel is open, and its Run is the view's one
+     orange: the policy's save steps down to secondary until it shuts. */
+  quietSave?: boolean
+  /** Something differs from live, or the policy has never been published. */
+  toPublish: boolean
+  /** Edits since the last save or draft. */
+  unsaved: boolean
+  /** Unsaved edits or a saved draft to throw away. */
+  canDiscard: boolean
+  blockers: number
+  /** An error on a rule that runs, on a policy that has an application. */
+  saveBlocked: boolean
+  /** The checks before saving are running: the button says so, and cannot be pressed twice. */
+  checking?: boolean
+  /* A post sign-in policy (post-board.ts): it decides no sign-in, so the
+     sign-in tools — Read as text, Check access and its views — are not on
+     its bar at all, rather than drawn and refused. */
+  post?: boolean
+  onSaveDraft: () => void
+  onDiscard: () => void
+  onSave: () => void
+  /* Why nothing can be saved yet, said on both saves: no rule, or a new policy still unnamed (owner, 2 Nov 2026). */
+  stop?: string | null
+  /* Save this policy as a template (owner, 27 Oct 2026). Absent where it cannot be: a post sign-in policy, or one with
+     no rule on its canvas, so the ⋯ is not drawn with nothing in it. */
+  onSaveTemplate?: () => void
+  /** A migrated, active policy (owner, 17 Nov 2026): back to its old policy. */
+  onRollBack?: () => void
+  /** A migrated policy, live or rolled back (owner, 18 Nov 2026): help from miniOrange. */
+  onContactSupport?: () => void
+  /* Copy rules from another policy (owner, 2 Nov 2026). Absent with no policy to copy from. */
+  onCopyRules?: () => void
+}) {
+  const showTesting = useShows('testing')
+  const discard = useShows('discard')
+  const features = useBrand().features
+  return (
+    <>
+      {/* Read as text (describe spec, §7.2): the whole policy as numbered
+          sentences, in the panel's slot. An icon, before Check access —
+          reading is quieter than testing, and a second labelled button in
+          the bar would make it louder. Every edition: it only reads. Pressed
+          while open, blue then, like Check access. Hidden (owner, 1 Oct
+          2026: "Hide this 3 as of now"; bar-tools.ts). */}
+      {!post && (
+        <>
+          {BAR_READ && (
+            <span className="bbtop__read" ref={readRef}>
+              <IconButton icon={AlignLeft} size="sm" tone="ghost" label="Read as text" pressed={reading} onClick={onRead} />
+            </span>
+          )}
+        </>
+      )}
+      {showTesting && offerTest && !post && views && (
+        <>
+          {views}
+          {features.trySignIn && <span className="bbtop__sep" aria-hidden />}
+        </>
+      )}
+      {/* On a wrapper, for the reason the review button's anchor is: `Button`
+          passes no extra props, and the walkthrough and the focus return both
+          need a real box to find. */}
+      {showTesting && features.trySignIn && !post && offerTest && (
+        <span className="bbtop__try" data-tour="try-sign-in" ref={testRef}>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={LogIn}
+            pressed={testing}
+            keys="T"
+            disabled={!canTest}
+            title={canTest ? `${ACCESS_CHECK} (T)` : 'Only app access policies decide sign-ins'}
+            onClick={onTest}
+          >
+            {ACCESS_CHECK}
+          </Button>
+        </span>
+      )}
+
+      {/* Always present, as in the trail; enabled only with something to throw away. */}
+      {/* A disabled button says why. Discard is destructive, but a trigger
+          stays neutral and the red is inside its confirm: secondary, as the
+          kit SaveBar's Discard is (23 Oct 2026). */}
+      {/* A moved draft is read here, not edited: its Approve and Approve and publish stand alone (owner, 6 Nov 2026). */}
+      {!publish && discard && <Button variant="secondary" size="sm" disabled={!canDiscard} title={canDiscard ? undefined : 'Nothing to discard'} onClick={onDiscard}>
+        Discard
+      </Button>}
+      {!publish && <Button variant="secondary" size="sm" disabled={!unsaved} blocked={stop && unsaved ? stop : undefined} title={!unsaved ? 'No changes to save' : (stop ?? undefined)} onClick={onSaveDraft}>
+        Save draft
+      </Button>}
+      {/* One word, and it does that word (owner, 23 Sep 2026: "make it save
+          only — hide the review part as of now, only show the save directly;
+          will think about the review part later").
+
+          It said "Review & save" and opened the read-back dialog, which then
+          held the actual save behind a second press. The dialog is still in the
+          tree and is still where the walkthrough takes you; nothing on this bar
+          opens it. The one thing it alone offered — "Save and turn on" for a
+          draft — is on the status pill beside the policy's name, which is where
+          a draft is switched on from anyway.
+
+          It keeps the dialog's GATE. An error on a rule that runs blocked the
+          dialog's footer buttons, and bypassing the dialog would have quietly
+          removed that; `saveBlocked` is the same test. Without applications the
+          save produces a draft, and a draft is allowed to be unfinished, so
+          errors do not block it — same rule as `committed`.
+
+          The anchor is on a WRAPPER rather than on the button, because `Button`
+          takes a fixed set of props and does not spread the rest — a
+          `data-tour` handed to it would be dropped silently, and a walkthrough
+          whose last step lights nothing is exactly the failure the anchor tests
+          exist to catch. The span is `display: contents`-free on purpose: it
+          needs a real box for the spotlight to measure. */}
+      {!publish && (
+      <span className="bbtop__reviewwrap" data-tour="review">
+        <Button
+          variant={quietSave || publish ? 'secondary' : 'brand'}
+          size="sm"
+          disabled={!toPublish || saveBlocked || checking}
+          blocked={stop && toPublish ? stop : undefined}
+          busy={checking}
+          title={
+            !toPublish
+              ? 'Nothing to save'
+              : stop
+                ? stop
+              : saveBlocked
+                ? `${blockers} error${blockers === 1 ? '' : 's'} to fix first`
+                : undefined
+          }
+          onClick={onSave}
+        >
+          {/* Named for its SCOPE, because the rule panel has a save of its own
+              at its foot and two buttons reading "Save" on one screen is two
+              questions (owner, 23 Sep 2026: "I see two save buttons that look
+              awkward at a glance — give them different names and a different
+              button style"). This one is the policy's, it is the brand button,
+              and it sits with Discard and Save draft, which are the policy's
+              too. The panel's is a secondary "Save changes" — same act, said
+              from where the work is, and drawn a weight quieter so the eye
+              picks one of the two rather than choosing between twins. */}
+          {/* While the checks before saving run (about 150 ms on the showcase),
+              the button says so and takes no second press. */}
+          {checking ? 'Checking…' : features.publish ? 'Publish policy' : 'Save policy'}
+        </Button>
+      </span>
+      )}
+      {publish}
+      {/* The policy's other doors, after the verbs that end a draft, the way an application's head ends in its ⋯: Save as
+          template (owner, 27 Oct 2026: "add an option for save as template"). Not for a post sign-in policy, which
+          decides no sign-in and so has nothing to reuse, and not with no rule on the canvas. */}
+      {(onSaveTemplate || onCopyRules || onRollBack || onContactSupport) && !post && (
+        <RowMenu
+          label="More for this policy"
+          size="sm"
+          items={[
+            ...(onCopyRules ? [{ id: 'copy', label: 'Copy rules from a policy', icon: CopyPlus }] : []),
+            ...(onSaveTemplate ? [{ id: 'template', label: MARK_LABEL, icon: TemplateIcon }] : []),
+            ...(onRollBack ? [{ id: 'rollback', label: 'Roll back to old policy', icon: Undo2, divide: !!(onSaveTemplate || onCopyRules) }] : []),
+            ...(onContactSupport ? [{ id: 'support', label: 'Contact support', icon: Headset, divide: !onRollBack && !!(onSaveTemplate || onCopyRules) }] : []),
+          ]}
+          onSelect={(id) => (id === 'copy' ? onCopyRules?.() : id === 'rollback' ? onRollBack?.() : id === 'support' ? onContactSupport?.() : onSaveTemplate?.())}
+        />
+      )}
+    </>
+  )
+}

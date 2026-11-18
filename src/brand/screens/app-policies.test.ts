@@ -1,0 +1,613 @@
+import { describe, expect, it } from 'vitest'
+
+import { apps, audienceOf, blankPolicy, coversEveryApp, groups, policies, users, type Policy, type Rule } from '../data'
+import { appsAt, policiesAt, showcaseTenant, tenantAt, type Depth } from '../fixtures'
+import {
+  attachKind,
+  attachTo,
+  attachableTo,
+  decidedOnlyBy,
+  decidesFor,
+  deleteDetail,
+  detachFrom,
+  listPhrase,
+  orderOf,
+  policiesForApp,
+  protectionOf,
+  summarise,
+  whyNotDeciding,
+} from './app-policies'
+
+/* -----------------------------------------------------------------------------
+   The property this file holds: an application's protection is read from the
+   policies themselves, and reading it can never invent, lose or reorder one.
+
+   Two claims carry most of the weight.
+
+   The first is that "has no application" and "is the tenant default" are
+   DIFFERENT FACTS. Both look like a missing `appId`. One is a draft somebody
+   started; the other is the fall-through that covers everything by being the
+   system policy. Anything that conflates them offers to attach the
+   fall-through to Salesforce, which would be a serious thing to get wrong
+   quietly.
+
+   The second is that a precedence number has to be EARNED. The panel numbers
+   the policies that decide a sign-in; the coverage grid draws a cell under the
+   same condition. Those two tests are written once, in `decidesFor`, precisely
+   so this file can pin them together — a screen that numbers a switched-off
+   policy 2 of 3 while the grid leaves its column blank makes one of the two a
+   liar, and there is no way to tell from either screen which.
+   -------------------------------------------------------------------------- */
+
+const DEPTHS: Depth[] = ['none', 'small', 'medium', 'large']
+
+let n = 0
+const ruleOf = (enabled: boolean): Rule =>
+  ({ id: `r${++n}`, name: 'r', enabled, decision: '1fa', when: { cards: [] }, matchEstimate: 0 }) as unknown as Rule
+
+function policy(over: Partial<Policy> = {}): Policy {
+  return {
+    id: `p${++n}`,
+    name: 'A policy',
+    type: 'App Access',
+    status: 'active',
+    lastModified: 'Yesterday',
+    modifiedBy: 'Someone',
+    audience: { everyone: true, groupIds: [], userIds: [] },
+    rules: [ruleOf(true)],
+    ...over,
+  } as Policy
+}
+
+const SYSTEM = policies.find((p) => p.isSystem)!
+
+describe('policiesForApp', () => {
+  it('returns every match in store order, not the first', () => {
+    /* One policy names Google Workspace now (an app has at most one sign-in
+       policy, 14 Oct 2026). Scenario 5 was four: one per group (Admin, DevOps,
+       End-Users) plus the baseline, now one policy with a Who on each rule.
+       The relation stays many-to-many for policies, so a screen still reads
+       every match. */
+    const on = policiesForApp('google-workspace', policiesAt('medium'))
+    expect(on.length).toBe(1)
+    expect(on.map((p) => p.id)).toEqual(['s5-workspace'])
+  })
+
+  it('returns an array, never undefined, for an app nothing names', () => {
+    expect(policiesForApp('zoom', policiesAt('medium'))).toEqual([])
+    expect(policiesForApp('servicenow', policiesAt('medium'))).toEqual([])
+  })
+
+  it('never returns an unattached policy', () => {
+    expect(
+      policiesForApp('google-workspace', policiesAt('medium')).every((p) => p.appIds.includes('google-workspace')),
+    ).toBe(true)
+  })
+
+  it('never returns the system policy, though it covers every app', () => {
+    expect(coversEveryApp(SYSTEM)).toBe(true)
+    for (const a of apps) {
+      expect(policiesForApp(a.id, policiesAt('medium')).some((p) => p.isSystem)).toBe(false)
+    }
+  })
+})
+
+describe('protectionOf', () => {
+  it('finds the tenant default by coversEveryApp and keeps it out of own', () => {
+    const got = protectionOf('workday', policiesAt('medium'))
+    expect(got.fallback?.id).toBe('global-default')
+    expect(got.own.some((p) => p.isSystem)).toBe(false)
+  })
+
+  it('reports an unprotected app as own-empty with the fallback still there', () => {
+    const got = protectionOf('zoom', policiesAt('medium'))
+    expect(got.own).toEqual([])
+    expect(got.decides).toEqual([])
+    expect(got.fallback?.id).toBe('global-default')
+  })
+})
+
+describe('a draft', () => {
+  it('decides nothing, however many enabled rules it has', () => {
+    /* It gets this from `enforces`, which names the statuses that DO act — so
+       a status that does not act needs no entry anywhere. This pins that the
+       free behaviour is the right behaviour. */
+    expect(decidesFor(policy({ status: 'draft', rules: [ruleOf(true), ruleOf(true)] }))).toBe(false)
+  })
+
+  it('is reported as unpublished, not as switched off', () => {
+    // Telling somebody they switched off a thing they never published is the
+    // kind of small lie that costs a screen its credibility.
+    expect(whyNotDeciding(policy({ status: 'draft' }))).toBe('Draft. It decides no sign-ins.')
+    expect(whyNotDeciding(policy({ status: 'inactive' }))).toBe('Inactive. It decides no sign-ins.')
+  })
+
+  it('is what a new policy starts as', () => {
+    expect(blankPolicy('New one', ['workday']).status).toBe('draft')
+  })
+
+  it('takes no precedence number, and does not push the ones below it down', () => {
+    expect(orderOf([policy({ status: 'draft' }), policy(), policy({ status: 'draft' }), policy()])).toEqual([
+      null, 1, null, 2,
+    ])
+  })
+})
+
+describe('decidesFor', () => {
+  it('is false for an inactive policy however many rules it has', () => {
+    expect(decidesFor(policy({ status: 'inactive', rules: [ruleOf(true), ruleOf(true)] }))).toBe(false)
+  })
+
+  it('is false for an active policy with no rules at all', () => {
+    expect(decidesFor(policy({ rules: [] }))).toBe(false)
+  })
+
+  it('is false for an active policy whose every rule is switched off', () => {
+    expect(decidesFor(policy({ rules: [ruleOf(false), ruleOf(false)] }))).toBe(false)
+  })
+
+  it('is true for an active policy with one enabled rule', () => {
+    expect(decidesFor(policy({ rules: [ruleOf(false), ruleOf(true)] }))).toBe(true)
+  })
+
+  it('is true for the always-on system policy', () => {
+    expect(decidesFor(SYSTEM)).toBe(true)
+  })
+})
+
+describe('orderOf', () => {
+  it('numbers only the rows that decide, and does not renumber around them', () => {
+    const rows = [policy(), policy({ status: 'inactive' }), policy()]
+    expect(orderOf(rows)).toEqual([1, null, 2])
+  })
+
+  it('gives no number to an active policy with nothing enabled', () => {
+    // The assertion that keeps this screen and the coverage grid in agreement:
+    // both ask `enforces AND an enabled rule`, so neither can count a policy
+    // the other ignores.
+    expect(orderOf([policy({ rules: [ruleOf(false)] }), policy()])).toEqual([null, 1])
+  })
+
+  it('returns one entry per input row', () => {
+    const rows = [policy(), policy({ status: 'draft' }), policy(), policy({ status: 'inactive' })]
+    expect(orderOf(rows).length).toBe(rows.length)
+  })
+})
+
+describe('whyNotDeciding', () => {
+  it('is null for a policy that does decide', () => {
+    expect(whyNotDeciding(policy())).toBeNull()
+  })
+
+  it('reports switched-off first when a policy is both off and empty', () => {
+    // Precedence, not a set. Being switched off explains the rest and is the
+    // only one of the two worth acting on first.
+    expect(whyNotDeciding(policy({ status: 'inactive', rules: [] }))).toBe('Inactive. It decides no sign-ins.')
+  })
+
+  it('names an empty rule list as the reason when the policy is otherwise live', () => {
+    expect(whyNotDeciding(policy({ rules: [ruleOf(false)] }))).toBe(
+      'No rule is turned on. Every sign-in falls through.',
+    )
+  })
+})
+
+describe('attachKind', () => {
+  it('calls the real tenant default system, not fresh', () => {
+    /* The reason this module exists. `global-default` has no `appId`, so a
+       check that asks about `appId` before `isSystem` classifies the
+       fall-through as an unattached draft and offers to attach it to one
+       application — which would turn the policy that catches everything into a
+       policy that catches Salesforce. */
+    expect(SYSTEM.appIds).toEqual([])
+    expect(attachKind(SYSTEM, 'salesforce')).toBe('system')
+  })
+
+  it('separates fresh, already-here and also', () => {
+    expect(attachKind(policy({ appIds: [] }), 'workday')).toBe('fresh')
+    expect(attachKind(policy({ appIds: ['workday'] }), 'workday')).toBe('already-here')
+    /* `also`, not `move`. A policy on Slack gains Workday rather than being
+       taken off Slack, which is the whole of what the list changed here. */
+    expect(attachKind(policy({ appIds: ['slack'] }), 'workday')).toBe('also')
+  })
+
+  it('is already-here when the app is one of several', () => {
+    // The `includes` case: a policy on three applications is already on each of
+    // them, not on the first and moveable to the rest.
+    expect(attachKind(policy({ appIds: ['slack', 'workday', 'jira'] }), 'workday')).toBe('already-here')
+  })
+})
+
+describe('attachableTo', () => {
+  it('excludes the real system policy', () => {
+    expect(attachableTo('salesforce', policiesAt('medium')).some((p) => p.isSystem)).toBe(false)
+  })
+
+  it('offers nothing to an app that already has its one policy', () => {
+    expect(attachableTo('google-workspace', policiesAt('medium'))).toEqual([])
+  })
+
+  it('offers an app with none the policies on other apps, and the unassigned ones first', () => {
+    const got = attachableTo('zoom', policiesAt('medium'))
+    expect(got.map((p) => p.id)).toContain('uc3-country-allowlist')
+    const firstAlso = got.findIndex((p) => p.appIds.length > 0)
+    const lastFresh = got.map((p) => p.appIds.length === 0).lastIndexOf(true)
+    expect(lastFresh).toBeLessThan(firstAlso)
+  })
+
+  it('offers the unattached policy to an app nothing protects', () => {
+    const got = attachableTo('zoom', policiesAt('medium')).map((p) => p.id)
+    /* The break-glass policy is the estate's only unattached one now — the
+       document asks it to cover every application and the model has no such
+       policy, so it sits with no app at all, as a draft. That is what makes it
+       the thing an app with nothing on it is offered first. */
+    expect(got).toContain('break-glass')
+    expect(got).not.toContain('global-default')
+  })
+})
+
+describe('attachTo', () => {
+  it('does not mutate its input', () => {
+    const before = policy({ appIds: [] })
+    attachTo(before, 'workday', apps)
+    expect(before.appIds).toEqual([])
+  })
+
+  it('changes appIds and nothing else a policy is judged by', () => {
+    const before = policy({ appIds: [], status: 'inactive', rules: [ruleOf(true), ruleOf(false)] })
+    const after = attachTo(before, 'workday', apps)
+    expect(after).toEqual({ ...before, appIds: ['workday'] })
+  })
+
+  it('leaves the timestamp to whoever saves it', () => {
+    const before = policy({ appIds: [], lastModified: 'Three weeks ago', modifiedBy: 'Priya' })
+    const after = attachTo(before, 'jira', apps)
+    expect(after.lastModified).toBe('Three weeks ago')
+    expect(after.modifiedBy).toBe('Priya')
+  })
+
+  it('never switches a policy on', () => {
+    expect(attachTo(policy({ appIds: [], status: 'inactive' }), 'jira', apps).status).toBe('inactive')
+  })
+
+  it('does not publish a draft it has just given an application to', () => {
+    /* The counterpart to `detachFrom`'s demotion, and the reason the pair is
+       not symmetric. An application is one of the things a draft was missing,
+       not evidence that it is finished — promoting here would publish a policy
+       because a picker was used. */
+    expect(attachTo(policy({ appIds: [], status: 'draft' }), 'box', apps).status).toBe('draft')
+  })
+
+  it('adds rather than replaces, which is the whole change', () => {
+    expect(attachTo(policy({ appIds: ['slack'] }), 'workday', apps).appIds).toEqual(['slack', 'workday'])
+  })
+
+  it('is a no-op on an application it already has', () => {
+    // A list that could hold a duplicate would draw it twice and let one
+    // removal leave the other behind.
+    const before = policy({ appIds: ['workday'] })
+    expect(attachTo(before, 'workday', apps)).toBe(before)
+  })
+
+  it('refuses an application the tenant does not have', () => {
+    /* `store.appById` resolves an unknown id to `apps[0]`, so without this the
+       bad write renders as Salesforce on six surfaces instead of failing. */
+    expect(() => attachTo(policy(), 'not-an-app', apps)).toThrow(/not-an-app/)
+  })
+
+  it('keeps no record of where a moved policy came from', () => {
+    // Documenting that the model has nowhere to put one: a policy has an
+    // application, not a history of applications.
+    const after = attachTo(policy({ appIds: ['slack'] }), 'workday', apps)
+    expect(Object.keys(after).filter((k) => /previous|prior|was/i.test(k))).toEqual([])
+    expect(after.appIds).toEqual(['slack', 'workday'])
+  })
+})
+
+describe('detachFrom', () => {
+  it('removes the one it is given, leaving an empty list', () => {
+    const after = detachFrom(policy({ appIds: ['workday'] }), 'workday')
+    expect(after.appIds).toEqual([])
+  })
+
+  it('removes only the one it is given', () => {
+    /* The reason this takes an argument now. Removing GitHub from a policy that
+       also protects AWS must leave AWS alone — the old signature could only
+       empty the policy, which would have switched off enforcement on an
+       application nobody touched. */
+    const after = detachFrom(policy({ appIds: ['github', 'aws'], status: 'active' }), 'github')
+    expect(after.appIds).toEqual(['aws'])
+  })
+
+  it('does not demote while an application is left', () => {
+    expect(detachFrom(policy({ appIds: ['github', 'aws'], status: 'active' }), 'github').status).toBe('active')
+  })
+
+  it('ignores an application the policy does not have', () => {
+    const before = policy({ appIds: ['github'], status: 'active' })
+    const after = detachFrom(before, 'aws')
+    expect(after.appIds).toEqual(['github'])
+    expect(after.status).toBe('active')
+  })
+
+  it('sends the policy back to a draft rather than leaving it on with no app', () => {
+    /* The state this replaces — active, no application, a warning hung off it —
+       is not one the product has. A policy missing something it needs before it
+       can be published is a draft, and nothing else. */
+    const after = detachFrom(policy({ appIds: ['workday'], status: 'active' }), 'workday')
+    expect(after.status).toBe('draft')
+  })
+
+  it('demotes an always-on policy too', () => {
+    // The one status that would otherwise keep enforcing with nothing to enforce on.
+    expect(detachFrom(policy({ appIds: ['workday'], status: 'always-on' }), 'workday').status).toBe('draft')
+  })
+
+  it('refuses the tenant default', () => {
+    expect(() => detachFrom(SYSTEM, 'salesforce')).toThrow()
+  })
+
+  it('round-trips the application back, but does not republish', () => {
+    /* Deliberately lossy in one field, and it is the field that decides
+       sign-ins. Re-attaching restores the application; turning the policy back
+       on is a decision an administrator makes, not one a round trip makes for
+       them. */
+    const before = policy({ appIds: ['workday'], status: 'active' })
+    const round = attachTo(detachFrom(before, 'workday'), 'workday', apps)
+    expect(round).toEqual({ ...before, status: 'draft' })
+  })
+})
+
+describe('summarise', () => {
+  it('says an app nothing names has the default only', () => {
+    const s = summarise('zoom', policiesAt('medium'))
+    expect(s).toMatchObject({ own: 0, decides: 0, label: 'Default only', tag: null, tone: 'off' })
+  })
+
+  /* On a local fixture, not the estate.
+
+     It read the seeds for an app with exactly one inactive policy on it, and
+     the estate this console is reasoned about with no longer has one: every
+     policy in the use-case document is written to be in force. Rather than
+     switch a scenario to
+     `inactive` so a unit test can find it — inventing configuration to satisfy
+     an assertion — this states the same property about a policy it makes
+     itself. The estate-coupled assertions above are the ones that have to read
+     the real seeds; this one never did. */
+  it('marks one attached-but-inactive policy off rather than protected', () => {
+    const s = summarise('workday', [policy({ appIds: ['workday'], status: 'inactive' })])
+    expect(s.own).toBe(1)
+    expect(s.decides).toBe(0)
+    expect(s.tag).toBe('Inactive')
+    expect(s.title).toBe('Inactive. It decides no sign-ins.')
+    expect(s.tone).toBe('off')
+  })
+
+  it('counts one live policy with no rules as deciding, by its last row', () => {
+    /* The engine picks it for everyone it governs and its last row answers
+       them, so it is protection, not "No rule on" (app-standing.ts). */
+    const s = summarise('workday', [policy({ appIds: ['workday'], rules: [] })])
+    expect(s).toMatchObject({ own: 1, decides: 1, tag: null, tone: 'on' })
+  })
+
+  it('names none deciding when several are attached and none decides', () => {
+    const list = [policy({ appIds: ['workday'], status: 'draft' }), policy({ appIds: ['workday'], status: 'inactive' })]
+    expect(summarise('workday', list)).toMatchObject({ label: '2 policies', tag: 'None deciding', tone: 'off' })
+  })
+
+  it('names the shortfall when some of several do not decide', () => {
+    const list = [
+      policy({ appIds: ['workday'], audience: audienceOf(['finance']) }),
+      policy({ appIds: ['workday'], status: 'inactive' }),
+      policy({ appIds: ['workday'], audience: audienceOf(['engineering']) }),
+    ]
+    expect(summarise('workday', list)).toMatchObject({
+      own: 3,
+      decides: 2,
+      label: '3 policies',
+      tag: '1 not deciding',
+      tone: 'part',
+    })
+  })
+
+  it('counts a live policy shadowed for everyone it names as not deciding', () => {
+    /* Two policies for everyone on one application: the first in the list
+       decides, and the second never does, whatever its status says. */
+    const list = [policy({ appIds: ['workday'] }), policy({ appIds: ['workday'] })]
+    expect(summarise('workday', list)).toMatchObject({ own: 2, decides: 1, tag: '1 not deciding', tone: 'part' })
+  })
+
+  it('says a lone policy that can never decide is never deciding', () => {
+    /* Account Management: a Session policy is a post sign-in one, never summarised here (post-sign-in.ts). */
+    const s = summarise('workday', [policy({ appIds: ['workday'], type: 'Account Management' })])
+    expect(s).toMatchObject({ own: 1, decides: 0, tag: 'Never decides', tone: 'off', title: 'Not an app access policy.' })
+  })
+
+  it('carries no qualification when everything attached decides', () => {
+    const s = summarise('workday', [
+      policy({ appIds: ['workday'], audience: audienceOf(['finance']) }),
+      policy({ appIds: ['workday'], audience: audienceOf(['engineering']) }),
+    ])
+    expect(s).toMatchObject({ label: '2 policies', tag: null, tone: 'on' })
+  })
+
+  it('counts a draft as attached but not deciding', () => {
+    // A cell reading "1 policy" with no qualification would overstate the cover.
+    const s = summarise('workday', [policy({ appIds: ['workday'], status: 'draft' })])
+    expect(s.own).toBe(1)
+    expect(s.decides).toBe(0)
+    expect(s.tag).toBe('Draft')
+    expect(s.tone).toBe('off')
+  })
+
+  it('names a monitoring policy by its status word, and counts it as not deciding', () => {
+    const s = summarise('workday', [policy({ appIds: ['workday'], status: 'monitor' })])
+    expect(s).toMatchObject({ own: 1, decides: 0, tag: 'Monitoring', tone: 'off' })
+    expect(s.title).toBe('Monitoring. It decides no sign-ins.')
+  })
+})
+
+describe('a monitoring policy', () => {
+  /* It checks every sign-in and enforces nothing, so on this screen it is in
+     the race exactly as much as a switched-off one: not at all. Numbering it,
+     or calling it protection, is the trap a report-only flag on an Active
+     policy would set. */
+  const watching = policy({ appIds: ['workday'], status: 'monitor', rules: [ruleOf(true)] })
+
+  it('decides nothing, however many enabled rules it has', () => {
+    expect(decidesFor(watching)).toBe(false)
+  })
+
+  it('takes no precedence number', () => {
+    expect(orderOf([policy(), watching, policy()])).toEqual([1, null, 2])
+  })
+
+  it('says it is monitoring, not that it is off', () => {
+    expect(whyNotDeciding(watching)).toBe('Monitoring. It decides no sign-ins.')
+  })
+})
+
+describe('listPhrase', () => {
+  it('names one, two, or the first and a count', () => {
+    expect(listPhrase([])).toBe('')
+    expect(listPhrase(['Box'])).toBe('Box')
+    expect(listPhrase(['Box', 'Slack'])).toBe('Box and Slack')
+    expect(listPhrase(['Box', 'Slack', 'Jira'])).toBe('Box and 2 other applications')
+  })
+})
+
+describe('decidedOnlyBy', () => {
+  const sys = policy({ id: 'sys', isSystem: true, status: 'always-on', appIds: [] })
+
+  it('lists the apps no other deciding policy covers', () => {
+    const mine = policy({ appIds: ['box', 'slack'] })
+    const other = policy({ appIds: ['slack'] })
+    expect(decidedOnlyBy(mine, [sys, mine, other])).toEqual(['box'])
+  })
+
+  it('ignores other policies that do not decide', () => {
+    const mine = policy({ appIds: ['box'] })
+    const off = policy({ appIds: ['box'], status: 'inactive' })
+    const draft = policy({ appIds: ['box'], status: 'draft' })
+    expect(decidedOnlyBy(mine, [sys, mine, off, draft])).toEqual(['box'])
+  })
+
+  it('is empty for a policy that decides nothing, and for the system policy', () => {
+    const off = policy({ appIds: ['box'], status: 'inactive' })
+    expect(decidedOnlyBy(off, [sys, off])).toEqual([])
+    expect(decidedOnlyBy(sys, [sys])).toEqual([])
+  })
+})
+
+describe('deleteDetail', () => {
+  const sys = policy({ id: 'sys', name: 'Global Default Policy', isSystem: true, status: 'always-on', appIds: [] })
+  const box = apps.find((a) => a.id === 'box')!
+  const slack = apps.find((a) => a.id === 'slack')!
+
+  it('says the apps fall back to the default when the policy is the only one deciding them', () => {
+    const mine = policy({ appIds: ['box'] })
+    expect(deleteDetail(mine, [sys, mine], apps)).toBe(
+      `Protects ${box.name}. Sign-ins there will use the Global Default Policy.`,
+    )
+  })
+
+  it('names only the apps that fall back when another policy still decides the rest', () => {
+    const mine = policy({ appIds: ['box', 'slack'] })
+    const other = policy({ appIds: ['slack'] })
+    expect(deleteDetail(mine, [sys, mine, other], apps)).toBe(
+      // Catalogue order, as every applications cell lists them.
+      `Protects ${slack.name} and ${box.name}. Sign-ins to ${box.name} will use the Global Default Policy.`,
+    )
+  })
+
+  it('does not say protects for a policy that decides nothing', () => {
+    const off = policy({ appIds: ['box'], status: 'inactive' })
+    expect(deleteDetail(off, [sys, off], apps)).toBe(`Assigned to ${box.name}. It decides no sign-ins.`)
+  })
+
+  it('says nothing for a policy with no applications', () => {
+    expect(deleteDetail(policy({ appIds: [], status: 'draft' }), [sys], apps)).toBeNull()
+  })
+
+  /* The engine's answer, as the app page numbers its rows (`appStanding`),
+     not `decidesFor`: a live policy with no rules decides by its last row, and
+     a live one shadowed for everyone it names decides nothing. */
+  it('says protects for a live policy with no rules: it decides by its last row', () => {
+    const mine = policy({ appIds: ['box'], rules: [] })
+    expect(deleteDetail(mine, [sys, mine], apps)).toBe(`Protects ${box.name}. Sign-ins there will use the Global Default Policy.`)
+  })
+
+  it('says Payroll access protects Payroll, as the app page numbers it', () => {
+    const medium = tenantAt('medium')
+    const baseline = medium.policies.find((p) => p.id === 's9-finance')!
+    const payroll = medium.apps.find((a) => a.id === 'payroll')!
+    expect(deleteDetail(baseline, medium.policies, medium.apps, medium.directory.people, medium.groups)).toBe(
+      `Protects ${payroll.name}. Sign-ins there will use the Global Default Policy.`,
+    )
+  })
+
+  it('says a second AWS policy for DevOps decides no sign-ins: AWS access decides for DevOps', () => {
+    /* One app has one policy in the showcase; the shadowed second one is built here from it. */
+    const t = showcaseTenant()
+    const base = t.policies.find((p) => p.id === 'sc-aws-engineering')!
+    const devops: Policy = { ...base, id: 'p-aws-prod', name: 'AWS production for DevOps', audience: audienceOf(['devops']) }
+    const aws = t.apps.find((a) => a.id === 'aws')!
+    expect(deleteDetail(devops, [...t.policies, devops], t.apps, t.directory.people, t.groups)).toBe(`Assigned to ${aws.name}. It decides no sign-ins.`)
+  })
+
+  it('names only the applications it decides on after "Protects"', () => {
+    /* Shadowed on Slack by a group policy higher in the list for the one group
+       it names; deciding on Box. */
+    const mine = policy({ appIds: ['box', 'slack'], audience: audienceOf(['finance']) })
+    const first = policy({ appIds: ['slack'], audience: audienceOf(['finance']) })
+    expect(deleteDetail(mine, [sys, first, mine], apps, users, groups)).toBe(
+      `Protects ${box.name}. Sign-ins there will use the Global Default Policy.`,
+    )
+  })
+})
+
+describe('decidedOnlyBy, on the showcase', () => {
+  const t = showcaseTenant()
+  const byName = (name: string) => t.policies.find((p) => p.name === name)!
+  const only = (name: string) => decidedOnlyBy(byName(name), t.policies, t.directory.people, t.groups)
+
+  it('keeps Box for Box access: everyone it decides for goes to the Global Default', () => {
+    expect(only('Box access')).toEqual(['box'])
+  })
+
+  it('leaves Box off for Box access when a second Box policy takes everyone it decides for', () => {
+    const copy: Policy = { ...byName('Box access'), id: 'p-box-2', name: 'Box for engineering and design' }
+    expect(decidedOnlyBy(byName('Box access'), [...t.policies, copy], t.directory.people, t.groups)).toEqual([])
+  })
+})
+
+describe('the fixtures themselves', () => {
+  it('never attach a policy to an application the tenant does not have', () => {
+    /* `policiesAt('small')` rewrites `appId` to undefined when the app is not
+       in that depth's list, which is the only place this is enforced. Pinning
+       it at every depth is what stops the Applications screen becoming the
+       thing that breaks it. */
+    for (const d of DEPTHS) {
+      const ids = new Set(appsAt(d).map((a) => a.id))
+      for (const p of policiesAt(d)) {
+        for (const appId of p.appIds) {
+          expect(`${d}:${p.id}:${appId}`).toBe(`${d}:${p.id}:${ids.has(appId) ? appId : 'MISSING'}`)
+        }
+      }
+    }
+  })
+
+  it('keep coversEveryApp and isSystem saying the same thing', () => {
+    for (const d of DEPTHS) {
+      for (const p of policiesAt(d)) expect(coversEveryApp(p)).toBe(p.isSystem === true)
+    }
+  })
+
+  it('give every application a type and a formatted timestamp', () => {
+    for (const a of apps) {
+      expect(a.type).toMatch(/^(SAML\/WS-FED|OAuth\/OpenID|Desktop)$/)
+      // MMM DD, YYYY, HH:MM:SS — the shape the live page prints.
+      expect(a.lastUpdated).toMatch(/^[A-Z][a-z]{2} \d{2}, \d{4}, \d{2}:\d{2}:\d{2}$/)
+    }
+  })
+})

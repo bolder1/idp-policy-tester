@@ -1,0 +1,212 @@
+/* ---------------------------------------------------------------------------
+   External hooks. Shaped like the zones library, because a hook is the same
+   kind of object — named once, referenced everywhere, dangerous to edit.
+   --------------------------------------------------------------------------- */
+
+/* The `*.` that closed this banner was not a close.
+
+   It ran to the next terminator thirty-six lines down, which put `.bhk__list`
+   and the whole of `.bhk__card` inside a comment — so the hook cards have had
+   no surface, no border and no padding for as long as the typo has been here,
+   and nothing could see it. `stylesheets.test.ts` counts braces and skips
+   comment bodies, so a swallowed rule balances perfectly; the build was clean
+   and the classes were still emitted. There is an assertion for it now, and it
+   is the one that found this. */
+.bhk__list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-6); }
+
+.bhk__card {
+  padding: var(--space-6);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+.bhk__cardhead { display: flex; align-items: center; gap: var(--space-5); }
+.bhk__tile {
+  flex: none;
+  display: grid; place-items: center;
+  width: 34px; height: 34px;
+  border-radius: var(--radius-md);
+}
+.bhk__tile.is-sync { background: var(--fb-info-bg); color: var(--fb-info-fg); }
+.bhk__tile.is-attribute-sync { background: var(--fb-accent-bg); color: var(--fb-accent-fg); }
+
+/* The name and, when there is one, the tip holding the description. A long
+   name with no spaces wraps rather than pushing the buttons off the card. */
+.bhk__cardname { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--space-3); }
+.bhk__cardname h3 { margin: 0; min-width: 0; font-size: var(--fs-lg); font-weight: var(--fw-medium); overflow-wrap: anywhere; }
+
+/* --- The facts row --------------------------------------------------------- */
+
+.bhk__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-top: var(--space-5);
+}
+.bhk__fact {
+  padding: var(--space-4) var(--space-5);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-sm);
+  color: var(--text-body);
+  max-width: 100%;
+}
+/* The endpoint is a URL, which can be longer than the card is wide. */
+.bhk__fact.is-wide { overflow-wrap: anywhere; }
+/* Sentence case. These are questions - "If it does not answer", "Gives up
+   after" - and a question set in letterspaced caps stops looking like one. */
+.bhk__fact strong {
+  display: block;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-regular);
+  color: var(--text-tertiary);
+  text-transform: none;
+  letter-spacing: 0;
+}
+/* Neither failure mode is coloured as danger. They are two defensible answers
+   to one question, and tinting one red would make the form read as though the
+   product has an opinion it is declining to state. Notice and info, not
+   negative and positive. */
+.bhk__fact.is-fail-closed { background: var(--fb-notice-bg); border-color: var(--fb-notice-border); color: var(--fb-notice-fg); }
+.bhk__fact.is-fail-closed strong { color: var(--fb-notice-fg); opacity: 0.75; }
+.bhk__fact.is-fail-open { background: var(--fb-info-bg); border-color: var(--fb-info-border); color: var(--fb-info-fg); }
+.bhk__fact.is-fail-open strong { color: var(--fb-info-fg); opacity: 0.75; }
+.bhk__fact.is-slow { border-color: var(--fb-notice-border); }
+
+.bhk__issue {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin: var(--space-4) 0 0;
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+.bhk__issue svg { flex: none; margin-top: 2px; }
+.bhk__issue.is-error { background: var(--fb-negative-bg); border: 1px solid var(--fb-negative-border); color: var(--fb-negative-fg); }
+.bhk__issue.is-warning { background: var(--fb-notice-bg); border: 1px solid var(--fb-notice-border); color: var(--fb-notice-fg); }
+
+/* --- Used by --------------------------------------------------------------- */
+
+.bhk__uses { margin-top: var(--space-5); padding-top: var(--space-5); border-top: 1px solid var(--border-subtle); }
+/* A label, not a section heading. It sits over one line of text; drawn as an
+   eyebrow in caps it announced a section that never arrives. */
+.bhk__useshead {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-tertiary);
+}
+.bhk__usesnone { margin: var(--space-3) 0 0; font-size: var(--fs-sm); color: var(--text-tertiary); }
+/* The rows this section drew for its used-by list are `.buse` in used-by.css
+   now. Removed rather than left: they were `.bhk__uses ul li` and friends, so
+   they went on matching the shared list that replaced them and re-flattened its
+   cards back into two-column rows. */
+.bhk__uses .buse { margin-top: var(--space-3); }
+
+/* --- The form -------------------------------------------------------------- */
+
+.bhk__form { display: flex; flex-direction: column; gap: var(--space-6); }
+.bhk__row { display: flex; gap: var(--space-5); align-items: flex-start; }
+.bhk__row .bhk__field { flex: 1; }
+.bhk__field--method { flex: 0 0 110px !important; }
+.bhk__field--num { flex: 0 0 140px !important; }
+
+.bhk__field { display: flex; flex-direction: column; gap: var(--space-3); }
+.bhk__field > span { font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--text-primary); }
+.bhk__field > span em {
+  display: block;
+  margin-top: 2px;
+  font-style: normal;
+  font-weight: 400;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+/* The shared control recipe — `--ctl-*` in console-theme.css. This block used
+   to restate it with its own numbers, so the hook form's fields were 38.6px on
+   a 4px radius against the console's 35px on 6px: the same control, drawn two
+   ways, on a dialog that opens over a page full of the other one. */
+.bhk__field input,
+.bhk__field select {
+  width: 100%;
+  height: var(--ctl-height-md);
+  padding: 0 var(--space-5);
+  font-family: inherit;
+  font-size: var(--fs-md);
+  color: var(--text-body);
+  background: var(--ctl-bg);
+  border: var(--bw-thin) solid var(--ctl-border);
+  border-radius: var(--ctl-radius);
+}
+.bhk__field textarea {
+  width: 100%;
+  padding: var(--space-4) var(--space-5);
+  font-family: inherit;
+  font-size: var(--fs-md);
+  color: var(--text-body);
+  background: var(--ctl-bg);
+  border: var(--bw-thin) solid var(--ctl-border);
+  border-radius: var(--ctl-radius);
+}
+.bhk__field textarea { line-height: 1.5; resize: vertical; }
+.bhk__field input:focus-visible,
+.bhk__field textarea:focus-visible,
+.bhk__field select:focus-visible {
+  outline: none;
+  border-color: var(--ctl-border-focus);
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 4px var(--focus-halo);
+}
+
+.bhk__modes { display: flex; flex-direction: column; gap: var(--space-4); margin: 0; padding: 0; border: none; }
+.bhk__modes legend {
+  padding: 0 0 var(--space-3);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--text-primary);
+}
+.bhk__modes label {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.bhk__modes label:hover { border-color: var(--int-neutral-border-hover); }
+.bhk__modes label.is-on { border-color: var(--accent); background: var(--accent-soft); }
+.bhk__modes input { margin-top: 3px; accent-color: var(--accent); }
+.bhk__modes svg { flex: none; margin-top: 2px; color: var(--text-tertiary); }
+.bhk__modes strong { display: block; font-size: var(--fs-md); font-weight: var(--fw-medium); }
+.bhk__modes em {
+  display: block;
+  margin-top: 2px;
+  font-style: normal;
+  font-size: var(--fs-sm);
+  color: var(--text-tertiary);
+  line-height: 1.5;
+}
+
+/* Each issue under the field it belongs to. Errors appear once Save has been
+   pressed; warnings as soon as they apply. */
+.bhk__fieldissues { display: flex; flex-direction: column; gap: var(--space-2); }
+.bhk__fieldissue {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-regular);
+  line-height: 1.45;
+}
+.bhk__fieldissue svg { flex: none; margin-top: 2px; }
+.bhk__fieldissue.is-error { color: var(--fb-negative-fg); }
+.bhk__fieldissue.is-warning { color: var(--fb-notice-fg); }
+.bhk__field input[aria-invalid='true'] { border-color: var(--fb-negative-border); }

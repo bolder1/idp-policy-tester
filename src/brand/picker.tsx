@@ -1,0 +1,542 @@
+import { motion } from 'motion/react'
+import { Fragment, useCallback, useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
+import { Check, ChevronDown, ListX, type LucideIcon, SearchX } from 'lucide-react'
+
+import { appRoot } from './dialog-chrome'
+import { EmptyState } from './empty'
+import { Button } from './kit'
+
+/* The stylesheet is imported from main.tsx, in cascade order — see the note
+   there. Importing it from this module put it before kit.css and let the
+   button reset erase every trigger's border. */
+
+/* -----------------------------------------------------------------------------
+   Picker — the replacement for the native `<select>`.
+
+   The selects in the condition editor were not broken by any of the usual
+   suspects — not `appearance`, not `pointer-events`, not a stacking context,
+   not the animation wrapper. They were **clipped out of existence**. The
+   condition row carried `overflow: hidden` to protect a 3px category edge, and
+   its fixed columns (150px field + 122px operator + 26px remove + gaps) meant
+   the value column computed to zero below about 342px of row width: the select
+   rendered at 17.6px, which is its arrow and nothing else, and the remove
+   button sat entirely outside the clip box. Above that width they worked, and
+   looked like unstyled OS chrome dropped into a design system.
+
+   So the row loses its `overflow` and this loses the `<select>`.
+
+   The popup is portalled to the app root (`.brand-root`) and positioned
+   `fixed`, which is this codebase's own proven un-clippable pattern — `Tip` was
+   rewritten to it for exactly this reason. The app root rather than
+   `document.body`, so the kit's resets, type and focus ring reach what is
+   inside it: the empty state's button rendered in the browser's own button
+   font out there. The placement logic is lifted from Tip: flip only
+   when the preferred side genuinely lacks room AND the other has more, clamp
+   horizontally to the viewport, follow scroll with `capture: true` so a nested
+   scroller moves it too, and stay hidden until measured so nothing is ever seen
+   at 0,0.
+
+   It sits at `--z-popover`, ABOVE `--z-modal`, because a menu is always opened
+   from something and has to be above whatever that was: at `--z-dropdown` it
+   rendered behind any dialog it was opened inside, which is where the create
+   form now asks for an application. Still below `--z-tooltip`, so a `Tip` can
+   explain an option.
+   -------------------------------------------------------------------------- */
+
+const GAP = 4
+const MARGIN = 8
+/* The narrowest a popup may be, whatever the trigger it hangs off. A 90px pill
+   in a table cell still needs room to read "Corporate managed". */
+const MIN_POP = 220
+
+export interface PickerOption {
+  value: string
+  label: string
+  /** A second line — "12 uses", "Corporate managed". Searched as well as shown. */
+  meta?: string
+  icon?: LucideIcon
+  /* A mark the icon set cannot draw — an app logo, an avatar.
+
+     Wins over `icon`, and takes a node rather than a src so the caller keeps
+     its own fallback: `AppLogo` swaps a monogram in when a third-party host
+     moves a file, and a broken image in a list of applications reads as a
+     broken product. */
+  art?: ReactNode
+  /** Section heading. Emitted when it changes, so caller order is preserved. */
+  group?: string
+  disabled?: boolean
+}
+
+export function Picker({
+  value,
+  options,
+  onChange,
+  label,
+  placeholder = 'Choose…',
+  searchable,
+  multiple = false,
+  size = 'sm',
+  width = 'content',
+  footer,
+  onFooter,
+  invalid = false,
+  disabled = false,
+  autoOpen = false,
+  summary: summaryText,
+  prefix,
+  icon: Ico,
+  noun = 'options',
+  listClassName,
+}: {
+  value: string | string[] | null
+  options: PickerOption[]
+  onChange: (v: string) => void
+  /** Accessible name. Required — a combobox with no name is one nobody can use. */
+  label: string
+  placeholder?: string
+  /** Defaults on once the list is long enough to scroll past. */
+  searchable?: boolean
+  multiple?: boolean
+  size?: 'sm' | 'md'
+  width?: 'content' | 'fill'
+  /** A trailing action in the popup — "Manage zones →". */
+  footer?: ReactNode
+  onFooter?: () => void
+  invalid?: boolean
+  /** The question still applies but the answer cannot change — one option is
+      possible, or something earlier in the form decided it. The value stays on
+      screen; only the choosing is off. Preferred to swapping the control for
+      plain text, which leaves a line of prose in a column of fields. */
+  disabled?: boolean
+  /** Open on mount, for a row inserted with nothing chosen yet. */
+  autoOpen?: boolean
+  /* What the closed trigger says, when the caller can say it better.
+
+     Overrides the built-in summary entirely — including the placeholder, so a
+     caller can state a meaningful empty ANSWER ("No application") instead of an
+     instruction ("Choose…"). Same prop name and type as `ConditionPopover`'s,
+     so moving between the two does not mean learning two words for one job. */
+  summary?: string
+  /** A muted word before the value on the closed trigger — "Type", as in
+      "Type  Device health". What the dropdown filters, said once, so the value
+      does not have to carry it ("All types"). */
+  prefix?: string
+  /** A mark before the prefix, for a control whose JOB needs naming — the
+      library filters wear a funnel so the row reads as "search, then filter"
+      without a word for it (owner, 23 Sep 2026: "just add a filter icon"). */
+  icon?: LucideIcon
+  /** Plural, lower case, for the empty states: 'applications', 'zones'. */
+  noun?: string
+  /** A class on the option list, for a page that styles its lists (the popup is in a portal, outside the page). */
+  listClassName?: string
+}) {
+  const [open, setOpen] = useState(autoOpen)
+  const [q, setQ] = useState('')
+  const [cursor, setCursor] = useState(0)
+  const [pos, setPos] = useState<{ top: number; left: number; width: number; maxH: number; side: 'top' | 'bottom' } | null>(null)
+  const anchor = useRef<HTMLButtonElement | null>(null)
+  const pop = useRef<HTMLDivElement | null>(null)
+  const id = useId()
+
+  const picked = multiple ? ((value as string[] | null) ?? []) : value ? [value as string] : []
+  const canSearch = searchable ?? options.length >= 8
+
+  /* The closed trigger carries the chosen option's mark as well as its name.
+     A list of applications is scanned by logo before it is read, and a control
+     that shows the logo while open and drops it when closed makes the answer
+     look like a different thing from the choice that produced it. */
+  const sole = picked.length === 1 ? options.find((o) => o.value === picked[0]) : undefined
+
+  /* Trimmed, so a stray space neither hides every option nor reports that
+     nothing matches " ". */
+  const needle = q.trim().toLowerCase()
+  const shown = needle
+    ? options.filter((o) => `${o.label} ${o.meta ?? ''} ${o.value}`.toLowerCase().includes(needle))
+    : options
+  const usable = shown.filter((o) => !o.disabled)
+
+  /* A caller's summary wins.
+
+     The multi-select fallback is `${picked.length} selected`, which is the one
+     thing a closed control must never say: it announces that something was
+     chosen and withholds what. Tolerable where the trigger is 90px in a table
+     cell and there is nowhere to put a name; not where the trigger is a
+     full-width row and the answer IS the row. */
+  const summary =
+    summaryText ??
+    (picked.length === 0
+      ? placeholder
+      : picked.length === 1
+        ? (options.find((o) => o.value === picked[0])?.label ?? picked[0])
+        : `${picked.length} selected`)
+
+  /* The popup's own width must never feed its own constraint.
+
+     The minimum was `Math.max(anchorWidth, measuredPopupWidth)`, and the
+     measurement is a BORDER-box width being written back as a CONTENT-box
+     minimum: the reset that would make those the same number is
+     `.brand-root *`, and this popup was then portalled to `document.body`,
+     outside it. So each placement added the 2px of border, and placement runs on every
+     scroll event — scrolling the option list widened the panel a couple of
+     pixels a tick, without limit, for as long as somebody kept scrolling.
+
+     Both halves are fixed: the stylesheet now sets `box-sizing` on the popup,
+     as `.brpk` already does for the same reason, and the width comes from the
+     ANCHOR alone. The popup's measurement is still read to keep its right edge
+     on screen — reading it is fine, writing it back is the bug. */
+  const place = useCallback(() => {
+    const a = anchor.current?.getBoundingClientRect()
+    if (!a) return
+    const p = pop.current?.getBoundingClientRect()
+    const h = p?.height ?? 0
+    const w = Math.max(a.width, MIN_POP)
+    // What it actually occupies — content can carry it past `w`, up to max-width.
+    const shown = Math.max(w, p?.width ?? 0)
+
+    const below = window.innerHeight - a.bottom
+    const above = a.top
+    const side: 'top' | 'bottom' = below < h + GAP + MARGIN && above > below ? 'top' : 'bottom'
+
+    /* Cap to the room on the side it opened, and let the LIST scroll.
+
+       Without this a control near the middle of the window had a flip
+       available on both sides and enough room on neither: ten applications
+       are 340px of panel, a dialog puts its fields 300px from either edge,
+       and the panel opened upward to a NEGATIVE top — its search box off the
+       top of the window and the first three rows with it. Same fix, and the
+       same reasoning, as the condition panel's. */
+    const room = (side === 'top' ? above : below) - GAP - MARGIN
+    const maxH = Math.min(340, Math.max(180, room))
+
+    setPos({
+      top: side === 'bottom' ? a.bottom + GAP : Math.max(MARGIN, a.top - Math.min(h, maxH) - GAP),
+      left: Math.max(MARGIN, Math.min(a.left, window.innerWidth - shown - MARGIN)),
+      width: w,
+      maxH,
+      side,
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!open) {
+      setPos(null)
+      setQ('')
+      return
+    }
+    place()
+    /* `capture: true` so a scroll inside any container moves it, not just the
+       window. That is the half of the fix that keeps it attached to its row —
+       and the reason a scroll of the popup's OWN list has to be skipped. The
+       panel does not move when its list scrolls, so re-placing there was pure
+       work, and it was the wheel ticks that made the ratchet above visible. */
+    const onScroll = (e: Event) => {
+      if (pop.current?.contains(e.target as Node)) return
+      place()
+    }
+    window.addEventListener('scroll', onScroll, true)
+    window.addEventListener('resize', place)
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node
+      if (!anchor.current?.contains(t) && !pop.current?.contains(t)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => {
+      window.removeEventListener('scroll', onScroll, true)
+      window.removeEventListener('resize', place)
+      document.removeEventListener('mousedown', onDown)
+    }
+  }, [open, place])
+
+  // Re-measure when a search changes the popup's height under it.
+  useEffect(() => {
+    if (open) place()
+  }, [q, open, place])
+
+  /* A pick hands focus back to the trigger, the one control left when the
+     list closes. An option is not focusable, so a click on one used to leave
+     focus on <body> — where Escape and the arrow keys reach nothing, and the
+     next Tab starts from the top of the page — and Enter in the search field
+     took the field away with focus in it. Before `onChange`, so a caller that
+     moves focus on a pick still has the last word. */
+  const commit = (o: PickerOption) => {
+    if (o.disabled) return
+    if (!multiple) anchor.current?.focus({ preventScroll: true })
+    onChange(o.value)
+    if (!multiple) setOpen(false)
+  }
+
+  const step = (d: number) => {
+    if (usable.length === 0) return
+    setCursor((c) => (c + d + usable.length) % usable.length)
+  }
+
+  const onKey = (e: React.KeyboardEvent) => {
+    /* Only an open list takes Escape. A closed picker stopped it too, so a
+       drawer whose focus sat on its picker could not be closed from the keys
+       (Assign users, 10 Oct 2026). */
+    if (e.key === 'Escape') {
+      if (!open) return
+      e.stopPropagation()
+      setOpen(false)
+      anchor.current?.focus()
+      return
+    }
+    const target = e.target as HTMLElement
+    const inPop = !!pop.current?.contains(target)
+    /* Tab moves between the controls inside the popup — its search, Clear
+       search, the footer — and closes it only when it would leave. It used to
+       close on any Tab, so the footer and the empty state's button could not be
+       reached from the keys, and focus fell out of a popup that sits at the end
+       of the page into nowhere. Leaving hands focus back to the trigger. */
+    if (e.key === 'Tab') {
+      if (inPop && pop.current) {
+        const inside = Array.from(
+          pop.current.querySelectorAll<HTMLElement>('input:not([disabled]), button:not([disabled])'),
+        )
+        const at = inside.indexOf(target)
+        const next = at + (e.shiftKey ? -1 : 1)
+        if (at !== -1 && next >= 0 && next < inside.length) return
+        e.preventDefault()
+        setOpen(false)
+        anchor.current?.focus()
+        return
+      }
+      setOpen(false)
+      return
+    }
+    /* A button inside the popup answers its own Enter and Space. Taken here,
+       Enter on the footer picked the highlighted option instead. */
+    if (inPop && target instanceof HTMLButtonElement) return
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      if (!open) {
+        setOpen(true)
+        return
+      }
+      step(1)
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      step(-1)
+      return
+    }
+    if (e.key === 'Home') {
+      e.preventDefault()
+      setCursor(0)
+      return
+    }
+    if (e.key === 'End') {
+      e.preventDefault()
+      setCursor(Math.max(0, usable.length - 1))
+      return
+    }
+    if (e.key === 'Enter' || (e.key === ' ' && !canSearch)) {
+      e.preventDefault()
+      if (!open) {
+        setOpen(true)
+        return
+      }
+      if (usable[cursor]) commit(usable[cursor])
+      return
+    }
+  }
+
+  /* Clearing puts focus back in the search field, the control somebody who just
+     cleared a search types into next. Synchronous, before the button that was
+     pressed unmounts and takes focus with it. */
+  const clearSearch = () => {
+    setQ('')
+    setCursor(0)
+    pop.current?.querySelector<HTMLInputElement>('.bx-picker__search input')?.focus({ preventScroll: true })
+  }
+
+  /* Group headings are emitted when the group CHANGES rather than collected
+     into buckets, so the caller controls the order and the picker never
+     silently reshuffles a list somebody deliberately sorted. */
+  let lastGroup: string | undefined
+
+  return (
+    <span className={`bx-picker ${width === 'fill' ? 'is-fill' : ''}`}>
+      <button
+        ref={anchor}
+        type="button"
+        role="combobox"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? id : undefined}
+        aria-label={label}
+        aria-invalid={invalid || undefined}
+        aria-activedescendant={open && usable[cursor] ? `${id}-${cursor}` : undefined}
+        disabled={disabled}
+        className={`bx-picker__trigger bx-picker__trigger--${size} ${open ? 'is-open' : ''} ${
+          picked.length === 0 ? 'is-empty' : ''
+        } ${invalid ? 'is-invalid' : ''}`}
+        onClick={() => setOpen((v) => !v)}
+        onKeyDown={onKey}
+      >
+        {sole?.art && (
+          <span className="bx-picker__art" aria-hidden>
+            {sole.art}
+          </span>
+        )}
+        {Ico && <Ico className="bx-picker__icon" size={size === 'sm' ? 13 : 14} strokeWidth={2} aria-hidden />}
+        {prefix && <span className="bx-picker__prefix">{prefix}</span>}
+        <span className="bx-picker__value">{summary}</span>
+        <ChevronDown size={size === 'sm' ? 12 : 13} strokeWidth={2.1} aria-hidden />
+      </button>
+
+      {open &&
+        createPortal(
+          <motion.div
+            ref={pop}
+            id={id}
+            className={`bx-picker__pop is-${pos?.side ?? 'bottom'}`}
+            style={
+              {
+                top: pos?.top ?? 0,
+                left: pos?.left ?? 0,
+                minWidth: pos?.width ?? MIN_POP,
+                // Unset until measured, so the stylesheet's cap governs the
+                // hidden first pass and this governs every pass after it.
+                maxHeight: pos?.maxH,
+                // Hidden until measured, so nothing is ever seen at 0,0.
+                visibility: pos ? 'visible' : 'hidden',
+              } as CSSProperties
+            }
+            initial={{ opacity: 0, y: -3 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.12, ease: [0.2, 0, 0, 1] }}
+            onKeyDown={onKey}
+          >
+            {canSearch && (
+              <div className="bx-picker__search">
+                <input
+                  autoFocus
+                  aria-label={`Search ${label}`}
+                  aria-autocomplete="list"
+                  placeholder="Search…"
+                  value={q}
+                  onChange={(e) => {
+                    setQ(e.target.value)
+                    setCursor(0)
+                  }}
+                />
+              </div>
+            )}
+
+            {/* Nothing to list: the kit's empty state, compact, in place of the
+                list — not a stray line inside it. A search that matched nothing
+                offers the way back; an empty list says so, and the footer (when
+                there is one) is where to go and add something. */}
+            {shown.length === 0 && (
+              <div className="bx-picker__empty">
+                {needle ? (
+                  <EmptyState
+                    compact
+                    live
+                    icon={SearchX}
+                    title={`No ${noun} match “${q.trim()}”`}
+                    blurb="Check the spelling, or try another search."
+                    action={
+                      <Button variant="secondary" size="sm" onClick={clearSearch}>
+                        Clear search
+                      </Button>
+                    }
+                  />
+                ) : (
+                  <EmptyState compact icon={ListX} title={`No ${noun} yet`} blurb="There is nothing to choose from." />
+                )}
+              </div>
+            )}
+            <ul
+              role="listbox"
+              aria-label={label}
+              aria-multiselectable={multiple || undefined}
+              className={listClassName ? `bx-picker__list ${listClassName}` : 'bx-picker__list'}
+              hidden={shown.length === 0}
+            >
+              {shown.map((o) => {
+                const i = usable.indexOf(o)
+                const on = picked.includes(o.value)
+                const heading = o.group && o.group !== lastGroup ? o.group : null
+                lastGroup = o.group
+                const Ico = o.icon
+                return (
+                  <Fragment key={o.value}>
+                    {heading && (
+                      <li className="bx-picker__head u-label" role="presentation">
+                        {heading}
+                      </li>
+                    )}
+                    <li
+                      id={`${id}-${i}`}
+                      role="option"
+                      aria-selected={on}
+                      aria-disabled={o.disabled || undefined}
+                      className={`bx-picker__opt ${on ? 'is-on' : ''} ${i === cursor ? 'is-cursor' : ''} ${
+                        o.disabled ? 'is-off' : ''
+                      }`}
+                      onMouseEnter={() => i >= 0 && setCursor(i)}
+                      /* Focus stays where it is — the search field, or the
+                         trigger — so a list that stays open (multiple) keeps
+                         its keys, and one that closes has focus to hand back. */
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => commit(o)}
+                    >
+                      <span className="bx-picker__tick" aria-hidden>
+                        {on && <Check size={12} strokeWidth={3} />}
+                      </span>
+                      {o.art ? (
+                        <span className="bx-picker__art" aria-hidden>
+                          {o.art}
+                        </span>
+                      ) : (
+                        Ico && <Ico size={13} strokeWidth={1.8} aria-hidden />
+                      )}
+                      <span className="bx-picker__opttext">
+                        <strong>{o.label}</strong>
+                        {o.meta && <em>{o.meta}</em>}
+                      </span>
+                    </li>
+                  </Fragment>
+                )
+              })}
+            </ul>
+
+            {footer && (
+              <button
+                type="button"
+                className="bx-picker__footer"
+                onClick={() => {
+                  setOpen(false)
+                  onFooter?.()
+                }}
+              >
+                {footer}
+              </button>
+            )}
+          </motion.div>,
+          appRoot(),
+        )}
+    </span>
+  )
+}
+
+/* A block that keeps the geometry of what it replaces.
+
+   The component rules ban spinners and mandate skeletons, and the kit shipped
+   neither — so "every state accounted for" could not actually be satisfied for
+   any new control until this existed. */
+export function Skeleton({
+  w,
+  h = 14,
+  radius = 'var(--radius-sm)',
+}: {
+  w?: number | string
+  h?: number
+  radius?: string
+}) {
+  return <span className="bx-skel" style={{ width: w ?? '100%', height: h, borderRadius: radius }} aria-hidden />
+}

@@ -1,0 +1,135 @@
+import { describe, expect, it } from 'vitest'
+
+import {
+  anySignIn,
+  blankRule,
+  card,
+  cond,
+  groups,
+  policies,
+  reidRule,
+  when,
+  type Policy,
+  type Rule,
+} from '../data'
+import { leaves } from '../predicate'
+import { diagnose } from './diagnostics'
+
+/* -----------------------------------------------------------------------------
+   Gap 3 (copy a rule between policies) and the rationale field.
+
+   The copy itself is three lines in the store and needs no test. What needs a
+   test is the two claims the dialog makes on its behalf — that the copy is
+   independent, and that it can or cannot fire from the position it lands in.
+   Both are the kind of claim that stays true right up until somebody makes the
+   copy a reference "so edits stay in sync", which is a reasonable-sounding
+   change that breaks the model.
+
+   Note on scope. These rules used to carry their own `appliesTo`, and two of
+   the tests below leaned on it: one said "a catch-all for everyone shadows a
+   Finance rule", the other said "an Executives rule cannot shadow a Contractors
+   rule". Audience is the policy's now, so a rule cannot disagree with its
+   neighbours about who it governs and neither scenario exists at rule level.
+   Narrowing inside a policy is the rule's `who`, a field beside its WHEN, so
+   that is how both are written here — and the linter reads it alongside the
+   conditions, `audienceCovers` having been deleted.
+   -------------------------------------------------------------------------- */
+
+/** The store's copy, extracted so it can be exercised without React. */
+function copyInto(target: Policy, r: Rule): Policy {
+  return { ...target, rules: [...target.rules, reidRule(r)] }
+}
+
+const ruleWith = (over: Partial<Rule>): Rule => ({ ...blankRule('Off-network finance'), ...over })
+
+describe('copying a rule into another policy', () => {
+  it('lands at the end, so nothing already in the target changes meaning', () => {
+    const target: Policy = { ...policies[1], rules: policies[1].rules.slice(0, 2) }
+    const before = target.rules.map((r) => r.name)
+    const after = copyInto(target, ruleWith({ name: 'Copied' }))
+
+    expect(after.rules.slice(0, 2).map((r) => r.name)).toEqual(before)
+    expect(after.rules[after.rules.length - 1].name).toBe('Copied')
+  })
+
+  it('gives the copy its own id, so editing one cannot reach the other', () => {
+    const source = ruleWith({
+      name: 'Shared logic',
+      id: 'original',
+      when: when(card(cond('zone', 'not in zone', ['office']))),
+    })
+    const after = copyInto({ ...policies[1], rules: [] }, source)
+    const copy = after.rules[0]
+
+    expect(copy.id).not.toBe(source.id)
+
+    // The real claim: mutate the copy, and the source is untouched. A shallow
+    // spread is enough for the scalar fields.
+    copy.name = 'Changed'
+    expect(source.name).toBe('Shared logic')
+
+    /* The cards and the conditions have to be rebuilt too, and that is no
+       longer a nicety. The linter builds finding ids as `${rule.id}-${cond.id}`
+       and the composer addresses cards and conditions by id, so a shared
+       Condition object means editing the copy edits the rule it came from. */
+    expect(copy.when.cards[0].id).not.toBe(source.when.cards[0].id)
+
+    const copied = leaves(copy.when)[0]
+    const original = leaves(source.when)[0]
+    expect(copied.id).not.toBe(original.id)
+
+    copied.operator = 'in zone'
+    expect(original.operator).toBe('not in zone')
+  })
+
+  it('copies who too, so choosing people on the copy leaves the source alone', () => {
+    const source = ruleWith({ name: 'Finance only', who: { groupIds: ['finance'], userIds: [] } })
+    const copy = copyInto({ ...policies[1], rules: [] }, source).rules[0]
+    expect(copy.who).toEqual(source.who)
+    copy.who!.groupIds.push('legal')
+    expect(source.who!.groupIds).toEqual(['finance'])
+  })
+
+  /* The dialog builds the target as it *would* be and runs the real linter over
+     it. If that stops reporting the appended rule, the dialog silently starts
+     promising every copy will work. */
+  it('detects when the copy would be unreachable at the end of the target', () => {
+    const catchAll = ruleWith({ name: 'Everyone', when: anySignIn() })
+    const specific = ruleWith({
+      name: 'Finance off-network',
+      who: { groupIds: ['finance'], userIds: [] },
+      when: when(card(cond('zone', 'not in zone', ['office']))),
+    })
+    const target: Policy = { ...policies[1], isSystem: false, rules: [catchAll] }
+
+    const would = copyInto(target, specific)
+    const atCopy = diagnose(would, groups).filter((d) => d.ruleIndex === would.rules.length - 1)
+
+    expect(atCopy.some((d) => d.severity === 'error')).toBe(true)
+  })
+
+  it('reports nothing when the target cannot shadow the copy', () => {
+    const narrow = ruleWith({
+      name: 'Executives on Tor',
+      who: { groupIds: ['executives'], userIds: [] },
+      when: when(card(cond('zone', 'in zone', ['anon']))),
+    })
+    const incoming = ruleWith({
+      name: 'Contractors off-network',
+      who: { groupIds: ['contractors'], userIds: [] },
+      when: when(card(cond('zone', 'not in zone', ['office']))),
+    })
+    const would = copyInto({ ...policies[1], isSystem: false, rules: [narrow] }, incoming)
+    const atCopy = diagnose(would, groups).filter((d) => d.ruleIndex === would.rules.length - 1)
+
+    expect(atCopy.filter((d) => d.severity === 'error')).toHaveLength(0)
+  })
+})
+
+/* A `rule rationale` block stood here.
+
+   Its assertions were good tests of a real property — an audit trail that
+   records only behaviour changes cannot answer "who decided this was still
+   needed" — and the field they guarded, `Rule.description`, no longer exists.
+   What a rule is for is carried by its name now, and `describeChanges` still
+   reports a rename. */
